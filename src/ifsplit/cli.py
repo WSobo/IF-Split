@@ -24,7 +24,7 @@ SPLITS_CHOICES = ("train", "val", "test")
 
 def cmd_build(args: argparse.Namespace) -> int:
     from .cluster import build_clusters
-    from .enumerate import enumerate_candidates
+    from .enumerate import enumerate_candidates, make_console_progress
     from .ligands import classify_components
     from .manifest import (
         build_lock,
@@ -57,8 +57,9 @@ def cmd_build(args: argparse.Namespace) -> int:
     print()
 
     print("Stage 1 - enumerate candidates (Search + Data API, no coordinates):")
+    say = make_console_progress()  # timestamped + line-flushed (survives redirect)
     records, _candidates_path, sha = enumerate_candidates(
-        cfg, args.out, limit=args.limit, progress=lambda m: print(f"  {m}")
+        cfg, args.out, limit=args.limit, progress=say
     )
     lock_path = write_lock(
         build_lock(

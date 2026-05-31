@@ -8,6 +8,8 @@ snapshot definition. No coordinates are downloaded (PLAN.md §1.5).
 
 from __future__ import annotations
 
+import sys
+import time
 from collections.abc import Callable
 from pathlib import Path
 
@@ -16,6 +18,48 @@ from .rcsb import RcsbClient
 from .schema import CandidateRecord, canonical_jsonl_bytes, sha256_hex
 
 ProgressFn = Callable[[str], None]
+
+# How often (in enriched records) to emit a progress line.
+_REPORT_EVERY = 1000
+
+
+def fmt_duration(seconds: float) -> str:
+    """Human-friendly duration: ``45s`` / ``3m29s`` / ``1h02m``."""
+    s = int(max(0, seconds))
+    if s < 60:
+        return f"{s}s"
+    m, s = divmod(s, 60)
+    if m < 60:
+        return f"{m}m{s:02d}s"
+    h, m = divmod(m, 60)
+    return f"{h}h{m:02d}m"
+
+
+def progress_line(label: str, n: int, total: int, t0: float) -> str:
+    """A ``label: n/total (pct)  rate/s  eta ...`` line from a monotonic start."""
+    elapsed = time.monotonic() - t0
+    pct = (100 * n / total) if total else 0.0
+    msg = f"{label}: {n}/{total} ({pct:.0f}%)"
+    if elapsed > 0 and n > 0:
+        rate = n / elapsed
+        eta = (total - n) / rate if rate > 0 else 0.0
+        msg += f"  {rate:.0f}/s  eta {fmt_duration(eta)}"
+    return msg
+
+
+def make_console_progress(stream=None) -> ProgressFn:
+    """A timestamped, line-flushed progress printer for long CLI runs.
+
+    The flush is the important part: when stdout is redirected to a file, Python
+    block-buffers it, so unflushed progress lines stay invisible until the process
+    exits. This forces each line out immediately.
+    """
+    out = stream or sys.stdout
+
+    def say(msg: str) -> None:
+        print(f"  [{time.strftime('%H:%M:%S')}] {msg}", file=out, flush=True)
+
+    return say
 
 
 def enumerate_candidates(
@@ -41,15 +85,17 @@ def enumerate_candidates(
     owns_client = client is None
     client = client or RcsbClient()
     try:
-        ids = client.search_entry_ids(cfg, limit=limit)
+        ids = client.search_entry_ids(cfg, limit=limit, progress=progress)
         say(f"search: {len(ids)} entries match the snapshot")
 
         records: list[CandidateRecord] = []
+        total = len(ids)
+        t0 = time.monotonic()
         for raw in client.fetch_entries(ids):
             records.append(CandidateRecord.from_data_api(raw))
-            if len(records) % 1000 == 0:
-                say(f"enriched: {len(records)}/{len(ids)}")
-        say(f"enriched: {len(records)}/{len(ids)} (done)")
+            if len(records) % _REPORT_EVERY == 0:
+                say(progress_line("enriched", len(records), total, t0))
+        say(progress_line("enriched", len(records), total, t0) + " (done)")
     finally:
         if owns_client:
             client.close()

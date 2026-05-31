@@ -184,11 +184,14 @@ class RcsbClient:
         resp.raise_for_status()
         return int(resp.json()["total_count"])
 
-    def search_entry_ids(self, cfg: Config, limit: int | None = None) -> list[str]:
+    def search_entry_ids(
+        self, cfg: Config, limit: int | None = None, *, progress=None
+    ) -> list[str]:
         """All matching entry IDs, sorted ascending for determinism.
 
         ``limit`` (dev convenience) takes the first N in sorted order, so a
-        limited run is itself reproducible.
+        limited run is itself reproducible. ``progress`` (optional) is called with
+        a status string after each page, so a full-PDB enumeration isn't silent.
         """
         ids: list[str] = []
         start = 0
@@ -218,6 +221,8 @@ class RcsbClient:
                 break
             ids.extend(hit["identifier"] for hit in page)
             start += len(page)
+            if progress:
+                progress(f"search: {len(ids)} entry ids found...")
             if len(page) < rows:
                 break
         return ids

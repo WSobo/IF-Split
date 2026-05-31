@@ -224,7 +224,7 @@ class FakeRcsbClient:
     def __init__(self, entries: dict[str, dict]) -> None:
         self._entries = entries
 
-    def search_entry_ids(self, cfg, limit=None):
+    def search_entry_ids(self, cfg, limit=None, *, progress=None):
         ids = sorted(self._entries)
         return ids[:limit] if limit is not None else ids
 
