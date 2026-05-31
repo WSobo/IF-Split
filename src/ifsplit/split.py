@@ -1,25 +1,28 @@
-"""Stage 6 - Deterministic cluster -> split assignment (the reproducibility core).
+"""Stage 6 - Deterministic component -> split assignment (the reproducibility core).
 
-Each cluster's split is decided by ``blake2b(salt + ':' + canonical_key)`` mapped
-onto the cumulative ``split_fractions``. Same salt + same key -> same split,
-forever, independent of how many other clusters exist - so a larger snapshot only
-*adds* clusters and never moves existing ones.
+Each *component* (a leakage-safe group of sequence clusters joined by shared
+multi-chain entries; see cluster.py) is assigned to a split by
+``blake2b(salt + ':' + component_key)`` mapped onto the cumulative
+``split_fractions``. Same salt + same key -> same split, forever, independent of
+how many other components exist - so a larger snapshot only *adds* components and
+never moves existing ones.
 
-An optional ``registry`` (canonical_key -> split) pins prior assignments: if a
-key is already in the registry its recorded split wins over the hash. Phase 7
-persists this so growth is provably stable even in the edge case where a
-smaller-id member later changes a cluster's canonical key.
+An optional ``registry`` (component_key -> split) pins prior assignments: if a
+key is already in the registry its recorded split wins over the hash, so growth
+is stable even if a component's canonical key shifts (e.g. a smaller-id member
+joins later).
 
-Leakage: by construction each cluster maps to exactly one split (hard invariant,
-asserted). Because an entry is assigned via its longest chain, a *secondary*
-chain may belong to a cluster placed in another split; that residual
-cross-split sequence overlap is measured and reported (not silently ignored).
+**No-leakage is structural, not heuristic.** Because every entity an entry
+touches lives in the same component (union-find merged them), and a component
+maps to exactly one split, two splits can never share a sequence cluster. The
+``check_no_leakage`` invariant re-derives this from the cluster membership and
+fails loudly if it is ever violated - a real guard, not a tautology.
 """
 
 from __future__ import annotations
 
 import hashlib
-from dataclasses import dataclass, field
+from dataclasses import dataclass
 
 from .cluster import ClusterResult
 from .config import Config
@@ -34,7 +37,7 @@ def bucket(key: str, salt: str) -> float:
 
 
 def split_for_key(key: str, cfg: Config) -> str:
-    """Map a cluster key to a split via the cumulative fractions."""
+    """Map a component key to a split via the cumulative fractions."""
     b = bucket(key, cfg.split_salt)
     sf = cfg.split_fractions
     if b < sf.train:
@@ -46,31 +49,25 @@ def split_for_key(key: str, cfg: Config) -> str:
 
 @dataclass
 class SplitResult:
-    cluster_split: dict[str, str]  # canonical key -> split
+    cluster_split: dict[str, str]  # component key -> split
     entry_split: dict[str, str]  # entry_id -> split
     counts: dict[str, int]  # split -> entry count
-    cluster_counts: dict[str, int]  # split -> cluster count
-    leakage_entries: list[str] = field(default_factory=list)  # secondary-chain overlap
+    cluster_counts: dict[str, int]  # split -> component count
 
 
 def assign_splits(
     clusters: ClusterResult, cfg: Config, registry: dict[str, str] | None = None
 ) -> SplitResult:
-    """Assign every cluster (and thus every entry) to a split."""
+    """Assign every component (and thus every entry) to a split."""
     registry = registry or {}
 
-    cluster_split: dict[str, str] = {}
-    for key in clusters.cluster_members:
-        cluster_split[key] = registry.get(key) or split_for_key(key, cfg)
+    cluster_split: dict[str, str] = {
+        key: registry.get(key, split_for_key(key, cfg))
+        for key in clusters.cluster_members
+    }
 
-    # Hard invariant: a cluster key resolves to exactly one split. (True by
-    # construction - dict is single-valued - but assert the mapping is total.)
-    missing = [k for k in clusters.cluster_members if k not in cluster_split]
-    if missing:
-        raise AssertionError(f"clusters without a split: {missing[:5]}")
-
-    entry_split: dict[str, str] = {}
     counts = {s: 0 for s in SPLITS}
+    entry_split: dict[str, str] = {}
     for entry, key in clusters.entry_to_cluster.items():
         s = cluster_split[key]
         entry_split[entry] = s
@@ -80,32 +77,27 @@ def assign_splits(
     for s in cluster_split.values():
         cluster_counts[s] += 1
 
-    # Residual leakage audit: entries whose secondary-chain clusters land in a
-    # split other than the entry's own.
-    leakage: list[str] = []
-    for entry, keys in clusters.entry_all_clusters.items():
-        own = entry_split[entry]
-        if any(cluster_split.get(k, own) != own for k in keys):
-            leakage.append(entry)
-
     return SplitResult(
         cluster_split=dict(sorted(cluster_split.items())),
         entry_split=dict(sorted(entry_split.items())),
         counts=counts,
         cluster_counts=cluster_counts,
-        leakage_entries=sorted(leakage),
     )
 
 
-def assert_no_cluster_leakage(result: SplitResult, clusters: ClusterResult) -> None:
-    """Fail loudly if any cluster maps to more than one split.
+def check_no_leakage(result: SplitResult, clusters: ClusterResult) -> None:
+    """Verify no sequence cluster spans two splits. Raises on violation.
 
-    Verified by checking every entry's split equals its assigned cluster's split.
+    Genuine check (not a tautology): for every entry, every *raw* sequence
+    cluster it touches must resolve to the entry's own split. Union-find
+    guarantees this, so a failure means a real bug upstream.
     """
-    for entry, key in clusters.entry_to_cluster.items():
-        expected = result.cluster_split[key]
-        actual = result.entry_split[entry]
-        if expected != actual:
-            raise AssertionError(
-                f"leakage: entry {entry} in {actual} but its cluster {key} is {expected}"
-            )
+    raw_to_split: dict[str, str] = {}
+    for entry, raw_keys in clusters.entry_raw_clusters.items():
+        split = result.entry_split[entry]
+        for rk in raw_keys:
+            prior = raw_to_split.setdefault(rk, split)
+            if prior != split:
+                raise AssertionError(
+                    f"leakage: raw cluster {rk} appears in both {prior!r} and {split!r}"
+                )

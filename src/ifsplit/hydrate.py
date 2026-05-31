@@ -123,7 +123,7 @@ files. Browsable by hand, scalable to the whole PDB.
   sha256, cluster, ligand_classes, ligand_tiers. The `sha256` lets you verify
   integrity and de-duplicate; `cluster` lets you sample cluster-balanced batches.
 - `manifest.json` — the full source split manifest (config, drop log, per-class
-  counts, leakage audit).
+  counts, component stats).
 
 ## Load (Python)
 ```python

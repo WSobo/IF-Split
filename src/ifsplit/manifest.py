@@ -7,7 +7,7 @@ Artifacts written to the output dir:
   reports drift (added/removed entries, hash match), warning not failing.
 - ``manifest.json``  - human-facing run record: config, drop log, per-split entry
   lists, ligand-class tags + confidence tiers, per-class test counts, cluster /
-  leakage stats, and the entry->cluster map (for cluster-balanced sampling).
+  component stats, and the entry->component map (for cluster-balanced sampling).
   Built as a pure function of its inputs (no wall-clock fields) so two runs of
   the same config produce byte-identical manifests.
 - ``splits.registry.json`` - canonical_key -> split, so a later, larger snapshot
@@ -156,13 +156,13 @@ def build_manifest(
             "backend": cfg.clustering_backend,
             "identity": clusters.identity,
             "n_clusters": clusters.n_clusters,
+            "n_raw_clusters": clusters.n_raw_clusters,
             "multichain_entries": len(clusters.multichain_entries),
             "unclustered_entries": len(clusters.unclustered_entries),
         },
         "splits": {
             "entry_counts": dict(sorted(splits.counts.items())),
             "cluster_counts": dict(sorted(splits.cluster_counts.items())),
-            "leakage_entries": len(splits.leakage_entries),
             "per_split_class_counts": per_split_class_counts,
             "per_split_ambiguous_counts": per_split_ambiguous_counts,
             "entries": per_split,
@@ -251,15 +251,15 @@ def summarize_manifest(manifest_path: str | Path) -> int:
     cl = m["clustering"]
     print(
         f"  clustering: {cl['backend']} @ {cl['identity']}%  "
-        f"clusters={cl['n_clusters']}  multichain={cl['multichain_entries']}"
+        f"components={cl['n_clusters']} (from {cl.get('n_raw_clusters', '?')} raw)  "
+        f"multichain={cl['multichain_entries']}"
     )
     sp = m["splits"]
-    print("  splits (entries / clusters):")
+    print("  splits (entries / components):")
     for s in ("train", "val", "test"):
         ec = sp["entry_counts"].get(s, 0)
         cc = sp["cluster_counts"].get(s, 0)
-        print(f"    {s:5s}: {ec:>7} entries  {cc:>7} clusters")
-    print(f"  cross-split secondary-chain overlap: {sp['leakage_entries']} entries")
+        print(f"    {s:5s}: {ec:>7} entries  {cc:>7} components")
     print("  test set by ligand class (functional tier):")
     for cls, n in sp["per_split_class_counts"].get("test", {}).items():
         print(f"    {cls}: {n}")

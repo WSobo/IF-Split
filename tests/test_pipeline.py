@@ -15,8 +15,8 @@ from ifsplit.parse import (
     drop_summary,
     filter_candidates,
 )
-from ifsplit.schema import CandidateRecord
-from ifsplit.split import assert_no_cluster_leakage, assign_splits, bucket, split_for_key
+from ifsplit.schema import CandidateRecord, PolymerEntity
+from ifsplit.split import assign_splits, bucket, check_no_leakage, split_for_key
 
 ROOT = Path(__file__).resolve().parents[1]
 DEFAULT_CONFIG = ROOT / "config" / "default.yaml"
@@ -76,7 +76,7 @@ def test_cluster_groups_by_membership(sample_entries, artifact_entry):
     recs = _records(sample_entries, artifact_entry)
     kept, _ = filter_candidates(recs, _cfg())
     cr = build_clusters(kept, _cfg())
-    # 4HHB(two protein clusters)->longest chain; 1A1F; artifact: 3 distinct entries.
+    # 4HHB (two protein clusters merge into one component); 1A1F; artifact: 3 entries.
     assert set(cr.entry_to_cluster) == {"4HHB", "1A1F", "pdb_00009xyz"}
     # canonical keys are entity ids (smallest member), not raw integers.
     assert all(":" not in k or k.startswith("singleton:") for k in cr.cluster_members)
@@ -112,7 +112,7 @@ def test_no_cluster_leakage_invariant(sample_entries, artifact_entry):
     kept, _ = filter_candidates(recs, _cfg())
     cr = build_clusters(kept, _cfg())
     res = assign_splits(cr, _cfg())
-    assert_no_cluster_leakage(res, cr)  # raises on leakage
+    check_no_leakage(res, cr)  # raises on leakage
 
 
 def test_registry_pins_assignment(sample_entries, artifact_entry):
@@ -195,3 +195,60 @@ def test_existing_cluster_does_not_move_when_dataset_grows(sample_entries, artif
     # Every cluster present in A keeps its split in B.
     for key, split in sp_a.cluster_split.items():
         assert sp_b.cluster_split[key] == split
+
+
+# --------------- union-find: structural leakage prevention ----------------- #
+def _protein_record(entry_id: str, cluster30_ids: list[int]) -> CandidateRecord:
+    """A record whose protein chains sit in the given raw clusters (id at 30%)."""
+    pes = [
+        PolymerEntity(
+            entity_id=f"{entry_id}_{i + 1}",
+            polymer_type="Protein",
+            seq_len=100,
+            seq="A" * 100,
+            cluster_ids={30: cid},
+        )
+        for i, cid in enumerate(cluster30_ids)
+    ]
+    return CandidateRecord(
+        entry_id=entry_id,
+        methods=["X-RAY DIFFRACTION"],
+        resolution_A=2.0,
+        release_date="2020-01-01",
+        deposited_residues=100,
+        assemblies={f"{entry_id}-1": 100},
+        polymer_entities=pes,
+        nonpolymer_comps=[],
+        bound_components=[],
+        affinity_comp_ids=[],
+    )
+
+
+def test_union_find_merges_bridged_clusters_no_leakage():
+    cfg = _cfg()
+    # X bridges raw clusters 1 and 2 via two chains; Y is in 1, Z is in 2.
+    # Without union-find, clusters 1 and 2 could hash to different splits and Y/Z
+    # would leak X's sequences across splits. With it, {1,2} is one component.
+    recs = [
+        _protein_record("X1AA", [1, 2]),
+        _protein_record("Y2BB", [1]),
+        _protein_record("Z3CC", [2]),
+    ]
+    kept, _ = filter_candidates(recs, cfg)
+    cr = build_clusters(kept, cfg)
+    assert cr.n_raw_clusters == 2
+    assert cr.n_clusters == 1  # the two raw clusters merged into one component
+    res = assign_splits(cr, cfg)
+    check_no_leakage(res, cr)  # would raise if 1 and 2 split apart
+    assert len(set(res.entry_split.values())) == 1  # all three co-assigned
+
+
+def test_independent_clusters_can_differ_and_check_passes():
+    cfg = _cfg()
+    # Two unrelated single-chain entries: separate components, no shared sequence.
+    recs = [_protein_record("AAA1", [10]), _protein_record("BBB2", [20])]
+    kept, _ = filter_candidates(recs, cfg)
+    cr = build_clusters(kept, cfg)
+    assert cr.n_clusters == 2
+    res = assign_splits(cr, cfg)
+    check_no_leakage(res, cr)  # passes regardless of which splits they land in

@@ -35,7 +35,7 @@ def cmd_build(args: argparse.Namespace) -> int:
         write_registry,
     )
     from .parse import drop_summary, filter_candidates
-    from .split import assert_no_cluster_leakage, assign_splits
+    from .split import assign_splits, check_no_leakage
 
     cfg = load_config(args.config)
     sf = cfg.split_fractions
@@ -84,18 +84,17 @@ def cmd_build(args: argparse.Namespace) -> int:
     print(f"Stage 5 - cluster ({cfg.clustering_backend} @ {cfg.identity_level}%):")
     clusters = build_clusters(kept, cfg)
     print(
-        f"  {clusters.n_clusters} clusters; "
-        f"{len(clusters.multichain_entries)} multi-chain, "
-        f"{len(clusters.unclustered_entries)} unclustered"
+        f"  {clusters.n_clusters} leakage-safe components "
+        f"from {clusters.n_raw_clusters} raw clusters "
+        f"({len(clusters.multichain_entries)} multi-chain merged)"
     )
 
     print("Stage 6 - assign splits (deterministic hash):")
     registry = read_registry(args.registry) if args.registry else {}
     splits = assign_splits(clusters, cfg, registry=registry)
-    assert_no_cluster_leakage(splits, clusters)
+    check_no_leakage(splits, clusters)  # structural guarantee; raises on violation
     c = splits.counts
-    n_leak = len(splits.leakage_entries)
-    print(f"  train={c['train']} val={c['val']} test={c['test']}  (leakage audit: {n_leak})")
+    print(f"  train={c['train']} val={c['val']} test={c['test']}  (no cross-split leakage)")
 
     print("Stage 7 - manifest + registry:")
     manifest = build_manifest(
