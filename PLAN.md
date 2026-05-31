@@ -191,17 +191,26 @@ re-featurize from the cleaned structures.
   `candidates.jsonl`. This file is the snapshot definition and carries
   everything Stages 3–6 need.
 
-**Stage 2 — Download (`download.py`) — OPTIONAL, featurization-only**
+**Stage 2 — Download (`download.py` + `hydrate.py`) — OPTIONAL, featurization-only ← *implemented***
 
 > Not part of `build`. The split is computed without coordinates (§1.5). This
 > stage exists so a downstream consumer can fetch coordinates on demand for the
 > entries in a split — e.g. to extract ligand context (Stage 4) or feed a model.
 
-- Fetch mmCIF (not legacy PDB — large/modern entries have no legacy PDB file).
-  If `use_biological_assembly`, fetch assembly 1 (`-assembly1.cif`). Use RCSB
-  file download services. Cache by ID; store a SHA-256 of each fetched file.
-- Respect rate limits; make downloads resumable from the cache. Driven by an
-  explicit `if-split fetch` (or the loader), never implicitly by `build`.
+- `if-split fetch <manifest>` hydrates a *built* manifest into an ML-ready tree.
+  Fetches gzipped mmCIF (assembly 1 by default, `--asymmetric-unit` to override)
+  from `files.rcsb.org`. Verified live for legacy, modern, and extended ids.
+- **Explicit scope** (`--split` repeatable, or `--all`); prints an estimated
+  size and refuses >~1000 structures without `--yes` — the lightweight-by-default
+  contract. Parallel (`--workers`) and **resumable** (existing valid files are
+  skipped; each file's SHA-256 is recorded).
+- **Layout:** split-partitioned for browsability, then sharded by the PDB
+  "divided" scheme (entry-id middle two chars, `4hhb -> hh/`) so no split dir
+  holds an unwieldy number of files. Scales to the whole PDB.
+- **Packaging (`hydrate.py`):** writes `index.jsonl` (zero-dep) + `index.parquet`
+  (if `pyarrow`; `uv sync --extra mlops`) with one row per structure (entry_id,
+  split, path, sha256, cluster, ligand_classes, ligand_tiers), a copy of
+  `manifest.json`, and a generated `DATASET_CARD.md` (provenance + how-to-load).
 
 **Stage 3 — Filter (`parse.py`)**
 

@@ -19,6 +19,7 @@ from .config import load_config
 from .rcsb import RcsbError
 
 DEFAULT_CONFIG = "config/default.yaml"
+SPLITS_CHOICES = ("train", "val", "test")
 
 
 def cmd_build(args: argparse.Namespace) -> int:
@@ -129,6 +130,77 @@ def cmd_stats(args: argparse.Namespace) -> int:
     return summarize_manifest(args.manifest)
 
 
+# Confirm before a pull larger than this many structures unless --yes is given.
+_FETCH_CONFIRM_THRESHOLD = 1000
+
+
+def cmd_fetch(args: argparse.Namespace) -> int:
+    from .download import SPLITS, StructureFetcher
+    from .hydrate import hydrate, select_targets
+    from .manifest import read_manifest
+
+    if args.all and args.split:
+        print("error: use either --all or --split, not both", file=sys.stderr)
+        return 2
+    if not args.all and not args.split:
+        print(
+            "error: choose a scope: --split test (repeatable) or --all.\n"
+            "       (explicit by design — `fetch` can pull a lot of data)",
+            file=sys.stderr,
+        )
+        return 2
+
+    splits = list(SPLITS) if args.all else args.split
+    unknown = [s for s in splits if s not in SPLITS]
+    if unknown:
+        print(f"error: unknown split(s): {', '.join(unknown)}", file=sys.stderr)
+        return 2
+
+    manifest = read_manifest(args.manifest)
+    targets = select_targets(manifest, splits)
+    if not targets:
+        print(f"nothing to fetch for split(s): {', '.join(splits)}")
+        return 0
+
+    assembly = not args.asymmetric_unit
+    print(f"fetch: {len(targets)} structures across {', '.join(splits)} -> {args.out}")
+
+    # Size estimate + large-pull guard (no accidental terabyte).
+    unit_label = "assembly 1" if assembly else "asymmetric unit"
+    with StructureFetcher(assembly=assembly, workers=args.workers) as fetcher:
+        est = fetcher.estimate_bytes([e for e, _ in targets])
+        if est is not None:
+            print(f"  estimated download: ~{est / 1e9:.2f} GB ({unit_label})")
+        if len(targets) > _FETCH_CONFIRM_THRESHOLD and not args.yes:
+            print(
+                f"  refusing to fetch {len(targets)} structures without --yes "
+                f"(threshold {_FETCH_CONFIRM_THRESHOLD}).",
+                file=sys.stderr,
+            )
+            return 5
+        summary = hydrate(
+            args.manifest,
+            args.out,
+            splits=splits,
+            assembly=assembly,
+            workers=args.workers,
+            fetcher=fetcher,
+            progress=lambda m: print(f"  {m}"),
+        )
+
+    print(
+        f"done: {summary['fetched']} fetched, {summary['skipped']} cached, "
+        f"{len(summary['failed'])} failed"
+    )
+    if summary["failed"]:
+        for eid, reason in summary["failed"][:10]:
+            print(f"  ! {eid}: {reason}", file=sys.stderr)
+    for kind, path in summary["index"].items():
+        print(f"  index ({kind}): {path}")
+    print(f"  dataset card: {args.out}/DATASET_CARD.md")
+    return 0 if not summary["failed"] else 6
+
+
 def build_parser() -> argparse.ArgumentParser:
     p = argparse.ArgumentParser(
         prog="if-split",
@@ -173,6 +245,30 @@ def build_parser() -> argparse.ArgumentParser:
     )
     ps.add_argument("manifest", help="Path to manifest.json")
     ps.set_defaults(func=cmd_stats)
+
+    pf = sub.add_parser(
+        "fetch",
+        help="OPTIONAL: download structures for a built manifest into an ML-ready tree.",
+    )
+    pf.add_argument("manifest", help="Path to manifest.json")
+    pf.add_argument(
+        "--out", default="data/structures", help="Output root (default: data/structures)."
+    )
+    pf.add_argument(
+        "--split",
+        action="append",
+        choices=list(SPLITS_CHOICES),
+        help="Split to fetch (repeatable, e.g. --split test --split val).",
+    )
+    pf.add_argument("--all", action="store_true", help="Fetch all splits.")
+    pf.add_argument(
+        "--asymmetric-unit",
+        action="store_true",
+        help="Fetch the asymmetric unit instead of biological assembly 1.",
+    )
+    pf.add_argument("--workers", type=int, default=8, help="Concurrent downloads (default: 8).")
+    pf.add_argument("--yes", action="store_true", help="Proceed without confirming large pulls.")
+    pf.set_defaults(func=cmd_fetch)
 
     return p
 

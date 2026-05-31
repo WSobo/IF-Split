@@ -69,6 +69,9 @@ uv run if-split verify data/out/dataset.lock
 
 # Growth-stable regeneration: pin prior cluster→split assignments.
 uv run if-split build --registry data/out/splits.registry.json --out data/out2
+
+# OPTIONAL: download the actual structures for a built split (see below).
+uv run if-split fetch data/out/manifest.json --split test --out data/structures
 ```
 
 ### Outputs (`--out` directory)
@@ -79,6 +82,59 @@ uv run if-split build --registry data/out/splits.registry.json --out data/out2
 | `dataset.lock` | Reproduction anchor: embedded config + candidates SHA-256 + entry list. |
 | `manifest.json` | Human-facing run record: per-split entry lists, ligand classes + tiers, per-class (and ambiguous) counts, drop log, cluster/leakage stats, entry→cluster map. |
 | `splits.registry.json` | `cluster key → split`, for growth-stable regeneration. |
+
+## Downloading structures (`fetch`)
+
+`build` produces a tiny, coordinate-free split. When you actually want the mmCIF
+files — to featurize or train — `fetch` hydrates a *built manifest* into a
+clean, ML-ready tree. It is **opt-in and downstream**: nothing about a split
+requires coordinates.
+
+```bash
+# Scope is explicit by design (no accidental terabyte): choose splits or --all.
+uv run if-split fetch data/out/manifest.json --split test                 # just test
+uv run if-split fetch data/out/manifest.json --split train --split val    # repeatable
+uv run if-split fetch data/out/manifest.json --all --yes --workers 16     # everything
+uv run if-split fetch data/out/manifest.json --all --asymmetric-unit      # AU not assembly 1
+```
+
+`fetch` prints an estimated download size first and refuses pulls over ~1000
+structures without `--yes`. It is **resumable** (existing, valid files are
+skipped) and parallel (`--workers`).
+
+### Layout — browsable *and* scalable
+
+Files are split-partitioned (so you can `ls` a split) and sharded by the PDB
+"divided" scheme — the middle two characters of the entry id — so no single
+directory holds an unwieldy number of files:
+
+```
+data/structures/
+  structures/
+    train/  hh/4hhb-assembly1.cif.gz   01/101m-assembly1.cif.gz   02/102l-… 102m-…
+    val/    …
+    test/   0a/10ad-assembly1.cif.gz
+  index.jsonl            # one row per structure (zero-dep, greppable)
+  index.parquet          # same, columnar (written if pyarrow is installed)
+  manifest.json          # copy of the source split manifest
+  DATASET_CARD.md        # provenance + how-to-load
+```
+
+The **index** is the ML entry point — one row per structure with `entry_id`,
+`split`, `path`, **`sha256`** (integrity + dedupe), `cluster` (for
+cluster-balanced batches), and `ligand_classes` / `ligand_tiers`:
+
+```python
+import pandas as pd
+df = pd.read_parquet("data/structures/index.parquet")   # or read_json(..., lines=True)
+train = df[df.split == "train"]
+metal_train = train[train.ligand_classes.str.contains("metal")]
+# de-redundified epoch: one structure per sequence cluster
+epoch = train.sort_values("entry_id").groupby("cluster").head(1)
+```
+
+The columnar `index.parquet` needs `pyarrow`: `uv sync --extra mlops` (the
+zero-dependency `index.jsonl` is always written regardless).
 
 ## How it works
 
@@ -93,9 +149,11 @@ A `build` runs eight stages; none touch coordinates.
 | 6 — split | `split.py` | Deterministic hash → train/val/test; assert no cluster spans two splits; audit residual secondary-chain overlap. |
 | 7 — manifest | `manifest.py` | Emit lock + manifest + registry (all deterministic, no wall-clock fields). |
 | 8 — loader | `dataset.py` | Read a manifest into train/val/test views with cluster-balanced sampling. |
+| 2 — fetch *(opt-in)* | `download.py`, `hydrate.py` | Download mmCIF for a built manifest into a sharded, indexed, ML-ready tree. |
 
 > Stage 2 (mmCIF coordinate download) is **optional and downstream** — only
-> needed to extract ligand context or feed a model, never to build a split.
+> needed to extract ligand context or feed a model, never to build a split. See
+> [Downloading structures](#downloading-structures-fetch) for the `fetch` command.
 
 ### Ligand quality: annotate, don't destroy
 

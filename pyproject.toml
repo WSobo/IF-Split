@@ -20,6 +20,9 @@ dependencies = [
 [project.optional-dependencies]
 # Feature extras (installed on demand), not dev tooling.
 torch = ["torch>=2.2"]
+# `fetch` writes index.parquet when pyarrow is present (index.jsonl is always
+# written, zero-dep). `uv sync --extra mlops` to enable the columnar index.
+mlops = ["pyarrow>=15"]
 
 [project.scripts]
 if-split = "ifsplit.cli:main"
