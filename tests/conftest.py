@@ -77,8 +77,10 @@ def _raw_4hhb() -> dict:
         "assemblies": [
             {
                 "rcsb_id": "4HHB-1",
-                "rcsb_assembly_info": {"polymer_monomer_count": 574},
-                "interfaces": [{"rcsb_interface_info": {"polymer_composition": "Protein (only)"}}],
+                "rcsb_assembly_info": {
+                    "polymer_monomer_count": 574,
+                    "num_prot_na_interface_entities": 0,  # protein-only, no NA contact
+                },
             }
         ],
         # Real 4HHB validation values: a 1984 X-ray entry with a dreadful
@@ -139,9 +141,11 @@ def _raw_1a1f() -> dict:
         "assemblies": [
             {
                 "rcsb_id": "1A1F-1",
-                "rcsb_assembly_info": {"polymer_monomer_count": 112},
-                # The zinc-finger protein interfaces the DNA -> verified holo NA.
-                "interfaces": [{"rcsb_interface_info": {"polymer_composition": "Protein/NA"}}],
+                "rcsb_assembly_info": {
+                    "polymer_monomer_count": 112,
+                    # The zinc-finger protein interfaces the DNA -> verified holo NA.
+                    "num_prot_na_interface_entities": 1,
+                },
             }
         ],
         # A well-refined X-ray entry: good geometry + a diffraction summary.

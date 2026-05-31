@@ -103,10 +103,11 @@ class CandidateRecord(BaseModel):
     # binding affinity (rcsb_binding_affinity). Both are the buffer-vs-ligand gate.
     bound_components: list[str] = []
     affinity_comp_ids: list[str] = []
-    # Distinct RCSB assembly-interface polymer compositions (e.g. "Protein/NA",
-    # "Protein (only)"). A "Protein/NA" interface verifies a protein<->nucleic-acid
-    # contact (Stage 4 holo gate for the nucleotide class).
-    interface_compositions: list[str] = []
+    # RCSB-computed count of protein<->nucleic-acid interface entities across the
+    # entry's assemblies (rcsb_assembly_info.num_prot_na_interface_entities). > 0
+    # verifies a real protein/NA contact (Stage 4 holo gate for the nucleotide
+    # class) — distinguishing a true complex from a co-deposited oligo.
+    protein_na_interface_count: int = 0
     # wwPDB validation-report summary (Stage 3 quality filters). All fields
     # optional; defaults to an empty report when RCSB has none.
     quality: QualityMetrics = QualityMetrics()
@@ -138,16 +139,14 @@ class CandidateRecord(BaseModel):
         )
 
         assemblies: dict[str, int] = {}
-        iface_comps: set[str] = set()
+        prot_na_interfaces = 0
         for asm in entry.get("assemblies") or []:
             aid = asm.get("rcsb_id")
-            count = (asm.get("rcsb_assembly_info") or {}).get("polymer_monomer_count")
+            info = asm.get("rcsb_assembly_info") or {}
+            count = info.get("polymer_monomer_count")
             if aid is not None and count is not None:
                 assemblies[aid] = count
-            for iface in asm.get("interfaces") or []:
-                comp = (iface.get("rcsb_interface_info") or {}).get("polymer_composition")
-                if comp:
-                    iface_comps.add(comp)
+            prot_na_interfaces += info.get("num_prot_na_interface_entities") or 0
 
         polymers: list[PolymerEntity] = []
         for p in entry.get("polymer_entities") or []:
@@ -211,7 +210,7 @@ class CandidateRecord(BaseModel):
             nonpolymer_comps=nonpolymers,
             bound_components=bound,
             affinity_comp_ids=affinity,
-            interface_compositions=sorted(iface_comps),
+            protein_na_interface_count=prot_na_interfaces,
             quality=quality,
         )
 

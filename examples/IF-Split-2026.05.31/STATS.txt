@@ -1,0 +1,18 @@
+IF-Split-2026.05.31  (config eaa0d1757f53cb929794c21e7d47fcf4)
+  candidates: 223422  kept: 214794  dropped: 8628
+    - no_protein_entity: 3078
+    - too_large: 5550
+  clustering: precomputed @ 30%  components=19587 (from 34222 raw)  multichain=38834
+  splits (entries / components):
+    train:  188672 entries    15613 components
+    val  :   13726 entries     1993 components
+    test :   12396 entries     1981 components
+  test set by ligand class (functional tier):
+    metal: 4099
+    nucleotide: 586
+    small_molecule: 3530
+  test set ambiguous (reported, not labelled):
+    metal: 73
+    nucleotide: 1
+    small_molecule: 3596
+  His-tag/Ni purification artifacts flagged: 404

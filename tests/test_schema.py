@@ -78,11 +78,11 @@ def test_quality_metrics_parsed(sample_entries):
     assert a1f.quality.rsrz_outlier_pct == 2.5
 
 
-def test_interface_compositions_parsed(sample_entries):
+def test_protein_na_interface_count_parsed(sample_entries):
     a1f = CandidateRecord.from_data_api(sample_entries["1A1F"])
-    assert "Protein/NA" in a1f.interface_compositions  # zinc-finger / DNA
+    assert a1f.protein_na_interface_count == 1  # zinc-finger / DNA
     hhb = CandidateRecord.from_data_api(sample_entries["4HHB"])
-    assert "Protein/NA" not in hhb.interface_compositions  # protein-only
+    assert hhb.protein_na_interface_count == 0  # protein-only
 
 
 def test_quality_metrics_in_canonical_bytes(sample_entries):

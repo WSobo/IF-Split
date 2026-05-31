@@ -12,6 +12,16 @@ venv/
 data/cache/*
 !data/cache/.gitkeep
 
+# Full build artifacts are large (candidates.jsonl ~700MB, manifest ~23MB) and
+# regenerable from config — keep them out of git. Distribute via a GitHub Release.
+# The examples/ dir holds only small summaries (STATS.txt, manifest.summary.json).
+candidates.jsonl
+dataset.lock
+splits.registry.json
+splits.registry.json.tmp*
+manifest.json
+!examples/**/manifest.summary.json
+
 # Tooling
 .pytest_cache/
 .mypy_cache/

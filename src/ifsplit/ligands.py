@@ -20,8 +20,8 @@ Signals used (all from the Data API, no coordinates):
   - ``affinity_comp_ids`` : a measured binding affinity exists (strong positive)
   - chem-comp ``formula`` : metal-only vs organic
   - His-tag + Ni/Co       : the IMAC purification-artifact pattern (existing rule)
-  - interface_compositions: a "Protein/NA" assembly interface verifies a real
-                            protein<->nucleic-acid contact (holo gate for nucleotide)
+  - protein_na_interface_count: a protein<->nucleic-acid assembly interface (>0)
+                            verifies a real contact (holo gate for nucleotide)
 """
 
 from __future__ import annotations
@@ -118,17 +118,13 @@ def has_histag(seq: str, min_run: int) -> bool:
 
 
 def has_protein_na_interface(record: CandidateRecord) -> bool:
-    """True if any assembly interface couples a protein with a nucleic-acid chain.
+    """True if the assembly has a protein<->nucleic-acid interface.
 
-    Reads RCSB's precomputed assembly-interface compositions (e.g. ``"Protein/NA"``)
-    — a metadata signal that the protein actually *contacts* the DNA/RNA, not just
-    that both were co-deposited. No coordinates.
+    Reads RCSB's precomputed ``num_prot_na_interface_entities`` — a metadata signal
+    that the protein actually *contacts* the DNA/RNA, not just that both were
+    co-deposited. No coordinates.
     """
-    for comp in record.interface_compositions:
-        up = comp.upper()
-        if "PROTEIN" in up and ("NA" in up or "NUCLEIC" in up or "DNA" in up or "RNA" in up):
-            return True
-    return False
+    return record.protein_na_interface_count > 0
 
 
 def metal_comps(record: CandidateRecord) -> list[NonpolymerComp]:

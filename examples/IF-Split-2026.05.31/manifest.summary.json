@@ -1,0 +1,115 @@
+{
+  "_note": "Aggregate summary only. Per-entry split lists, entry->component map, ligand classes/tiers, and the full candidates.jsonl/dataset.lock are omitted (too large for git); see the GitHub Release for full artifacts.",
+  "candidates": {
+    "count": 223422,
+    "sha256": "62116f0183c2eb9a1c3bf69a36331748b920a1b9e182c65eae7518b0c86336ad"
+  },
+  "clustering": {
+    "backend": "precomputed",
+    "identity": 30,
+    "multichain_entries": 38834,
+    "n_clusters": 19587,
+    "n_raw_clusters": 34222,
+    "unclustered_entries": 316
+  },
+  "config": {
+    "clustering_backend": "precomputed",
+    "exclude_purification_artifacts": true,
+    "excluded_het": [
+      "HOH",
+      "NA",
+      "CL",
+      "K",
+      "BR"
+    ],
+    "experimental_methods": [
+      "X-RAY DIFFRACTION",
+      "ELECTRON MICROSCOPY"
+    ],
+    "histag_min_run": 6,
+    "identity_threshold": 0.3,
+    "ligand_context_radius_A": 8.0,
+    "max_clashscore": null,
+    "max_ligand_atoms": 25,
+    "max_ramachandran_outlier_pct": null,
+    "max_rfree": null,
+    "max_rotamer_outlier_pct": null,
+    "max_rsrz_outlier_pct": null,
+    "max_total_residues": 5999,
+    "purification_metals": [
+      "NI",
+      "CO"
+    ],
+    "require_validation_report": false,
+    "resolution_max_A": 3.5,
+    "seed": 0,
+    "snapshot_date": "2026-05-31",
+    "split_fractions": {
+      "test": 0.1,
+      "train": 0.8,
+      "val": 0.1
+    },
+    "split_salt": "snapsplit-v1",
+    "use_biological_assembly": true
+  },
+  "config_hash": "eaa0d1757f53cb929794c21e7d47fcf4",
+  "dataset_version": "IF-Split-2026.05.31",
+  "filter": {
+    "drop_counts": {
+      "no_protein_entity": 3078,
+      "too_large": 5550
+    },
+    "dropped": 8628,
+    "kept": 214794
+  },
+  "if_split_version": "0.1.0",
+  "ligands": {
+    "n_purification_artifacts": 404
+  },
+  "manifest_schema": "if-split/manifest@1",
+  "splits": {
+    "cluster_counts": {
+      "test": 1981,
+      "train": 15613,
+      "val": 1993
+    },
+    "entry_counts": {
+      "test": 12396,
+      "train": 188672,
+      "val": 13726
+    },
+    "per_split_ambiguous_counts": {
+      "test": {
+        "metal": 73,
+        "nucleotide": 1,
+        "small_molecule": 3596
+      },
+      "train": {
+        "metal": 1233,
+        "nucleotide": 11,
+        "small_molecule": 58418
+      },
+      "val": {
+        "metal": 54,
+        "small_molecule": 4059
+      }
+    },
+    "per_split_class_counts": {
+      "test": {
+        "metal": 4099,
+        "nucleotide": 586,
+        "small_molecule": 3530
+      },
+      "train": {
+        "metal": 55952,
+        "nucleotide": 9948,
+        "small_molecule": 50497
+      },
+      "val": {
+        "metal": 4535,
+        "nucleotide": 539,
+        "small_molecule": 3147
+      }
+    }
+  }
+}

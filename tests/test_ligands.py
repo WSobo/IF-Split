@@ -184,11 +184,16 @@ def test_classify_1a1f_metal_and_nucleotide(sample_entries):
 
 
 # ----------------------- nucleotide holo gate (interface) ------------------ #
-def _protein_na_record(interface_comp: str | None) -> CandidateRecord:
-    """A protein + DNA entry; optionally with an assembly interface composition."""
-    asm = {"rcsb_id": "TNA-1", "rcsb_assembly_info": {"polymer_monomer_count": 50}}
-    if interface_comp is not None:
-        asm["interfaces"] = [{"rcsb_interface_info": {"polymer_composition": interface_comp}}]
+def _protein_na_record(prot_na_interfaces: int | None) -> CandidateRecord:
+    """A protein + DNA entry; optional protein<->NA interface count on assembly 1.
+
+    ``None`` omits the field entirely (RCSB had no interface data); an int sets
+    ``num_prot_na_interface_entities`` (0 = no protein/NA contact, >0 = holo).
+    """
+    info = {"polymer_monomer_count": 50}
+    if prot_na_interfaces is not None:
+        info["num_prot_na_interface_entities"] = prot_na_interfaces
+    asm = {"rcsb_id": "TNA-1", "rcsb_assembly_info": info}
     return CandidateRecord.from_data_api(
         {
             "rcsb_id": "TNA",
@@ -221,15 +226,15 @@ def _protein_na_record(interface_comp: str | None) -> CandidateRecord:
 
 
 def test_nucleotide_functional_with_protein_na_interface():
-    res = classify_components(_protein_na_record("Protein/NA"), _cfg())
+    res = classify_components(_protein_na_record(2), _cfg())  # 2 protein/NA interfaces
     assert res["has_nucleotide"] is True
     assert "nucleotide" in res["classes"]
     assert res["tiers"]["nucleic_acid"]["tier"] == TIER_FUNCTIONAL
 
 
 def test_nucleotide_ambiguous_without_interface():
-    # DNA present but no protein/NA interface (co-deposited, not holo).
-    res = classify_components(_protein_na_record("Protein (only)"), _cfg())
+    # DNA present but zero protein/NA interfaces (co-deposited, not holo).
+    res = classify_components(_protein_na_record(0), _cfg())
     assert res["has_nucleotide"] is True
     assert "nucleotide" not in res["classes"]
     assert "nucleotide" in res["ambiguous_classes"]
