@@ -1,0 +1,24 @@
+# Python
+__pycache__/
+*.py[cod]
+*.egg-info/
+.eggs/
+build/
+dist/
+.venv/
+venv/
+
+# IF-Split cache: downloaded mmCIF (large). Manifests/locks in data/out/ are kept.
+data/cache/*
+!data/cache/.gitkeep
+
+# Tooling
+.pytest_cache/
+.mypy_cache/
+.ruff_cache/
+
+# Claude Code / harness runtime artifacts (local only).
+.claude/
+
+# uv: commit uv.lock, ignore the managed virtualenv.
+# (.venv is already covered above.)
