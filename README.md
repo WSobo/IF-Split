@@ -1,111 +1,201 @@
 # IF-Split
 
-A reproducible, date-pinned, ligand-aware train/val/test splitter for the PDB.
+**A reproducible, date-pinned, ligand-aware train/val/test splitter for the PDB.**
 
-IF-Split reproduces the *methodology* of the LigandMPNN data split (Dauparas et
-al., *Nature Methods* 2025) — 30% sequence-identity clustering with
-ligand-categorized test sets — but generates it on demand from a current PDB
-snapshot, with a manifest + lock file so a collaborator can reproduce the exact
-dataset later. See [PLAN.md](PLAN.md) for the full spec.
+IF-Split borrows the *split logic* of LigandMPNN (Dauparas et al., *Nature
+Methods* 2025) — cluster proteins at 30% sequence identity, partition so no
+cluster spans two splits, categorize the test set by ligand class — but instead
+of inheriting a frozen 2022 snapshot it generates the split **on demand from
+today's PDB**, and emits a lock file so a collaborator can reproduce the exact
+dataset later. See [PLAN.md](PLAN.md) for the full design spec.
 
-## Two reproducibility guarantees
+It is built entirely on RCSB **metadata** (the Search + Data APIs): **no
+structure coordinates are downloaded** to build a split — only tiny per-entry
+records and sequences. Coordinates are an optional, downstream concern.
+
+---
+
+## Why it's different
+
+| | |
+|---|---|
+| **Fresh** | Builds from the current PDB, not a years-old frozen copy. |
+| **Reproducible** | A `dataset.lock` pins the snapshot; `verify` re-derives it and reports any drift. |
+| **Cheap** | Metadata-only — a split is megabytes of JSON, not a terabyte of mmCIF. |
+| **Honest about quality** | Every ligand is tiered (`functional` / `ambiguous` / `artifact`) with a reason; nothing is silently dropped. |
+
+### Two reproducibility guarantees
 
 1. **Snapshot by release date, not query time.** Entries are selected by
-   `release_date <= snapshot_date`, so re-running with the same `snapshot_date`
-   yields the same candidate set regardless of when you run it (modulo obsoleted
-   entries, which are tracked explicitly).
+   `release_date <= snapshot_date`. Re-running with the same `snapshot_date`
+   yields the same candidate set no matter *when* you run it (obsoleted entries
+   are tracked, not silently dropped).
 2. **Deterministic cluster → split assignment.** A cluster's split is decided by
-   `hash(canonical_cluster_id + salt) mod N`, so existing clusters never move
-   when the dataset grows — the property that prevents train/test leakage on
-   regeneration.
+   hashing a stable cluster key into the cumulative split fractions — independent
+   of how many other clusters exist. Existing clusters never move when the PDB
+   grows, which is what prevents train/test leakage on regeneration. A
+   `splits.registry.json` pins prior assignments to make this exact even across
+   re-clustering.
 
-## Status
-
-**All phases complete.** The full pipeline runs end-to-end against live RCSB and
-is deterministic — **no structure coordinates are downloaded** (see
-[PLAN.md](PLAN.md) §1.5):
-
-Stage 1 enumerate (Search + Data API → `candidates.jsonl`) → Stage 3 filter
-(residue cap, no-protein, drop log) → Stage 4 ligand **confidence tiering**
-(`functional`/`ambiguous`/`artifact` from bound-components + binding-affinity
-signals, incl. His-tag/Ni purification-artifact curation — structures are
-annotated, never dropped) → Stage 5 cluster (RCSB precomputed per-entity
-membership) → Stage 6 deterministic hash split (no-cluster-leakage invariant
-asserted, growth-stable via a split registry) → Stage 7 `manifest.json` +
-`dataset.lock` + `splits.registry.json` → Stage 8 loader with
-**cluster-balanced sampling**.
-
-Verified: two `build` runs produce byte-identical manifests; `verify`
-round-trips the lock; live tiering correctly calls e.g. 101M `{HEM: functional,
-SO4: artifact}`. Optional remaining work: on-demand coordinate fetch, the
-`mmseqs2` clustering backend, and the opt-in `--enforce-minimums` test
-stratification top-up (all outside the core split path).
-
-### Quality model: annotate, don't destroy
-
-IF-Split is a *tool*, not a single frozen dataset, so it won't make an
-irreversible quality call for you. Every ligand gets a **confidence tier** + a
-reason (e.g. `metal_bound`, `ligand_affinity`, `histag_metal`, `additive`,
-`counterion`, `metal_unbound`) recorded in the manifest. Class labels derive from
-the `functional` tier by default; `ambiguous` is reported but unlabelled;
-`artifact` is excluded from labels — **but the structure always stays in its
-split**. A consumer wanting "pristine metal sites only" vs "maximum scale, I'll
-filter myself" changes a threshold, not the build. The same per-component tier is
-what a downstream featurizer reads to decide what counts as real ligand context.
+---
 
 ## Install
 
-Requires Python ≥ 3.11 and [`uv`](https://docs.astral.sh/uv/). `build` itself
-needs only network access to RCSB (no external binaries). The optional `mmseqs2`
-clustering backend and the optional coordinate/featurization path (`gemmi`) are
-Linux-native, so build/run under Linux/WSL.
+Requires Python ≥ 3.11 and [`uv`](https://docs.astral.sh/uv/). `build` needs
+only network access to RCSB — no external binaries. (The optional `mmseqs2`
+clustering backend and the optional coordinate/featurization path via `gemmi`
+are Linux-native, so run under Linux/WSL if you use them.)
 
 ```bash
-uv sync          # create .venv from uv.lock and install deps + dev tools (ruff, pytest)
+uv sync          # creates .venv from uv.lock, installs deps + dev tools (ruff, pytest)
 ```
 
-`uv sync` installs the `dev` dependency group (ruff, pytest) by default. The
-lockfile `uv.lock` is committed for reproducible environments.
+`uv.lock` is committed, so environments are reproducible.
 
-## Usage
+## Quickstart
 
 ```bash
-# Build the full split from RCSB (metadata only).
+# Build the full split from today's PDB (metadata only).
 uv run if-split build --config config/default.yaml --out data/out
-# Dev: cap to the first N candidates by sorted entry id (reproducible).
+
+# Dev: cap to the first N candidates (by sorted entry id — still reproducible).
 uv run if-split build --limit 50 --out /tmp/ifs
 
-# Reproduce-check: re-enumerate from a lock and report drift vs the live PDB.
-uv run if-split verify data/out/dataset.lock
-# Summarize a built manifest (split sizes, per-class test counts, curation).
+# Summarize a build: split sizes, per-class test counts, curation tiers.
 uv run if-split stats data/out/manifest.json
 
-# Growth-stable regeneration: pin prior cluster->split assignments.
+# Reproduce-check: re-derive from a lock and report drift vs the live PDB.
+uv run if-split verify data/out/dataset.lock
+
+# Growth-stable regeneration: pin prior cluster→split assignments.
 uv run if-split build --registry data/out/splits.registry.json --out data/out2
 ```
 
-`build` writes: `candidates.jsonl` (snapshot definition — one canonical JSON
-record per entry), `dataset.lock` (embedded config + candidates SHA-256 + entry
-list), `manifest.json` (per-split entry lists, ligand-class tags, per-class test
-counts, drop log, cluster/leakage stats), and `splits.registry.json`
-(canonical-key → split, for growth-stable regeneration). `verify` re-runs Stage 1
-and reports added/removed entries + hash match — warning rather than failing so
-reproductions are honest about upstream changes.
+### Outputs (`--out` directory)
+
+| File | Purpose |
+|---|---|
+| `candidates.jsonl` | The snapshot definition — one canonical JSON record per entry. Hashed into the lock. |
+| `dataset.lock` | Reproduction anchor: embedded config + candidates SHA-256 + entry list. |
+| `manifest.json` | Human-facing run record: per-split entry lists, ligand classes + tiers, per-class (and ambiguous) counts, drop log, cluster/leakage stats, entry→cluster map. |
+| `splits.registry.json` | `cluster key → split`, for growth-stable regeneration. |
+
+## How it works
+
+A `build` runs eight stages; none touch coordinates.
+
+| Stage | Module | What it does |
+|---|---|---|
+| 1 — enumerate | `enumerate.py`, `rcsb.py` | RCSB Search → entry IDs; Data API (GraphQL, batched) → sequences, ligands, residue counts, cluster membership → `candidates.jsonl`. |
+| 3 — filter | `parse.py` | Drop no-protein / no-sequence / oversized entries (assembly-1 residue count vs `max_total_residues`), with a drop log. |
+| 4 — ligands | `ligands.py` | Tier each non-protein component `functional`/`ambiguous`/`artifact`; derive class labels (metal / small-molecule / nucleotide). **Annotate, never drop.** |
+| 5 — cluster | `cluster.py` | Group protein entities by RCSB precomputed cluster id at `identity_threshold`; canonical key = smallest member id. |
+| 6 — split | `split.py` | Deterministic hash → train/val/test; assert no cluster spans two splits; audit residual secondary-chain overlap. |
+| 7 — manifest | `manifest.py` | Emit lock + manifest + registry (all deterministic, no wall-clock fields). |
+| 8 — loader | `dataset.py` | Read a manifest into train/val/test views with cluster-balanced sampling. |
+
+> Stage 2 (mmCIF coordinate download) is **optional and downstream** — only
+> needed to extract ligand context or feed a model, never to build a split.
+
+### Ligand quality: annotate, don't destroy
+
+IF-Split is a *tool*, not one frozen dataset, so it won't make an irreversible
+quality call for you. Every non-protein component is tiered, with a
+machine-readable reason, from RCSB metadata signals:
+
+| Tier | Meaning | Example reasons |
+|---|---|---|
+| `functional` | Real ligand/site → gets a class label | bound to protein (`nonpolymer_bound_components`) or has measured binding affinity |
+| `ambiguous` | Present but uncorroborated → reported, **not** labelled | `metal_unbound`, `ligand_unbound` |
+| `artifact` | Buffer / counterion / purification tag → excluded from labels | `additive`, `counterion`, `histag_metal` |
+
+The His-tag/Ni curation catches a known blemish in the LigandMPNN metal set:
+structures whose only "metal site" is a poly-His tag chelating Ni/Co from
+affinity purification. Live examples from a real build: `101M → {HEM:
+functional, SO4: artifact}`, `102L → {BME: artifact, CL: artifact}`.
+
+Crucially, **the structure always stays in its split** — a protein with a junk
+ion is still a good backbone; we just don't label the junk. A consumer wanting
+"pristine metal sites only" vs "maximum scale, I'll filter myself" changes a
+threshold, not the build. The same per-component tier is what a downstream
+featurizer reads to decide what counts as real ligand context.
+
+### Test-set representation
+
+The split is a pure deterministic hash, so the test set's ligand mix is reported
+but not forced by default: `manifest.json` carries per-split, per-class
+`functional` counts plus `ambiguous` counts, so under-representation is visible.
+An opt-in `--enforce-minimums` top-up (recruit `functional`-only ligand clusters
+into test in deterministic order) is scoped for a future release.
+
+### Using a split (loader)
+
+```python
+from ifsplit.dataset import load_dataset
+
+ds = load_dataset("data/out/manifest.json")
+print(len(ds.train), len(ds.val), len(ds.test))
+
+# Ligand-class views.
+metal_test = ds.test.with_class("metal")
+
+# Cluster-balanced sampling: one representative per sequence cluster per epoch,
+# so over-represented folds (lysozyme, common kinases) don't dominate.
+for epoch in range(3):
+    batch_ids = ds.train.sample_by_cluster(seed=epoch)
+```
+
+## Configuration
+
+Everything that affects the output lives in one YAML file
+([`config/default.yaml`](config/default.yaml)); its canonical hash is embedded
+in every manifest, so two builds with the same hash used identical settings.
+
+| Key | Default | Meaning |
+|---|---|---|
+| `snapshot_date` | `2026-05-30` | `release_date <= this` — the reproducibility anchor. |
+| `experimental_methods` | X-ray, EM | Allowed `exptl.method` values. |
+| `resolution_max_A` | `3.5` | Resolution cutoff. |
+| `max_total_residues` | `5999` | Size cap (LigandMPNN used `< 6000`). |
+| `excluded_het` | waters + common ions | Extra components forced to `artifact`. |
+| `use_biological_assembly` | `true` | Count residues from assembly 1, not the deposited asymmetric unit. |
+| `purification_metals` | `[NI, CO]` | Metals treated as IMAC tags; `[]` disables the heuristic. |
+| `histag_min_run` | `6` | His-run length that marks a purification tag. |
+| `exclude_purification_artifacts` | `true` | Demote His-tag metals to `artifact`. |
+| `identity_threshold` | `0.30` | Clustering cutoff (RCSB levels: 30/50/70/90/95/100). |
+| `clustering_backend` | `precomputed` | `precomputed` (RCSB clusters) or `mmseqs2` (run your own). |
+| `split_fractions` | 0.80 / 0.10 / 0.10 | train / val / test. |
+| `split_salt` | `snapsplit-v1` | Bump to intentionally reshuffle the split. |
+| `ligand_context_radius_A`, `max_ligand_atoms` | `8.0`, `25` | Featurization only (not part of the split). |
 
 ## Develop
 
 ```bash
-uv run pytest              # tests
+uv run pytest              # tests (offline; 1 opt-in network test, see below)
 uv run ruff check .        # lint
 uv run ruff format .       # format
+
+# Run the opt-in live RCSB round-trip test.
+IFSPLIT_NETWORK_TESTS=1 uv run pytest tests/test_integration.py
 ```
 
 ## Layout
 
 ```
-config/default.yaml   # single source of truth for a run (hashed into the manifest)
-src/ifsplit/          # config.py + one module per pipeline stage (1–8)
-data/cache/           # downloaded mmCIF (gitignored)
-data/out/             # generated manifests + lock files
+config/default.yaml      # single source of truth for a run (hashed into the manifest)
+src/ifsplit/             # config.py + one module per pipeline stage
+  enumerate.py rcsb.py   #   Stage 1: RCSB Search + Data API
+  parse.py               #   Stage 3: metadata filters
+  ligands.py             #   Stage 4: ligand tiering + classification
+  cluster.py split.py    #   Stages 5-6: clustering + deterministic split
+  manifest.py            #   Stage 7: lock + manifest + registry, verify/stats
+  dataset.py             #   Stage 8: loader + cluster-balanced sampling
+  download.py            #   Stage 2: optional mmCIF fetch (featurization only)
+data/cache/              # downloaded mmCIF, if ever used (gitignored)
+data/out/                # generated manifests + lock files
 tests/
 ```
+
+## License
+
+MIT — see [LICENSE](LICENSE).

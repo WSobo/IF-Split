@@ -7,6 +7,10 @@ snapshot, with a manifest/lock file that lets a collaborator reproduce the exact
 dataset later. This document is the spec. Build it in the phase order at the
 bottom.
 
+> **Status: implemented.** All phases are built, tested, and verified against
+> live RCSB (§8). For usage see [README.md](README.md); this file remains the
+> design rationale and the source of truth for *why* each decision was made.
+
 ## 1. Goal and the one hard constraint
 
 Replicate the methodology of the LigandMPNN data split (Dauparas et al., *Nature
@@ -417,11 +421,14 @@ split).
    `test_existing_cluster_does_not_move_when_dataset_grows`, via the registry).
    ← *done*
 
-**Status: all phases complete.** `build` is deterministic given a config (proven
-live: two `--limit 60` builds produced byte-identical manifests), `verify`
-round-trips the lock, and the no-cluster-leakage invariant is asserted every
-build. Remaining optional work: Stage 2 on-demand coordinate fetch + the
-`mmseqs2` clustering backend (both explicitly out of the core split path).
+**Status: all phases complete (64 tests, ruff clean).** `build` is deterministic
+given a config (proven live: repeated builds produce byte-identical manifests),
+`verify` round-trips the lock, and the no-cluster-leakage invariant is asserted
+every build. Beyond the original spec: Stage 4 grew **confidence tiering**
+(functional/ambiguous/artifact, annotate-never-drop) and Stage 8 grew
+**cluster-balanced sampling**. Remaining optional work, all explicitly out of the
+core split path: Stage 2 on-demand coordinate fetch, the `mmseqs2` clustering
+backend, and the opt-in `--enforce-minimums` test-stratification top-up.
 
 Each phase ends with a runnable CLI command and a test. The dataset is "done"
 when `build` is deterministic given a config, and `verify` round-trips the lock
