@@ -63,6 +63,11 @@ class CandidateRecord(BaseModel):
     assemblies: dict[str, int]  # assembly_id -> polymer_monomer_count
     polymer_entities: list[PolymerEntity]
     nonpolymer_comps: list[NonpolymerComp]
+    # Curation signals (Stage 4). comp ids that actually contact the protein
+    # (rcsb_entry_info.nonpolymer_bound_components) and comp ids with a measured
+    # binding affinity (rcsb_binding_affinity). Both are the buffer-vs-ligand gate.
+    bound_components: list[str] = []
+    affinity_comp_ids: list[str] = []
 
     @classmethod
     def from_data_api(cls, entry: dict) -> CandidateRecord:
@@ -76,10 +81,19 @@ class CandidateRecord(BaseModel):
         res_list = info.get("resolution_combined") or []
         resolution = min(res_list) if res_list else None
         deposited = info.get("deposited_polymer_monomer_count")
+        bound = sorted({c.upper() for c in (info.get("nonpolymer_bound_components") or [])})
 
         acc = entry.get("rcsb_accession_info") or {}
         rel = acc.get("initial_release_date")
         release_date = rel[:10] if rel else ""
+
+        affinity = sorted(
+            {
+                a["comp_id"].upper()
+                for a in (entry.get("rcsb_binding_affinity") or [])
+                if a.get("comp_id")
+            }
+        )
 
         assemblies: dict[str, int] = {}
         for asm in entry.get("assemblies") or []:
@@ -132,6 +146,8 @@ class CandidateRecord(BaseModel):
             assemblies=dict(sorted(assemblies.items())),
             polymer_entities=polymers,
             nonpolymer_comps=nonpolymers,
+            bound_components=bound,
+            affinity_comp_ids=affinity,
         )
 
     def to_canonical_json(self) -> str:

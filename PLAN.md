@@ -227,19 +227,43 @@ re-featurize from the cleaned structures.
     (glycerol, PEG, sulfate, EDO, etc.). Distinguishing biologically relevant
     ligands from buffer junk is the genuinely hard curation problem — start with
     a published additive blacklist and make it config-extensible.
+- **Confidence tiering — annotate, never destroy (implemented).** Curation runs
+  *before* classification: every non-protein component is tagged into one of
+  three tiers with a machine-readable reason, instead of silently dropping
+  anything.
+  - `functional` — real ligand/site: appears in
+    `rcsb_entry_info.nonpolymer_bound_components` (actually contacts the protein)
+    **or** has a measured `rcsb_binding_affinity`.
+  - `ambiguous` — present but uncorroborated (e.g. an unbound metal/ligand);
+    reported per-class but **not** given a class label.
+  - `artifact` — additive/buffer blacklist, a monatomic counterion (Na⁺/Cl⁻/…),
+    or a His-tag/Ni|Co purification metal (reason `histag_metal`).
+  Class labels (`metal`/`small_molecule`) derive from the `functional` tier only;
+  `nucleotide` = DNA/RNA chains. **No structure is ever dropped for ligand
+  quality** — a protein with a junk ion is still a good training backbone; we
+  just don't label the junk. Live-verified: 101M → `{HEM: functional, SO4:
+  artifact}`; 102L → `{BME: artifact, CL: artifact}`.
 - **Purification-artifact curation (the LigandMPNN metal blemish).** LigandMPNN's
   metal test set included structures where the only "metal site" was a poly-His
   purification tag chelating Ni/Co — an artifact of IMAC purification, not
-  biology. IF-Split flags an entry as a purification artifact when its *only*
-  metal(s) are `purification_metals` (Ni/Co by default) **and** a protein chain
-  carries a His-run ≥ `histag_min_run` (default 6). With
-  `exclude_purification_artifacts` (default true) that metal is dropped from the
-  metal class so such entries don't pollute the metal test set. A genuine metal
-  site (e.g. catalytic Zn) alongside a His-tag is *not* flagged. The flag is
-  always recorded in the manifest even when not acted on.
-- Tag each structure with the set of ligand classes it contains.
+  biology. The tier rule demotes Ni/Co to `artifact` only when it's the entry's
+  *sole* metal **and** a protein chain carries a His-run ≥ `histag_min_run`
+  (default 6); a genuine catalytic Zn alongside a His-tag is *not* demoted.
+  Always recorded in the manifest. Toggle via `exclude_purification_artifacts`.
+- Tag each structure with its functional-tier classes, ambiguous classes
+  (reported), and all per-component tiers + reasons. The same per-component tier
+  is what a downstream featurizer reads to decide real ligand context — the lever
+  that improves *training* quality, not just test reporting.
 - (Featurization-optional) extract ligand heavy atoms within
   `ligand_context_radius_A` of any protein atom, capped at `max_ligand_atoms`.
+
+> **Test-set stratification (see §6).** Default is a **report-only floor**: the
+> pure hash split is untouched; the manifest carries per-split, per-class
+> *functional* counts plus *ambiguous* counts so under-representation is visible.
+> An opt-in `--enforce-minimums N` top-up (recruit `functional`-only ligand
+> clusters into test in deterministic hash order, registry-pinned, shortfall
+> logged) is scoped but deferred — tiering first guarantees a quota can only ever
+> recruit *functional* ligands, never junk.
 
 **Stage 5 — Sequence clustering (`cluster.py`) — two backends**
 
@@ -307,9 +331,17 @@ Emit two artifacts in `data/out/`:
 
 **Stage 8 — Loader (`dataset.py`)**
 
-- A thin `Dataset` that reads a manifest, lazily loads parsed structures +
-  (optional) ligand context, and exposes train/val/test views. Keep
-  featurization pluggable so a model repo can supply its own.
+- A thin `Dataset` that reads a manifest and exposes train/val/test views (entry
+  ids, ligand classes, entry→cluster map). Featurization stays pluggable; the
+  loader carries no coordinates.
+- **Cluster-balanced sampling (implemented).** The PDB is heavily redundant
+  (thousands of near-identical lysozyme/kinase co-crystals); sampling entries
+  uniformly drowns the model in over-represented folds.
+  `SplitView.sample_by_cluster(seed)` draws one representative per sequence
+  cluster per epoch — deterministic given the seed (stable hash, no global RNG),
+  so an epoch is reproducible and varying the seed rotates which member is drawn.
+  Bigger *training-quality* lever than perfecting ligand tiers, and free because
+  the clusters already exist.
 
 ## 5. CLI surface (`cli.py`)
 

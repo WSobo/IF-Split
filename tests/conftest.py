@@ -1,7 +1,8 @@
 """Shared test fixtures: sample Data-API entry objects + a fake RCSB client.
 
-Includes cluster-membership and an extended-PDB-ID entry so tests cover both the
-legacy 4-char and the ``pdb_xxxxxxxx`` identifier forms.
+Includes cluster-membership, bound-component / binding-affinity curation signals,
+and an extended-PDB-ID entry so tests cover both the legacy 4-char and the
+``pdb_xxxxxxxx`` identifier forms.
 """
 
 from __future__ import annotations
@@ -28,6 +29,8 @@ def _raw_4hhb() -> dict:
         "rcsb_entry_info": {
             "resolution_combined": [1.74],
             "deposited_polymer_monomer_count": 574,
+            # HEM contacts the protein; the PO4 buffer does not (so PO4 -> artifact).
+            "nonpolymer_bound_components": ["HEM"],
         },
         "rcsb_accession_info": {"initial_release_date": "1984-07-17T00:00:00Z"},
         "polymer_entities": [
@@ -82,6 +85,8 @@ def _raw_1a1f() -> dict:
         "rcsb_entry_info": {
             "resolution_combined": [2.1],
             "deposited_polymer_monomer_count": 112,
+            # The zinc-finger Zn is a real, bound, structural metal.
+            "nonpolymer_bound_components": ["ZN"],
         },
         "rcsb_accession_info": {"initial_release_date": "1998-06-10T00:00:00Z"},
         "polymer_entities": [
@@ -126,6 +131,9 @@ def _raw_extended() -> dict:
         "rcsb_entry_info": {
             "resolution_combined": [2.0],
             "deposited_polymer_monomer_count": 250,
+            # The His-tag does coordinate the Ni, so it shows as bound -- yet the
+            # purification-artifact rule must still demote it (precedence test).
+            "nonpolymer_bound_components": ["NI"],
         },
         "rcsb_accession_info": {"initial_release_date": "2025-01-15T00:00:00Z"},
         "polymer_entities": [

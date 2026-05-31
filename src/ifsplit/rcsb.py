@@ -26,9 +26,14 @@ DATA_BATCH_SIZE = 200
 _RETRY_STATUS = {429, 500, 502, 503, 504}
 
 # GraphQL: everything Stages 3-6 need, no coordinates. Validated live against
-# 4HHB / 1A1F. rcsb_cluster_membership gives precomputed cluster ids per
-# identity level (30/50/70/90/95/100) for protein entities, so the default
-# clustering backend needs no separate cluster-file download.
+# 4HHB / 1A1F / 1IEP. Notable curation signals:
+#   - rcsb_cluster_membership: precomputed cluster id per identity level
+#     (30/50/70/90/95/100) for protein entities -> no cluster-file download.
+#   - rcsb_entry_info.nonpolymer_bound_components: comp ids that actually contact
+#     the protein (the cheap buffer-vs-ligand gate; e.g. 4HHB -> ["HEM"], its
+#     PO4/Cl buffer is absent).
+#   - rcsb_binding_affinity.comp_id: comps with a measured affinity (sparse but a
+#     strong positive "this is a real ligand" signal).
 _ENTRY_QUERY = """
 query($ids: [String!]!) {
   entries(entry_ids: $ids) {
@@ -37,8 +42,10 @@ query($ids: [String!]!) {
     rcsb_entry_info {
       resolution_combined
       deposited_polymer_monomer_count
+      nonpolymer_bound_components
     }
     rcsb_accession_info { initial_release_date }
+    rcsb_binding_affinity { comp_id }
     polymer_entities {
       rcsb_id
       entity_poly {

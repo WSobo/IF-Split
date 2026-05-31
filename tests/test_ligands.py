@@ -1,4 +1,4 @@
-"""Phase 4 (early) tests: ligand classification + purification-artifact curation."""
+"""Phase 4 tests: ligand tiering + classification + purification-artifact curation."""
 
 from __future__ import annotations
 
@@ -6,6 +6,9 @@ from pathlib import Path
 
 from ifsplit.config import Config, load_config
 from ifsplit.ligands import (
+    TIER_AMBIGUOUS,
+    TIER_ARTIFACT,
+    TIER_FUNCTIONAL,
     classify_components,
     elements_in_formula,
     has_histag,
@@ -23,6 +26,38 @@ def _cfg() -> Config:
     return load_config(DEFAULT_CONFIG)
 
 
+def _record(comps, *, bound=None, affinity=None, seq="ACDEFGHIKLMNPQRSTVWY", ptype="Protein"):
+    """Build a CandidateRecord from a crafted Data-API-shaped dict."""
+    entry = {
+        "rcsb_id": "TEST",
+        "exptl": [{"method": "X-RAY DIFFRACTION"}],
+        "rcsb_entry_info": {
+            "resolution_combined": [2.0],
+            "deposited_polymer_monomer_count": len(seq),
+            "nonpolymer_bound_components": bound or [],
+        },
+        "rcsb_accession_info": {"initial_release_date": "2020-01-01T00:00:00Z"},
+        "rcsb_binding_affinity": [{"comp_id": c} for c in (affinity or [])],
+        "polymer_entities": [
+            {
+                "rcsb_id": "TEST_1",
+                "entity_poly": {
+                    "rcsb_entity_polymer_type": ptype,
+                    "pdbx_seq_one_letter_code_can": seq,
+                },
+            }
+        ],
+        "nonpolymer_entities": [
+            {"nonpolymer_comp": {"chem_comp": {"id": cid, "formula": f}}} for cid, f in comps
+        ],
+        "assemblies": [
+            {"rcsb_id": "TEST-1", "rcsb_assembly_info": {"polymer_monomer_count": len(seq)}}
+        ],
+    }
+    return CandidateRecord.from_data_api(entry)
+
+
+# ----------------------------- low-level helpers --------------------------- #
 def test_elements_in_formula():
     assert elements_in_formula("C34 H32 Fe N4 O4") == {"C", "H", "FE", "N", "O"}
     assert elements_in_formula("Zn") == {"ZN"}
@@ -31,10 +66,8 @@ def test_elements_in_formula():
 
 
 def test_is_metal_ion_distinguishes_ion_from_cofactor():
-    zn = NonpolymerComp(comp_id="ZN", formula="Zn")
-    hem = NonpolymerComp(comp_id="HEM", formula="C34 H32 Fe N4 O4")
-    assert is_metal_ion(zn) is True
-    assert is_metal_ion(hem) is False  # contains Fe but is an organic cofactor
+    assert is_metal_ion(NonpolymerComp(comp_id="ZN", formula="Zn")) is True
+    assert is_metal_ion(NonpolymerComp(comp_id="HEM", formula="C34 H32 Fe N4 O4")) is False
 
 
 def test_longest_residue_run_and_histag():
@@ -44,8 +77,63 @@ def test_longest_residue_run_and_histag():
     assert has_histag("GSGSGHHHHHGS", 6) is False  # only 5
 
 
+# ------------------------------- tiering ----------------------------------- #
+def test_bound_ligand_is_functional():
+    rec = _record([("STI", "C29 H31 N7 O")], bound=["STI"])
+    res = classify_components(rec, _cfg())
+    assert res["tiers"]["STI"]["tier"] == TIER_FUNCTIONAL
+    assert res["small_molecules"] == ["STI"]
+    assert "small_molecule" in res["classes"]
+
+
+def test_unbound_ligand_is_ambiguous_not_functional():
+    rec = _record([("STI", "C29 H31 N7 O")], bound=[])  # present but not contacting
+    res = classify_components(rec, _cfg())
+    assert res["tiers"]["STI"]["tier"] == TIER_AMBIGUOUS
+    assert res["small_molecules"] == []  # not labelled
+    assert "small_molecule" in res["ambiguous_classes"]
+    assert "small_molecule" not in res["classes"]
+
+
+def test_affinity_forces_functional_even_if_unbound_list_empty():
+    rec = _record([("STI", "C29 H31 N7 O")], bound=[], affinity=["STI"])
+    res = classify_components(rec, _cfg())
+    assert res["tiers"]["STI"]["tier"] == TIER_FUNCTIONAL
+    assert res["small_molecules"] == ["STI"]
+
+
+def test_additive_is_artifact():
+    rec = _record([("GOL", "C3 H8 O3")], bound=["GOL"])  # glycerol, even if "bound"
+    res = classify_components(rec, _cfg())
+    assert res["tiers"]["GOL"]["tier"] == TIER_ARTIFACT
+    assert res["small_molecules"] == []
+
+
+def test_counterion_metal_is_artifact():
+    rec = _record([("NA", "Na")], bound=["NA"])
+    res = classify_components(rec, _cfg())
+    assert res["tiers"]["NA"]["tier"] == TIER_ARTIFACT
+    assert res["metals"] == []
+
+
+def test_unbound_metal_is_ambiguous():
+    rec = _record([("MG", "Mg")], bound=[])
+    res = classify_components(rec, _cfg())
+    assert res["tiers"]["MG"]["tier"] == TIER_AMBIGUOUS
+    assert res["metals"] == []
+    assert "metal" in res["ambiguous_classes"]
+
+
+def test_bound_metal_is_functional():
+    rec = _record([("MG", "Mg")], bound=["MG"])
+    res = classify_components(rec, _cfg())
+    assert res["tiers"]["MG"]["tier"] == TIER_FUNCTIONAL
+    assert res["metals"] == ["MG"]
+    assert "metal" in res["classes"]
+
+
+# --------------------- purification-artifact curation ---------------------- #
 def test_zinc_finger_not_flagged_as_artifact(sample_entries):
-    # 1A1F has Zn (a real, non-purification metal) -> never an artifact.
     rec = CandidateRecord.from_data_api(sample_entries["1A1F"])
     assert (
         is_purification_artifact(rec, purification_metals={"NI", "CO"}, histag_min_run=6) is False
@@ -59,34 +147,37 @@ def test_histag_nickel_flagged_as_artifact(artifact_entry):
 
 def test_classify_drops_artifact_metal_by_default(artifact_entry):
     rec = CandidateRecord.from_data_api(artifact_entry)
-    result = classify_components(rec, _cfg())
-    assert result["purification_artifact"] is True
-    # NI was the only metal and gets dropped -> no metal class.
-    assert "metal" not in result["classes"]
-    assert result["metals"] == []
+    res = classify_components(rec, _cfg())
+    assert res["purification_artifact"] is True
+    assert res["tiers"]["NI"]["tier"] == TIER_ARTIFACT
+    assert res["tiers"]["NI"]["reason"] == "histag_metal"
+    assert "metal" not in res["classes"]
+    assert res["metals"] == []
 
 
 def test_classify_keeps_artifact_metal_when_disabled(artifact_entry):
     rec = CandidateRecord.from_data_api(artifact_entry)
     cfg = _cfg().model_copy(update={"exclude_purification_artifacts": False})
-    result = classify_components(rec, cfg)
-    assert result["purification_artifact"] is True  # still flagged
-    assert result["metals"] == ["NI"]  # but retained
-    assert "metal" in result["classes"]
+    res = classify_components(rec, cfg)
+    assert res["purification_artifact"] is True  # still flagged
+    # With exclusion off and Ni bound by the His-tag, it counts as a metal again.
+    assert res["metals"] == ["NI"]
+    assert "metal" in res["classes"]
 
 
+# --------------------------- sample-entry checks --------------------------- #
 def test_classify_4hhb_small_molecule_and_no_metal(sample_entries):
-    # HEM is small-molecule (organic cofactor); PO4 is a blacklisted additive.
     rec = CandidateRecord.from_data_api(sample_entries["4HHB"])
-    result = classify_components(rec, _cfg())
-    assert result["small_molecules"] == ["HEM"]
-    assert result["metals"] == []
-    assert result["has_nucleotide"] is False
+    res = classify_components(rec, _cfg())
+    assert res["small_molecules"] == ["HEM"]  # bound cofactor
+    assert res["tiers"]["PO4"]["tier"] == TIER_ARTIFACT  # buffer
+    assert res["metals"] == []
+    assert res["has_nucleotide"] is False
 
 
 def test_classify_1a1f_metal_and_nucleotide(sample_entries):
     rec = CandidateRecord.from_data_api(sample_entries["1A1F"])
-    result = classify_components(rec, _cfg())
-    assert "metal" in result["classes"]  # real Zn
-    assert "nucleotide" in result["classes"]  # DNA chains
-    assert result["metals"] == ["ZN"]
+    res = classify_components(rec, _cfg())
+    assert "metal" in res["classes"]  # real bound Zn
+    assert "nucleotide" in res["classes"]  # DNA chains
+    assert res["metals"] == ["ZN"]

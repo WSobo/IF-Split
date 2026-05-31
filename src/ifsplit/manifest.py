@@ -6,9 +6,10 @@ Artifacts written to the output dir:
   ``candidates.jsonl`` hash + entry-id list. ``verify`` re-enumerates from it and
   reports drift (added/removed entries, hash match), warning not failing.
 - ``manifest.json``  - human-facing run record: config, drop log, per-split entry
-  lists, ligand-class tags, per-class test counts, cluster/leakage stats. Built
-  as a pure function of its inputs (no wall-clock fields) so two runs of the same
-  config produce byte-identical manifests (Phase 7).
+  lists, ligand-class tags + confidence tiers, per-class test counts, cluster /
+  leakage stats, and the entry->cluster map (for cluster-balanced sampling).
+  Built as a pure function of its inputs (no wall-clock fields) so two runs of
+  the same config produce byte-identical manifests.
 - ``splits.registry.json`` - canonical_key -> split, so a later, larger snapshot
   reuses prior assignments instead of re-hashing (growth stability).
 """
@@ -115,19 +116,29 @@ def build_manifest(
     for s in per_split:
         per_split[s].sort()
 
-    # Ligand-class tags per entry + per-class counts within each split.
+    # Ligand-class tags + per-component tiers per entry.
     ligand_classes = {eid: info["classes"] for eid, info in sorted(class_map.items())}
+    ligand_tiers = {eid: info.get("tiers", {}) for eid, info in sorted(class_map.items())}
     purification_artifacts = sorted(
         eid for eid, info in class_map.items() if info.get("purification_artifact")
     )
 
-    per_split_class_counts: dict[str, dict[str, int]] = {}
-    for s in SPLITS:
+    # Per-split, per-class counts at the functional tier (the test-quality view),
+    # plus the ambiguous counts so under-/over-confidence is visible.
+    def _class_counts(entries, key):
         counts: dict[str, int] = {}
-        for entry in per_split[s]:
-            for cls in class_map.get(entry, {}).get("classes", []):
+        for entry in entries:
+            for cls in class_map.get(entry, {}).get(key, []):
                 counts[cls] = counts.get(cls, 0) + 1
-        per_split_class_counts[s] = dict(sorted(counts.items()))
+        return dict(sorted(counts.items()))
+
+    per_split_class_counts = {s: _class_counts(per_split[s], "classes") for s in SPLITS}
+    per_split_ambiguous_counts = {
+        s: _class_counts(per_split[s], "ambiguous_classes") for s in SPLITS
+    }
+
+    # entry -> cluster key, for cluster-balanced sampling in the loader.
+    entry_clusters = dict(sorted(clusters.entry_to_cluster.items()))
 
     return {
         "manifest_schema": MANIFEST_SCHEMA,
@@ -153,10 +164,13 @@ def build_manifest(
             "cluster_counts": dict(sorted(splits.cluster_counts.items())),
             "leakage_entries": len(splits.leakage_entries),
             "per_split_class_counts": per_split_class_counts,
+            "per_split_ambiguous_counts": per_split_ambiguous_counts,
             "entries": per_split,
+            "entry_clusters": entry_clusters,
         },
         "ligands": {
             "classes": ligand_classes,
+            "tiers": ligand_tiers,
             "purification_artifacts": purification_artifacts,
         },
     }
@@ -225,16 +239,15 @@ def verify_lock(lock_path: str | Path, *, client=None) -> int:
 
 
 def summarize_manifest(manifest_path: str | Path) -> int:
-    """`stats` command: print split sizes and per-class test counts."""
+    """`stats` command: print split sizes and per-class (functional) test counts."""
     m = read_manifest(manifest_path)
     print(f"{m['dataset_version']}  (config {m['config_hash']})")
     flt = m["filter"]
     print(
         f"  candidates: {m['candidates']['count']}  kept: {flt['kept']}  dropped: {flt['dropped']}"
     )
-    if flt["drop_counts"]:
-        for reason, n in flt["drop_counts"].items():
-            print(f"    - {reason}: {n}")
+    for reason, n in flt["drop_counts"].items():
+        print(f"    - {reason}: {n}")
     cl = m["clustering"]
     print(
         f"  clustering: {cl['backend']} @ {cl['identity']}%  "
@@ -247,9 +260,14 @@ def summarize_manifest(manifest_path: str | Path) -> int:
         cc = sp["cluster_counts"].get(s, 0)
         print(f"    {s:5s}: {ec:>7} entries  {cc:>7} clusters")
     print(f"  cross-split secondary-chain overlap: {sp['leakage_entries']} entries")
-    print("  test set by ligand class:")
+    print("  test set by ligand class (functional tier):")
     for cls, n in sp["per_split_class_counts"].get("test", {}).items():
         print(f"    {cls}: {n}")
+    amb = sp.get("per_split_ambiguous_counts", {}).get("test", {})
+    if amb:
+        print("  test set ambiguous (reported, not labelled):")
+        for cls, n in amb.items():
+            print(f"    {cls}: {n}")
     arts = m["ligands"]["purification_artifacts"]
     print(f"  His-tag/Ni purification artifacts flagged: {len(arts)}")
     return 0

@@ -26,15 +26,32 @@ is deterministic — **no structure coordinates are downloaded** (see
 [PLAN.md](PLAN.md) §1.5):
 
 Stage 1 enumerate (Search + Data API → `candidates.jsonl`) → Stage 3 filter
-(residue cap, no-protein, drop log) → Stage 4 ligand classification incl.
-His-tag/Ni purification-artifact curation → Stage 5 cluster (RCSB precomputed
-per-entity membership) → Stage 6 deterministic hash split (no-cluster-leakage
-invariant asserted, growth-stable via a split registry) → Stage 7
-`manifest.json` + `dataset.lock` + `splits.registry.json` → Stage 8 loader.
+(residue cap, no-protein, drop log) → Stage 4 ligand **confidence tiering**
+(`functional`/`ambiguous`/`artifact` from bound-components + binding-affinity
+signals, incl. His-tag/Ni purification-artifact curation — structures are
+annotated, never dropped) → Stage 5 cluster (RCSB precomputed per-entity
+membership) → Stage 6 deterministic hash split (no-cluster-leakage invariant
+asserted, growth-stable via a split registry) → Stage 7 `manifest.json` +
+`dataset.lock` + `splits.registry.json` → Stage 8 loader with
+**cluster-balanced sampling**.
 
-Verified: two `build --limit 60` runs produce byte-identical manifests; `verify`
-round-trips the lock. Optional remaining work: on-demand coordinate fetch and the
-`mmseqs2` clustering backend (both outside the core split path).
+Verified: two `build` runs produce byte-identical manifests; `verify`
+round-trips the lock; live tiering correctly calls e.g. 101M `{HEM: functional,
+SO4: artifact}`. Optional remaining work: on-demand coordinate fetch, the
+`mmseqs2` clustering backend, and the opt-in `--enforce-minimums` test
+stratification top-up (all outside the core split path).
+
+### Quality model: annotate, don't destroy
+
+IF-Split is a *tool*, not a single frozen dataset, so it won't make an
+irreversible quality call for you. Every ligand gets a **confidence tier** + a
+reason (e.g. `metal_bound`, `ligand_affinity`, `histag_metal`, `additive`,
+`counterion`, `metal_unbound`) recorded in the manifest. Class labels derive from
+the `functional` tier by default; `ambiguous` is reported but unlabelled;
+`artifact` is excluded from labels — **but the structure always stays in its
+split**. A consumer wanting "pristine metal sites only" vs "maximum scale, I'll
+filter myself" changes a threshold, not the build. The same per-component tier is
+what a downstream featurizer reads to decide what counts as real ligand context.
 
 ## Install
 
