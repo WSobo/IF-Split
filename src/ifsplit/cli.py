@@ -1,9 +1,10 @@
 """IF-Split command-line interface.
 
-`build` runs Stage 1 (enumerate via RCSB Search + Data API -> candidates.jsonl)
-and writes the snapshot lock; `verify` re-enumerates from a lock and reports
-drift. Later stages (filter -> ligands -> cluster -> split -> manifest) are
-stubs that raise NotImplementedError; the CLI catches those and reports cleanly.
+`build` runs the full pipeline: Stage 1 enumerate (RCSB Search + Data API ->
+candidates.jsonl + dataset.lock), Stage 3 filter, Stage 4 ligand classification,
+Stage 5 cluster, Stage 6 deterministic split, Stage 7 manifest + registry. No
+structure coordinates are downloaded. `verify` re-enumerates from a lock and
+reports drift; `stats` summarizes a manifest.
 """
 
 from __future__ import annotations
@@ -21,8 +22,19 @@ DEFAULT_CONFIG = "config/default.yaml"
 
 
 def cmd_build(args: argparse.Namespace) -> int:
+    from .cluster import build_clusters
     from .enumerate import enumerate_candidates
-    from .manifest import build_lock, write_lock
+    from .ligands import classify_components
+    from .manifest import (
+        build_lock,
+        build_manifest,
+        read_registry,
+        write_lock,
+        write_manifest,
+        write_registry,
+    )
+    from .parse import drop_summary, filter_candidates
+    from .split import assert_no_cluster_leakage, assign_splits
 
     cfg = load_config(args.config)
     sf = cfg.split_fractions
@@ -47,17 +59,61 @@ def cmd_build(args: argparse.Namespace) -> int:
     records, _candidates_path, sha = enumerate_candidates(
         cfg, args.out, limit=args.limit, progress=lambda m: print(f"  {m}")
     )
-
-    lock = build_lock(
-        cfg,
-        entry_ids=[r.entry_id for r in records],
-        candidates_sha256=sha,
-        limit=args.limit,
+    lock_path = write_lock(
+        build_lock(
+            cfg,
+            entry_ids=[r.entry_id for r in records],
+            candidates_sha256=sha,
+            limit=args.limit,
+        ),
+        args.out,
     )
-    lock_path = write_lock(lock, args.out)
     print(f"  wrote {lock_path}")
+
+    print("Stage 3 - filter (metadata only):")
+    kept, drops = filter_candidates(records, cfg)
+    dcounts = drop_summary(drops)
+    print(f"  kept {len(kept)} / {len(records)}; dropped {len(drops)} {dcounts or ''}")
+
+    print("Stage 4 - ligand classification + curation:")
+    class_map = {r.entry_id: classify_components(r, cfg) for r in kept}
+    n_artifact = sum(1 for v in class_map.values() if v["purification_artifact"])
+    print(f"  classified {len(class_map)} entries; {n_artifact} purification artifact(s) flagged")
+
+    print(f"Stage 5 - cluster ({cfg.clustering_backend} @ {cfg.identity_level}%):")
+    clusters = build_clusters(kept, cfg)
+    print(
+        f"  {clusters.n_clusters} clusters; "
+        f"{len(clusters.multichain_entries)} multi-chain, "
+        f"{len(clusters.unclustered_entries)} unclustered"
+    )
+
+    print("Stage 6 - assign splits (deterministic hash):")
+    registry = read_registry(args.registry) if args.registry else {}
+    splits = assign_splits(clusters, cfg, registry=registry)
+    assert_no_cluster_leakage(splits, clusters)
+    c = splits.counts
+    n_leak = len(splits.leakage_entries)
+    print(f"  train={c['train']} val={c['val']} test={c['test']}  (leakage audit: {n_leak})")
+
+    print("Stage 7 - manifest + registry:")
+    manifest = build_manifest(
+        cfg,
+        candidates_sha256=sha,
+        n_candidates=len(records),
+        drops=drops,
+        drop_counts=dcounts,
+        clusters=clusters,
+        splits=splits,
+        class_map=class_map,
+    )
+    mpath = write_manifest(manifest, args.out)
+    rpath = write_registry(splits.cluster_split, args.out)
+    print(f"  wrote {mpath}")
+    print(f"  wrote {rpath}")
     print()
-    print(f"Stage 1 complete: {len(records)} candidates. Stages 3-7 pending (see PLAN.md §8).")
+    print(f"Build complete: {len(kept)} structures across train/val/test.")
+    print(f"Run `if-split stats {mpath}`.")
     return 0
 
 
@@ -97,6 +153,12 @@ def build_parser() -> argparse.ArgumentParser:
         type=int,
         default=None,
         help="Dev only: cap to the first N candidates by sorted entry id (reproducible).",
+    )
+    pb.add_argument(
+        "--registry",
+        default=None,
+        help="Optional prior splits.registry.json to pin existing cluster->split "
+        "assignments (growth stability).",
     )
     pb.set_defaults(func=cmd_build)
 

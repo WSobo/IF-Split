@@ -21,11 +21,20 @@ dataset later. See [PLAN.md](PLAN.md) for the full spec.
 
 ## Status
 
-**Phases 1–2 complete.** Config layer + Stage 1 (enumerate via RCSB Search +
-Data API → `candidates.jsonl`) + the snapshot lock and `verify` loop work
-end-to-end against live RCSB — **no structure coordinates are downloaded**
-(see [PLAN.md](PLAN.md) §1.5). Stages 3–8 (filter → ligands → cluster → split →
-manifest → loader) are stubbed; see [PLAN.md](PLAN.md) §8 for the build order.
+**All phases complete.** The full pipeline runs end-to-end against live RCSB and
+is deterministic — **no structure coordinates are downloaded** (see
+[PLAN.md](PLAN.md) §1.5):
+
+Stage 1 enumerate (Search + Data API → `candidates.jsonl`) → Stage 3 filter
+(residue cap, no-protein, drop log) → Stage 4 ligand classification incl.
+His-tag/Ni purification-artifact curation → Stage 5 cluster (RCSB precomputed
+per-entity membership) → Stage 6 deterministic hash split (no-cluster-leakage
+invariant asserted, growth-stable via a split registry) → Stage 7
+`manifest.json` + `dataset.lock` + `splits.registry.json` → Stage 8 loader.
+
+Verified: two `build --limit 60` runs produce byte-identical manifests; `verify`
+round-trips the lock. Optional remaining work: on-demand coordinate fetch and the
+`mmseqs2` clustering backend (both outside the core split path).
 
 ## Install
 
@@ -44,21 +53,27 @@ lockfile `uv.lock` is committed for reproducible environments.
 ## Usage
 
 ```bash
-# Enumerate the snapshot from RCSB (metadata only) -> candidates.jsonl + dataset.lock.
+# Build the full split from RCSB (metadata only).
 uv run if-split build --config config/default.yaml --out data/out
 # Dev: cap to the first N candidates by sorted entry id (reproducible).
 uv run if-split build --limit 50 --out /tmp/ifs
 
 # Reproduce-check: re-enumerate from a lock and report drift vs the live PDB.
 uv run if-split verify data/out/dataset.lock
+# Summarize a built manifest (split sizes, per-class test counts, curation).
+uv run if-split stats data/out/manifest.json
+
+# Growth-stable regeneration: pin prior cluster->split assignments.
+uv run if-split build --registry data/out/splits.registry.json --out data/out2
 ```
 
-`build` writes two artifacts: `candidates.jsonl` (the snapshot definition — one
-canonical JSON record per entry) and `dataset.lock` (embedded config + the
-candidates' SHA-256 + entry list). `verify` re-runs Stage 1 and reports added /
-removed entries and whether the hash still matches — warning rather than failing
-so reproductions are honest about what changed upstream. `stats <manifest.json>`
-lands with the manifest in a later phase.
+`build` writes: `candidates.jsonl` (snapshot definition — one canonical JSON
+record per entry), `dataset.lock` (embedded config + candidates SHA-256 + entry
+list), `manifest.json` (per-split entry lists, ligand-class tags, per-class test
+counts, drop log, cluster/leakage stats), and `splits.registry.json`
+(canonical-key → split, for growth-stable regeneration). `verify` re-runs Stage 1
+and reports added/removed entries + hash match — warning rather than failing so
+reproductions are honest about upstream changes.
 
 ## Develop
 

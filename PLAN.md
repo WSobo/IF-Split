@@ -370,17 +370,26 @@ split).
    download is optional/featurization and can come last.) ← *done*
 3. **Filter:** Stage 3 filters over the metadata in `candidates.jsonl` (residue
    counts, excluded HET, no-protein) with a drop log and counts. (mmCIF parsing
-   moves to the optional featurization path.)
+   moves to the optional featurization path.) ← *done*
 4. **Ligands:** Stage 4 classification from metadata (chem-comp + polymer types)
    + additive blacklist + nucleotide-as-polymer handling + His-tag/Ni
-   purification-artifact curation. ← *core implemented + tested*
-5. **Cluster + split:** Stage 5 `precomputed` backend (download + lock cluster
-   file) and Stage 6 hash assignment, with the leakage invariant as a hard test.
-6. **Manifest + stats + loader + optional fetch:** Stages 7, 8, and the optional
-   Stage 2 download.
+   purification-artifact curation. ← *done*
+5. **Cluster + split:** Stage 5 `precomputed` backend (per-entity Data API
+   cluster membership) and Stage 6 hash assignment, with the leakage invariant
+   as a hard test. ← *done*
+6. **Manifest + stats + loader:** Stages 7 (manifest + split registry) and 8
+   (loader). Optional Stage 2 coordinate fetch still pending. ← *done (fetch pending)*
 7. **Validation:** regenerate twice from the same config, assert identical
-   manifests; regenerate with a later `snapshot_date`, assert existing clusters
-   didn't move splits.
+   manifests (✓ `test_manifest_is_deterministic` + live `IDENTICAL_MANIFESTS`);
+   regenerate with growth, assert existing clusters didn't move splits (✓
+   `test_existing_cluster_does_not_move_when_dataset_grows`, via the registry).
+   ← *done*
+
+**Status: all phases complete.** `build` is deterministic given a config (proven
+live: two `--limit 60` builds produced byte-identical manifests), `verify`
+round-trips the lock, and the no-cluster-leakage invariant is asserted every
+build. Remaining optional work: Stage 2 on-demand coordinate fetch + the
+`mmseqs2` clustering backend (both explicitly out of the core split path).
 
 Each phase ends with a runnable CLI command and a test. The dataset is "done"
 when `build` is deterministic given a config, and `verify` round-trips the lock
