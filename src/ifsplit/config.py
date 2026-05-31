@@ -69,6 +69,19 @@ class Config(BaseModel):
     split_salt: str = Field(min_length=1)
     seed: int = Field(ge=0)
 
+    # --- quality filters (Stage 3): wwPDB validation-report metrics ---
+    # Metadata only (no coordinates). Each cap is optional (None disables it). An
+    # entry is dropped only when the metric is present AND violates the cap;
+    # entries whose report lacks a metric are kept (never penalized for an absent
+    # metric). Geometry caps (clashscore/Ramachandran/rotamer) apply to X-ray and
+    # cryo-EM; diffraction caps (R-free/RSRZ) naturally no-op on EM entries.
+    max_clashscore: float | None = Field(default=None, gt=0)
+    max_rfree: float | None = Field(default=None, gt=0)
+    max_ramachandran_outlier_pct: float | None = Field(default=None, ge=0)
+    max_rotamer_outlier_pct: float | None = Field(default=None, ge=0)
+    max_rsrz_outlier_pct: float | None = Field(default=None, ge=0)
+    require_validation_report: bool = False
+
     # --- featurization (downstream-optional; not part of the split definition) ---
     ligand_context_radius_A: float = Field(gt=0)
     max_ligand_atoms: int = Field(gt=0)

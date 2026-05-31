@@ -179,5 +179,64 @@ def test_classify_1a1f_metal_and_nucleotide(sample_entries):
     rec = CandidateRecord.from_data_api(sample_entries["1A1F"])
     res = classify_components(rec, _cfg())
     assert "metal" in res["classes"]  # real bound Zn
-    assert "nucleotide" in res["classes"]  # DNA chains
+    assert "nucleotide" in res["classes"]  # DNA chains, verified protein/NA interface
     assert res["metals"] == ["ZN"]
+
+
+# ----------------------- nucleotide holo gate (interface) ------------------ #
+def _protein_na_record(interface_comp: str | None) -> CandidateRecord:
+    """A protein + DNA entry; optionally with an assembly interface composition."""
+    asm = {"rcsb_id": "TNA-1", "rcsb_assembly_info": {"polymer_monomer_count": 50}}
+    if interface_comp is not None:
+        asm["interfaces"] = [{"rcsb_interface_info": {"polymer_composition": interface_comp}}]
+    return CandidateRecord.from_data_api(
+        {
+            "rcsb_id": "TNA",
+            "exptl": [{"method": "X-RAY DIFFRACTION"}],
+            "rcsb_entry_info": {
+                "resolution_combined": [2.0],
+                "deposited_polymer_monomer_count": 50,
+            },
+            "rcsb_accession_info": {"initial_release_date": "2020-01-01T00:00:00Z"},
+            "polymer_entities": [
+                {
+                    "rcsb_id": "TNA_1",
+                    "entity_poly": {
+                        "rcsb_entity_polymer_type": "Protein",
+                        "pdbx_seq_one_letter_code_can": "ACDEFGHIKLMNPQRSTVWY",
+                    },
+                },
+                {
+                    "rcsb_id": "TNA_2",
+                    "entity_poly": {
+                        "rcsb_entity_polymer_type": "DNA",
+                        "pdbx_seq_one_letter_code_can": "ATGCATGC",
+                    },
+                },
+            ],
+            "nonpolymer_entities": [],
+            "assemblies": [asm],
+        }
+    )
+
+
+def test_nucleotide_functional_with_protein_na_interface():
+    res = classify_components(_protein_na_record("Protein/NA"), _cfg())
+    assert res["has_nucleotide"] is True
+    assert "nucleotide" in res["classes"]
+    assert res["tiers"]["nucleic_acid"]["tier"] == TIER_FUNCTIONAL
+
+
+def test_nucleotide_ambiguous_without_interface():
+    # DNA present but no protein/NA interface (co-deposited, not holo).
+    res = classify_components(_protein_na_record("Protein (only)"), _cfg())
+    assert res["has_nucleotide"] is True
+    assert "nucleotide" not in res["classes"]
+    assert "nucleotide" in res["ambiguous_classes"]
+    assert res["tiers"]["nucleic_acid"]["tier"] == TIER_AMBIGUOUS
+
+
+def test_nucleotide_ambiguous_when_no_interface_data():
+    res = classify_components(_protein_na_record(None), _cfg())
+    assert "nucleotide" not in res["classes"]
+    assert "nucleotide" in res["ambiguous_classes"]

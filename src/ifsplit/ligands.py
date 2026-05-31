@@ -20,6 +20,8 @@ Signals used (all from the Data API, no coordinates):
   - ``affinity_comp_ids`` : a measured binding affinity exists (strong positive)
   - chem-comp ``formula`` : metal-only vs organic
   - His-tag + Ni/Co       : the IMAC purification-artifact pattern (existing rule)
+  - interface_compositions: a "Protein/NA" assembly interface verifies a real
+                            protein<->nucleic-acid contact (holo gate for nucleotide)
 """
 
 from __future__ import annotations
@@ -113,6 +115,20 @@ def longest_residue_run(seq: str, residue: str = "H") -> int:
 def has_histag(seq: str, min_run: int) -> bool:
     """True if ``seq`` contains a poly-histidine run of at least ``min_run``."""
     return longest_residue_run(seq, "H") >= min_run
+
+
+def has_protein_na_interface(record: CandidateRecord) -> bool:
+    """True if any assembly interface couples a protein with a nucleic-acid chain.
+
+    Reads RCSB's precomputed assembly-interface compositions (e.g. ``"Protein/NA"``)
+    — a metadata signal that the protein actually *contacts* the DNA/RNA, not just
+    that both were co-deposited. No coordinates.
+    """
+    for comp in record.interface_compositions:
+        up = comp.upper()
+        if "PROTEIN" in up and ("NA" in up or "NUCLEIC" in up or "DNA" in up or "RNA" in up):
+            return True
+    return False
 
 
 def metal_comps(record: CandidateRecord) -> list[NonpolymerComp]:
@@ -221,16 +237,26 @@ def classify_components(record: CandidateRecord, cfg: Config) -> dict:
             # Record the would-be class for reporting (metal vs small molecule).
             ambiguous_classes.add(CLASS_METAL if is_metal_ion(comp) else CLASS_SMALL_MOLECULE)
 
-    # Nucleotide class = DNA/RNA polymer chains only (chain-level, always
-    # functional). Non-polymer nucleotides (ATP/GTP/NAD) stay small_molecule.
+    # Nucleotide class = DNA/RNA polymer chains. Functional only if the protein
+    # actually *interfaces* the nucleic acid (RCSB assembly-interface metadata);
+    # an NA chain with no protein/NA interface is co-deposited, not holo, so the
+    # class is reported as ambiguous, not labelled. Non-polymer nucleotides
+    # (ATP/GTP/NAD) are handled above as small molecules.
     has_nucleotide = any(e.is_nucleic for e in record.polymer_entities)
+    nucleotide_functional = has_nucleotide and has_protein_na_interface(record)
+    if has_nucleotide:
+        if nucleotide_functional:
+            tiers["nucleic_acid"] = {"tier": TIER_FUNCTIONAL, "reason": "protein_na_interface"}
+        else:
+            ambiguous_classes.add(CLASS_NUCLEOTIDE)
+            tiers["nucleic_acid"] = {"tier": TIER_AMBIGUOUS, "reason": "no_protein_na_interface"}
 
     classes: set[str] = set()
     if functional_metals:
         classes.add(CLASS_METAL)
     if functional_sms:
         classes.add(CLASS_SMALL_MOLECULE)
-    if has_nucleotide:
+    if nucleotide_functional:
         classes.add(CLASS_NUCLEOTIDE)
 
     return {

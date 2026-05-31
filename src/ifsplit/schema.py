@@ -50,6 +50,41 @@ class NonpolymerComp(BaseModel):
     comp_type: str | None = None
 
 
+class QualityMetrics(BaseModel):
+    """wwPDB validation-report summary metrics (no coordinates).
+
+    Geometry metrics (clashscore, Ramachandran, rotamer) are reported for both
+    X-ray and cryo-EM; diffraction metrics (R-free, RSRZ) are X-ray only; EM
+    map-fit (backbone atom inclusion) is cryo-EM only. Any field may be ``None``
+    when the validation report does not provide it — a missing metric never
+    penalizes an entry (see :func:`ifsplit.parse.quality_drop`).
+    """
+
+    model_config = ConfigDict(extra="forbid")
+
+    clashscore: float | None = None  # all-atom clashes / 1000 atoms (lower better)
+    ramachandran_outlier_pct: float | None = None  # % backbone Ramachandran outliers
+    rotamer_outlier_pct: float | None = None  # % sidechain rotamer outliers
+    rfree: float | None = None  # diffraction DCC_Rfree (X-ray only)
+    rsrz_outlier_pct: float | None = None  # diffraction % RSRZ outliers (X-ray only)
+    em_backbone_inclusion: float | None = None  # EM backbone atom inclusion (higher better)
+
+    @property
+    def has_report(self) -> bool:
+        """True if the validation report supplied at least one metric."""
+        return any(
+            v is not None
+            for v in (
+                self.clashscore,
+                self.ramachandran_outlier_pct,
+                self.rotamer_outlier_pct,
+                self.rfree,
+                self.rsrz_outlier_pct,
+                self.em_backbone_inclusion,
+            )
+        )
+
+
 class CandidateRecord(BaseModel):
     """One PDB entry's snapshot metadata."""
 
@@ -68,6 +103,13 @@ class CandidateRecord(BaseModel):
     # binding affinity (rcsb_binding_affinity). Both are the buffer-vs-ligand gate.
     bound_components: list[str] = []
     affinity_comp_ids: list[str] = []
+    # Distinct RCSB assembly-interface polymer compositions (e.g. "Protein/NA",
+    # "Protein (only)"). A "Protein/NA" interface verifies a protein<->nucleic-acid
+    # contact (Stage 4 holo gate for the nucleotide class).
+    interface_compositions: list[str] = []
+    # wwPDB validation-report summary (Stage 3 quality filters). All fields
+    # optional; defaults to an empty report when RCSB has none.
+    quality: QualityMetrics = QualityMetrics()
 
     @classmethod
     def from_data_api(cls, entry: dict) -> CandidateRecord:
@@ -96,11 +138,16 @@ class CandidateRecord(BaseModel):
         )
 
         assemblies: dict[str, int] = {}
+        iface_comps: set[str] = set()
         for asm in entry.get("assemblies") or []:
             aid = asm.get("rcsb_id")
             count = (asm.get("rcsb_assembly_info") or {}).get("polymer_monomer_count")
             if aid is not None and count is not None:
                 assemblies[aid] = count
+            for iface in asm.get("interfaces") or []:
+                comp = (iface.get("rcsb_interface_info") or {}).get("polymer_composition")
+                if comp:
+                    iface_comps.add(comp)
 
         polymers: list[PolymerEntity] = []
         for p in entry.get("polymer_entities") or []:
@@ -137,6 +184,22 @@ class CandidateRecord(BaseModel):
                 )
         nonpolymers = [comps[k] for k in sorted(comps)]
 
+        # Validation-report summaries arrive as 1-element lists (or null).
+        def _first(items) -> dict:
+            return (items or [None])[0] or {}
+
+        geo = _first(entry.get("pdbx_vrpt_summary_geometry"))
+        dif = _first(entry.get("pdbx_vrpt_summary_diffraction"))
+        em = _first(entry.get("pdbx_vrpt_summary_em"))
+        quality = QualityMetrics(
+            clashscore=geo.get("clashscore"),
+            ramachandran_outlier_pct=geo.get("percent_ramachandran_outliers"),
+            rotamer_outlier_pct=geo.get("percent_rotamer_outliers"),
+            rfree=dif.get("DCC_Rfree"),
+            rsrz_outlier_pct=dif.get("percent_RSRZ_outliers"),
+            em_backbone_inclusion=em.get("atom_inclusion_backbone"),
+        )
+
         return cls(
             entry_id=entry_id,
             methods=methods,
@@ -148,6 +211,8 @@ class CandidateRecord(BaseModel):
             nonpolymer_comps=nonpolymers,
             bound_components=bound,
             affinity_comp_ids=affinity,
+            interface_compositions=sorted(iface_comps),
+            quality=quality,
         )
 
     def to_canonical_json(self) -> str:

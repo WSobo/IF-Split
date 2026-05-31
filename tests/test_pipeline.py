@@ -10,7 +10,10 @@ from ifsplit.dataset import load_dataset
 from ifsplit.ligands import classify_components
 from ifsplit.manifest import build_manifest, write_manifest
 from ifsplit.parse import (
+    DROP_CLASHSCORE,
     DROP_NO_PROTEIN,
+    DROP_NO_VALIDATION,
+    DROP_RFREE,
     DROP_TOO_LARGE,
     drop_summary,
     filter_candidates,
@@ -60,6 +63,41 @@ def test_filter_drops_too_large(sample_entries):
     assert kept == []
     assert drops[0]["reason"] == DROP_TOO_LARGE
     assert drops[0]["residues"] == 574
+
+
+def test_filter_drops_high_clashscore(sample_entries):
+    # 4HHB's real clashscore is 142; a 40 cap drops it but keeps 1A1F (4.5).
+    recs = [CandidateRecord.from_data_api(e) for e in sample_entries.values()]
+    kept, drops = filter_candidates(recs, _cfg(max_clashscore=40.0))
+    assert {r.entry_id for r in kept} == {"1A1F"}
+    assert drops[0]["reason"] == DROP_CLASHSCORE
+    assert drops[0]["value"] == 142.32
+
+
+def test_filter_keeps_when_metric_absent(sample_entries):
+    # 4HHB has no diffraction summary -> rfree is None -> an rfree cap can't drop it.
+    rec = CandidateRecord.from_data_api(sample_entries["4HHB"])
+    assert rec.quality.rfree is None
+    kept, drops = filter_candidates([rec], _cfg(max_rfree=0.25))
+    assert [r.entry_id for r in kept] == ["4HHB"]
+    assert drops == []
+
+
+def test_filter_drops_high_rfree(sample_entries):
+    # 1A1F has DCC_Rfree 0.21; a 0.20 cap drops it.
+    rec = CandidateRecord.from_data_api(sample_entries["1A1F"])
+    kept, drops = filter_candidates([rec], _cfg(max_rfree=0.20))
+    assert kept == []
+    assert drops[0]["reason"] == DROP_RFREE
+
+
+def test_require_validation_report_drops_reportless_entry():
+    # _protein_record() builds a record with no validation summary at all.
+    rec = _protein_record("AAA1", [10])
+    assert rec.quality.has_report is False
+    kept, drops = filter_candidates([rec], _cfg(require_validation_report=True))
+    assert kept == []
+    assert drops[0]["reason"] == DROP_NO_VALIDATION
 
 
 def test_drop_summary_counts():

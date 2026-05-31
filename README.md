@@ -143,8 +143,8 @@ A `build` runs eight stages; none touch coordinates.
 | Stage | Module | What it does |
 |---|---|---|
 | 1 — enumerate | `enumerate.py`, `rcsb.py` | RCSB Search → entry IDs; Data API (GraphQL, batched) → sequences, ligands, residue counts, cluster membership → `candidates.jsonl`. |
-| 3 — filter | `parse.py` | Drop no-protein / no-sequence / oversized entries (assembly-1 residue count vs `max_total_residues`), with a drop log. |
-| 4 — ligands | `ligands.py` | Tier each non-protein component `functional`/`ambiguous`/`artifact`; derive class labels (metal / small-molecule / nucleotide). **Annotate, never drop.** |
+| 3 — filter | `parse.py` | Drop no-protein / no-sequence / oversized entries (assembly-1 residue count vs `max_total_residues`), plus optional wwPDB validation-report quality caps (clashscore, R-free, Ramachandran/rotamer/RSRZ) — all from metadata. Every drop is logged with its reason. |
+| 4 — ligands | `ligands.py` | Tier each non-protein component `functional`/`ambiguous`/`artifact`; derive class labels (metal / small-molecule / nucleotide). Nucleotide is functional only with a verified protein↔NA assembly interface. **Annotate, never drop.** |
 | 5 — cluster | `cluster.py` | Group protein entities by RCSB precomputed cluster id at `identity_threshold`; canonical key = smallest member id. |
 | 6 — split | `split.py` | Deterministic hash → train/val/test; assert no cluster spans two splits; audit residual secondary-chain overlap. |
 | 7 — manifest | `manifest.py` | Emit lock + manifest + registry (all deterministic, no wall-clock fields). |
@@ -154,6 +154,30 @@ A `build` runs eight stages; none touch coordinates.
 > Stage 2 (mmCIF coordinate download) is **optional and downstream** — only
 > needed to extract ligand context or feed a model, never to build a split. See
 > [Downloading structures](#downloading-structures-fetch) for the `fetch` command.
+
+### Structure quality (validation report)
+
+For the highest-quality backbones, `build` can filter on the **wwPDB validation
+report** — fetched as metadata, so the no-download invariant still holds. The
+metrics come straight from the deposited report:
+
+| Cap | Metric | Applies to |
+|---|---|---|
+| `max_clashscore` | all-atom clashscore | X-ray + cryo-EM |
+| `max_ramachandran_outlier_pct` | % backbone Ramachandran outliers | X-ray + cryo-EM |
+| `max_rotamer_outlier_pct` | % sidechain rotamer outliers | X-ray + cryo-EM |
+| `max_rfree` | R-free (DCC) | X-ray |
+| `max_rsrz_outlier_pct` | % real-space-R Z-score outliers | X-ray |
+
+Two rules keep it honest: a cap fires **only when the metric is present**, so a
+cryo-EM entry is never dropped for a missing R-free; and every cap is **off by
+default**, so the snapshot is unchanged until you opt in. `require_validation_report`
+drops entries with no report at all. Each drop is logged with its reason and
+value (e.g. `clashscore_too_high`) and is summarised by `if-split stats`.
+
+> Strict starting point: `max_clashscore: 40`, `max_rfree: 0.30`,
+> `max_ramachandran_outlier_pct: 1.0`. Some classic low-quality depositions drop
+> out — e.g. the 1984 entry `4HHB` has a clashscore of 142.
 
 ### Ligand quality: annotate, don't destroy
 
@@ -166,6 +190,15 @@ machine-readable reason, from RCSB metadata signals:
 | `functional` | Real ligand/site → gets a class label | bound to protein (`nonpolymer_bound_components`) or has measured binding affinity |
 | `ambiguous` | Present but uncorroborated → reported, **not** labelled | `metal_unbound`, `ligand_unbound` |
 | `artifact` | Buffer / counterion / purification tag → excluded from labels | `additive`, `counterion`, `histag_metal` |
+
+**Holo gating (metadata-only).** Presence isn't enough. A small molecule or metal
+is `functional` only if RCSB reports it *contacting* the protein (`bound_components`)
+or it has a measured binding affinity; an unbound one is `ambiguous`. A DNA/RNA
+chain is `functional` *nucleotide* only when the biological assembly has a verified
+protein↔nucleic-acid interface (`rcsb_interface_info.polymer_composition == "Protein/NA"`)
+— a co-deposited but non-contacting oligo is reported `ambiguous`, never silently
+labelled. (Interfaces are RCSB-computed metadata, available for X-ray *and* cryo-EM,
+so no coordinates are downloaded.)
 
 The His-tag/Ni curation catches a known blemish in the LigandMPNN metal set:
 structures whose only "metal site" is a poly-His tag chelating Ni/Co from
@@ -224,6 +257,7 @@ in every manifest, so two builds with the same hash used identical settings.
 | `clustering_backend` | `precomputed` | `precomputed` (RCSB clusters) or `mmseqs2` (run your own). |
 | `split_fractions` | 0.80 / 0.10 / 0.10 | train / val / test. |
 | `split_salt` | `snapsplit-v1` | Bump to intentionally reshuffle the split. |
+| `max_clashscore`, `max_rfree`, `max_ramachandran_outlier_pct`, `max_rotamer_outlier_pct`, `max_rsrz_outlier_pct`, `require_validation_report` | off | Optional validation-report quality caps — see [Structure quality](#structure-quality-validation-report). |
 | `ligand_context_radius_A`, `max_ligand_atoms` | `8.0`, `25` | Featurization only (not part of the split). |
 
 ## Develop

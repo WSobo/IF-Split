@@ -34,6 +34,13 @@ _RETRY_STATUS = {429, 500, 502, 503, 504}
 #     PO4/Cl buffer is absent).
 #   - rcsb_binding_affinity.comp_id: comps with a measured affinity (sparse but a
 #     strong positive "this is a real ligand" signal).
+#   - pdbx_vrpt_summary_{geometry,diffraction,em}: wwPDB validation-report metrics
+#     (clashscore, Ramachandran/rotamer outliers, R-free, RSRZ). Geometry is
+#     reported for X-ray AND EM; diffraction is X-ray-only; each comes back as a
+#     1-element list. Metadata, not coordinates — keeps the no-download invariant.
+#   - assemblies.interfaces.rcsb_interface_info.polymer_composition: RCSB-computed
+#     assembly interfaces; a "Protein/NA" interface verifies a real protein<->DNA/RNA
+#     contact (the holo gate for the nucleotide class). Present for X-ray AND EM.
 _ENTRY_QUERY = """
 query($ids: [String!]!) {
   entries(entry_ids: $ids) {
@@ -46,6 +53,18 @@ query($ids: [String!]!) {
     }
     rcsb_accession_info { initial_release_date }
     rcsb_binding_affinity { comp_id }
+    pdbx_vrpt_summary_geometry {
+      clashscore
+      percent_ramachandran_outliers
+      percent_rotamer_outliers
+    }
+    pdbx_vrpt_summary_diffraction {
+      DCC_Rfree
+      percent_RSRZ_outliers
+    }
+    pdbx_vrpt_summary_em {
+      atom_inclusion_backbone
+    }
     polymer_entities {
       rcsb_id
       entity_poly {
@@ -60,6 +79,9 @@ query($ids: [String!]!) {
     assemblies {
       rcsb_id
       rcsb_assembly_info { polymer_monomer_count }
+      interfaces {
+        rcsb_interface_info { polymer_composition }
+      }
     }
   }
 }

@@ -74,7 +74,24 @@ def _raw_4hhb() -> dict:
                 }
             },
         ],
-        "assemblies": [{"rcsb_id": "4HHB-1", "rcsb_assembly_info": {"polymer_monomer_count": 574}}],
+        "assemblies": [
+            {
+                "rcsb_id": "4HHB-1",
+                "rcsb_assembly_info": {"polymer_monomer_count": 574},
+                "interfaces": [{"rcsb_interface_info": {"polymer_composition": "Protein (only)"}}],
+            }
+        ],
+        # Real 4HHB validation values: a 1984 X-ray entry with a dreadful
+        # clashscore (142) and no recomputed diffraction summary.
+        "pdbx_vrpt_summary_geometry": [
+            {
+                "clashscore": 142.32,
+                "percent_ramachandran_outliers": 1.24,
+                "percent_rotamer_outliers": 9.52,
+            }
+        ],
+        "pdbx_vrpt_summary_diffraction": None,
+        "pdbx_vrpt_summary_em": None,
     }
 
 
@@ -119,7 +136,24 @@ def _raw_1a1f() -> dict:
                 }
             }
         ],
-        "assemblies": [{"rcsb_id": "1A1F-1", "rcsb_assembly_info": {"polymer_monomer_count": 112}}],
+        "assemblies": [
+            {
+                "rcsb_id": "1A1F-1",
+                "rcsb_assembly_info": {"polymer_monomer_count": 112},
+                # The zinc-finger protein interfaces the DNA -> verified holo NA.
+                "interfaces": [{"rcsb_interface_info": {"polymer_composition": "Protein/NA"}}],
+            }
+        ],
+        # A well-refined X-ray entry: good geometry + a diffraction summary.
+        "pdbx_vrpt_summary_geometry": [
+            {
+                "clashscore": 4.5,
+                "percent_ramachandran_outliers": 0.0,
+                "percent_rotamer_outliers": 1.0,
+            }
+        ],
+        "pdbx_vrpt_summary_diffraction": [{"DCC_Rfree": 0.21, "percent_RSRZ_outliers": 2.5}],
+        "pdbx_vrpt_summary_em": None,
     }
 
 
@@ -162,6 +196,15 @@ def _raw_extended() -> dict:
         "assemblies": [
             {"rcsb_id": "pdb_00009xyz-1", "rcsb_assembly_info": {"polymer_monomer_count": 250}}
         ],
+        "pdbx_vrpt_summary_geometry": [
+            {
+                "clashscore": 8.0,
+                "percent_ramachandran_outliers": 0.5,
+                "percent_rotamer_outliers": 2.0,
+            }
+        ],
+        "pdbx_vrpt_summary_diffraction": [{"DCC_Rfree": 0.25, "percent_RSRZ_outliers": 4.0}],
+        "pdbx_vrpt_summary_em": None,
     }
 
 

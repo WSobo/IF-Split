@@ -27,6 +27,21 @@ split_fractions: {train: 0.80, val: 0.10, test: 0.10}
 split_salt: "snapsplit-v1"         # bump to reshuffle intentionally
 seed: 0
 
+# Quality filters (Stage 3) — wwPDB validation-report metrics, fetched as
+# metadata (NO coordinate download). Each cap is optional: null disables it. An
+# entry is dropped only when the metric is present AND exceeds the cap; entries
+# whose report lacks a metric are kept (never penalized for an absent metric).
+# Geometry caps (clashscore/Ramachandran/rotamer) apply to BOTH X-ray and cryo-EM;
+# diffraction caps (R-free/RSRZ) are X-ray-only and no-op on EM. Defaults are off
+# so the snapshot is unchanged until you opt in; suggested high-quality starting
+# points are shown in the trailing comments.
+max_clashscore: null                 # e.g. 40    (all-atom clashes/1000 atoms; lower=better)
+max_rfree: null                      # e.g. 0.30  (X-ray DCC R-free)
+max_ramachandran_outlier_pct: null   # e.g. 1.0   (% backbone Ramachandran outliers)
+max_rotamer_outlier_pct: null        # e.g. 5.0   (% sidechain rotamer outliers)
+max_rsrz_outlier_pct: null           # e.g. 20    (% real-space-R Z-score outliers, X-ray)
+require_validation_report: false     # drop entries lacking a validation report entirely
+
 # Ligand context (downstream-optional; featurization, not split definition).
 ligand_context_radius_A: 8.0
 max_ligand_atoms: 25

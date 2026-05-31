@@ -66,6 +66,34 @@ def test_extended_pdb_id_stored_verbatim(artifact_entry):
     assert "pdb_00009xyz-1" in rec.assemblies
 
 
+def test_quality_metrics_parsed(sample_entries):
+    hhb = CandidateRecord.from_data_api(sample_entries["4HHB"])
+    assert hhb.quality.clashscore == 142.32
+    assert hhb.quality.ramachandran_outlier_pct == 1.24
+    assert hhb.quality.rfree is None  # 4HHB has no recomputed diffraction summary
+    assert hhb.quality.has_report is True
+
+    a1f = CandidateRecord.from_data_api(sample_entries["1A1F"])
+    assert a1f.quality.rfree == 0.21
+    assert a1f.quality.rsrz_outlier_pct == 2.5
+
+
+def test_interface_compositions_parsed(sample_entries):
+    a1f = CandidateRecord.from_data_api(sample_entries["1A1F"])
+    assert "Protein/NA" in a1f.interface_compositions  # zinc-finger / DNA
+    hhb = CandidateRecord.from_data_api(sample_entries["4HHB"])
+    assert "Protein/NA" not in hhb.interface_compositions  # protein-only
+
+
+def test_quality_metrics_in_canonical_bytes(sample_entries):
+    # Metrics are serialized into candidates.jsonl so consumers can post-filter
+    # (full read-back is covered by test_jsonl_roundtrip).
+    rec = CandidateRecord.from_data_api(sample_entries["1A1F"])
+    data = canonical_jsonl_bytes([rec])
+    assert b'"clashscore":4.5' in data
+    assert b'"rfree":0.21' in data
+
+
 def test_canonical_jsonl_is_order_independent(sample_entries):
     a = CandidateRecord.from_data_api(sample_entries["4HHB"])
     b = CandidateRecord.from_data_api(sample_entries["1A1F"])
