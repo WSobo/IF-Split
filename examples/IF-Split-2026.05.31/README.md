@@ -20,10 +20,10 @@ The **full artifacts are not in git** — they're large and regenerable:
 
 | Artifact | Size | |
 |---|--:|---|
-| `candidates.jsonl` | ~689 MB | snapshot definition: per-entity sequences + curation signals |
-| `dataset.lock` | ~18 MB | reproduction anchor: embedded config + all entry IDs + candidates SHA-256 |
-| `manifest.json` | ~23 MB | full record incl. per-split entry lists, entry→component map, per-entry ligand tiers |
-| `splits.registry.json` | ~4.7 MB | canonical_key → split, for growth-stable regeneration |
+| `candidates.jsonl` | ~320 MB | snapshot definition: per-entity sequences + curation signals |
+| `manifest.json` | ~59 MB | full record incl. per-split entry lists, entry→component map, per-entry ligand tiers |
+| `dataset.lock` | ~3 MB | reproduction anchor: embedded config + all entry IDs + candidates SHA-256 |
+| `splits.registry.json` | ~440 KB | canonical_key → split, for growth-stable regeneration |
 
 To distribute these as a citable, downloadable split, attach them to a GitHub
 Release (or Zenodo) rather than committing them. `build` reproduces them exactly
