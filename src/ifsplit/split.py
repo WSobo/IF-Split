@@ -62,8 +62,7 @@ def assign_splits(
     registry = registry or {}
 
     cluster_split: dict[str, str] = {
-        key: registry.get(key, split_for_key(key, cfg))
-        for key in clusters.cluster_members
+        key: registry.get(key, split_for_key(key, cfg)) for key in clusters.cluster_members
     }
 
     counts = {s: 0 for s in SPLITS}

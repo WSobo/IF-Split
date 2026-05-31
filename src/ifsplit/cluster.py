@@ -78,9 +78,7 @@ def build_clusters(records: list[CandidateRecord], cfg: Config) -> ClusterResult
         proteins = [e for e in r.polymer_entities if e.is_protein]
         if not proteins:
             continue  # defensive; Stage 3 already drops no-protein entries
-        keys = sorted(
-            {raw_key[e.cluster_ids[level]] for e in proteins if level in e.cluster_ids}
-        )
+        keys = sorted({raw_key[e.cluster_ids[level]] for e in proteins if level in e.cluster_ids})
         if not keys:
             singleton = SINGLETON_PREFIX + min(e.entity_id for e in proteins)
             keys = [singleton]
