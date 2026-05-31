@@ -17,8 +17,10 @@ data/cache/*
 .mypy_cache/
 .ruff_cache/
 
-# Claude Code / harness runtime artifacts (local only).
-.claude/
+# Claude Code: share settings.json (project conventions), ignore local + runtime.
+.claude/*
+!.claude/settings.json
+.claude/settings.local.json
 
 # uv: commit uv.lock, ignore the managed virtualenv.
 # (.venv is already covered above.)
