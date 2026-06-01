@@ -1,5 +1,4 @@
 {
-  "_note": "Aggregate summary only. Per-entry split lists, entry->component map, ligand classes/tiers, and the full candidates.jsonl/dataset.lock are omitted (too large for git); see the GitHub Release for full artifacts.",
   "candidates": {
     "count": 223422,
     "sha256": "62116f0183c2eb9a1c3bf69a36331748b920a1b9e182c65eae7518b0c86336ad"
@@ -54,6 +53,21 @@
   },
   "config_hash": "eaa0d1757f53cb929794c21e7d47fcf4",
   "dataset_version": "IF-Split-2026.05.31",
+  "files": {
+    "clusters": "clusters.json",
+    "ligand_classes": "ligands.classes.json",
+    "ligand_tiers": "ligands.tiers.json",
+    "splits": {
+      "test": "test.json",
+      "train": "train.json",
+      "val": "val.json"
+    },
+    "test_by_class": {
+      "metal": "test/metal_test.json",
+      "nucleotide": "test/nucleotide_test.json",
+      "small_molecule": "test/small_molecule_test.json"
+    }
+  },
   "filter": {
     "drop_counts": {
       "no_protein_entity": 3078,
@@ -66,7 +80,7 @@
   "ligands": {
     "n_purification_artifacts": 404
   },
-  "manifest_schema": "if-split/manifest@1",
+  "manifest_schema": "if-split/manifest@2",
   "splits": {
     "cluster_counts": {
       "test": 1981,

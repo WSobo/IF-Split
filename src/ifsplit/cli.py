@@ -29,10 +29,15 @@ def cmd_build(args: argparse.Namespace) -> int:
     from .manifest import (
         build_lock,
         build_manifest,
+        build_tiers_doc,
         read_registry,
+        write_classes,
+        write_clusters,
         write_lock,
         write_manifest,
         write_registry,
+        write_split_files,
+        write_tiers,
     )
     from .parse import drop_summary, filter_candidates
     from .split import assign_splits, check_no_leakage
@@ -109,9 +114,18 @@ def cmd_build(args: argparse.Namespace) -> int:
         class_map=class_map,
     )
     mpath = write_manifest(manifest, args.out)
-    rpath = write_registry(splits.cluster_split, args.out)
-    print(f"  wrote {mpath}")
-    print(f"  wrote {rpath}")
+    split_paths = write_split_files(splits, class_map, args.out)
+    write_clusters(clusters.entry_to_cluster, args.out)
+    write_classes(class_map, args.out)
+    write_registry(splits.cluster_split, args.out)
+    write_tiers(build_tiers_doc(class_map), args.out)
+    print(f"  wrote {mpath} (provenance + counts)")
+    for s in ("train", "val", "test"):
+        print(f"  wrote {split_paths[s]}")
+    test_class_paths = [p for k, p in split_paths.items() if k.startswith("test:")]
+    for p in sorted(test_class_paths):
+        print(f"  wrote {p}")
+    print("  wrote clusters.json, ligands.classes.json, ligands.tiers.json, splits.registry.json")
     print()
     print(f"Build complete: {len(kept)} structures across train/val/test.")
     print(f"Run `if-split stats {mpath}`.")

@@ -19,7 +19,7 @@ import hashlib
 from dataclasses import dataclass
 from pathlib import Path
 
-from .manifest import read_manifest
+from .manifest import read_classes, read_clusters, read_id_list, read_manifest
 
 SPLITS = ("train", "val", "test")
 
@@ -72,16 +72,22 @@ class IFSplitDataset:
 
     def __init__(self, manifest_path: str | Path) -> None:
         self._m = read_manifest(manifest_path)
+        self._dir = Path(manifest_path).parent
         self.dataset_version: str = self._m["dataset_version"]
         self.config_hash: str = self._m["config_hash"]
-        self._classes: dict[str, list[str]] = self._m["ligands"]["classes"]
-        self._entries: dict[str, list[str]] = self._m["splits"]["entries"]
-        self._entry_clusters: dict[str, str] = self._m["splits"].get("entry_clusters", {})
+        files = self._m.get("files", {})
+        self._split_files: dict[str, str] = files.get("splits", {})
+        # Supporting maps live in sidecar files referenced by the manifest.
+        self._classes = read_classes(
+            self._dir / files.get("ligand_classes", "ligands.classes.json")
+        )
+        self._entry_clusters = read_clusters(self._dir / files.get("clusters", "clusters.json"))
 
     def split(self, name: str) -> SplitView:
         if name not in SPLITS:
             raise KeyError(f"unknown split {name!r}; expected one of {SPLITS}")
-        ids = self._entries.get(name, [])
+        fname = self._split_files.get(name, f"{name}.json")
+        ids = read_id_list(self._dir / fname)
         return SplitView(
             name=name,
             entry_ids=ids,

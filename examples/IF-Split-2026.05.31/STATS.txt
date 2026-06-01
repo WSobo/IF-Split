@@ -16,3 +16,5 @@ IF-Split-2026.05.31  (config eaa0d1757f53cb929794c21e7d47fcf4)
     nucleotide: 1
     small_molecule: 3596
   His-tag/Ni purification artifacts flagged: 404
+  split files: test.json, train.json, val.json
+  per-class test files: test/metal_test.json, test/nucleotide_test.json, test/small_molecule_test.json

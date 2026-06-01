@@ -24,7 +24,15 @@ from ifsplit.download import (
 )
 from ifsplit.hydrate import hydrate, select_targets
 from ifsplit.ligands import classify_components
-from ifsplit.manifest import build_manifest, write_manifest
+from ifsplit.manifest import (
+    build_manifest,
+    build_tiers_doc,
+    write_classes,
+    write_clusters,
+    write_manifest,
+    write_split_files,
+    write_tiers,
+)
 from ifsplit.parse import drop_summary, filter_candidates
 from ifsplit.schema import CandidateRecord
 from ifsplit.split import assign_splits
@@ -118,17 +126,23 @@ def manifest_path(tmp_path, sample_entries, artifact_entry):
         splits=sp,
         class_map=class_map,
     )
-    return write_manifest(m, tmp_path / "src")
+    src = tmp_path / "src"
+    write_split_files(sp, class_map, src)
+    write_clusters(cr.entry_to_cluster, src)
+    write_classes(class_map, src)
+    write_tiers(build_tiers_doc(class_map), src)
+    return write_manifest(m, src)
 
 
 def test_select_targets_orders_and_scopes(manifest_path):
     from ifsplit.manifest import read_manifest
 
     m = read_manifest(manifest_path)
-    all_targets = select_targets(m, ["train", "val", "test"])
+    base = manifest_path.parent
+    all_targets = select_targets(m, ["train", "val", "test"], base_dir=base)
     assert len(all_targets) == 3  # 4HHB, 1A1F, pdb_00009xyz
     # Subsetting to one split returns only that split's entries.
-    test_only = select_targets(m, ["test"])
+    test_only = select_targets(m, ["test"], base_dir=base)
     assert all(s == "test" for _, s in test_only)
 
 

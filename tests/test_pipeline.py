@@ -201,13 +201,47 @@ def test_manifest_is_deterministic(sample_entries, artifact_entry):
 
 def test_manifest_has_all_entries(sample_entries, artifact_entry):
     m = _full_manifest(sample_entries, artifact_entry, _cfg())
-    entries = m["splits"]["entries"]
-    total = sum(len(v) for v in entries.values())
+    # The manifest holds counts only (per-entry lists live in train/val/test.json).
+    total = sum(m["splits"]["entry_counts"].values())
     assert total == 3  # 4HHB, 1A1F, pdb_00009xyz
 
 
-def test_loader_roundtrip(tmp_path, sample_entries, artifact_entry):
+def test_manifest_is_lightweight(sample_entries, artifact_entry):
+    import json
+
     m = _full_manifest(sample_entries, artifact_entry, _cfg())
+    # No per-entry arrays in the manifest itself — only counts + a files index.
+    assert "entries" not in m["splits"]
+    assert "entry_clusters" not in m["splits"]
+    assert "classes" not in m["ligands"]
+    assert "tiers" not in m["ligands"]
+    assert set(m["files"]["splits"]) == {"train", "val", "test"}
+    # Sanity: the whole manifest is tiny (well under 10 KB for 3 entries).
+    assert len(json.dumps(m)) < 10_000
+
+
+def test_loader_roundtrip(tmp_path, sample_entries, artifact_entry):
+    from ifsplit.manifest import write_classes, write_clusters, write_split_files
+
+    cfg = _cfg()
+    recs = _records(sample_entries, artifact_entry)
+    kept, drops = filter_candidates(recs, cfg)
+    class_map = {r.entry_id: classify_components(r, cfg) for r in kept}
+    cr = build_clusters(kept, cfg)
+    sp = assign_splits(cr, cfg)
+    m = build_manifest(
+        cfg,
+        candidates_sha256="deadbeef",
+        n_candidates=len(recs),
+        drops=drops,
+        drop_counts=drop_summary(drops),
+        clusters=cr,
+        splits=sp,
+        class_map=class_map,
+    )
+    write_split_files(sp, class_map, tmp_path)
+    write_clusters(cr.entry_to_cluster, tmp_path)
+    write_classes(class_map, tmp_path)
     path = write_manifest(m, tmp_path)
     ds = load_dataset(path)
     total = len(ds.train) + len(ds.val) + len(ds.test)

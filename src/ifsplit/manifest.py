@@ -5,11 +5,23 @@ Artifacts written to the output dir:
 - ``dataset.lock``   - reproduction anchor: embedded config + canonical
   ``candidates.jsonl`` hash + entry-id list. ``verify`` re-enumerates from it and
   reports drift (added/removed entries, hash match), warning not failing.
-- ``manifest.json``  - human-facing run record: config, drop log, per-split entry
-  lists, ligand-class tags + confidence tiers, per-class test counts, cluster /
-  component stats, and the entry->component map (for cluster-balanced sampling).
-  Built as a pure function of its inputs (no wall-clock fields) so two runs of
-  the same config produce byte-identical manifests.
+- ``manifest.json``  - small (~KB) provenance record: config, drop log, per-split
+  + per-class counts, cluster/component stats, and a ``files`` index pointing at
+  the data files below. No per-entry arrays, so it stays tiny at any scale. Built
+  as a pure function of its inputs (no wall-clock fields) -> byte-identical across
+  runs of the same config.
+
+The split itself is plain lists of PDB ids, each its own file:
+- ``train.json`` / ``val.json`` / ``test.json`` - the entry ids in each split
+  (one id per line; grepable and trivially loadable).
+- ``test/<class>_test.json`` - the test ids carrying each functional ligand class
+  (``metal`` / ``small_molecule`` / ``nucleotide``), for per-class evaluation.
+
+Supporting maps (only needed for sampling / curation, not to read the split):
+- ``clusters.json`` - entry_id -> component key (for cluster-balanced sampling).
+- ``ligands.classes.json`` - entry_id -> functional class labels.
+- ``ligands.tiers.json`` - per-component curation *audit trail* (tier + reason);
+  bulky (~24 MB at full-PDB scale), read only by ``fetch`` and curation audits.
 - ``splits.registry.json`` - canonical_key -> split, so a later, larger snapshot
   reuses prior assignments instead of re-hashing (growth stability).
 """
@@ -25,8 +37,16 @@ from . import __version__
 from .config import Config
 
 LOCK_SCHEMA = "if-split/lock@1"
-MANIFEST_SCHEMA = "if-split/manifest@1"
+MANIFEST_SCHEMA = "if-split/manifest@2"
 REGISTRY_SCHEMA = "if-split/registry@1"
+TIERS_SCHEMA = "if-split/tiers@1"
+
+# Data files written next to manifest.json (referenced by manifest["files"]).
+TIERS_FILENAME = "ligands.tiers.json"
+CLASSES_FILENAME = "ligands.classes.json"
+CLUSTERS_FILENAME = "clusters.json"
+SPLIT_FILES = {"train": "train.json", "val": "val.json", "test": "test.json"}
+TEST_SUBDIR = "test"  # per-class test-id lists live here: test/<class>_test.json
 
 
 # --------------------------------------------------------------------------- #
@@ -55,9 +75,13 @@ def build_lock(
     }
 
 
-def _write_json(obj: dict[str, Any], path: Path) -> Path:
+def _write_json(obj: dict[str, Any], path: Path, *, compact: bool = False) -> Path:
     path.parent.mkdir(parents=True, exist_ok=True)
-    path.write_text(json.dumps(obj, indent=2, sort_keys=True) + "\n", encoding="utf-8")
+    if compact:
+        text = json.dumps(obj, sort_keys=True, separators=(",", ":"))
+    else:
+        text = json.dumps(obj, indent=2, sort_keys=True)
+    path.write_text(text + "\n", encoding="utf-8")
     return path
 
 
@@ -116,13 +140,6 @@ def build_manifest(
     for s in per_split:
         per_split[s].sort()
 
-    # Ligand-class tags + per-component tiers per entry.
-    ligand_classes = {eid: info["classes"] for eid, info in sorted(class_map.items())}
-    ligand_tiers = {eid: info.get("tiers", {}) for eid, info in sorted(class_map.items())}
-    purification_artifacts = sorted(
-        eid for eid, info in class_map.items() if info.get("purification_artifact")
-    )
-
     # Per-split, per-class counts at the functional tier (the test-quality view),
     # plus the ambiguous counts so under-/over-confidence is visible.
     def _class_counts(entries, key):
@@ -136,10 +153,15 @@ def build_manifest(
     per_split_ambiguous_counts = {
         s: _class_counts(per_split[s], "ambiguous_classes") for s in SPLITS
     }
+    n_artifacts = sum(1 for info in class_map.values() if info.get("purification_artifact"))
 
-    # entry -> cluster key, for cluster-balanced sampling in the loader.
-    entry_clusters = dict(sorted(clusters.entry_to_cluster.items()))
+    # Per-class test-id files that will be written (only classes that occur).
+    test_class_files = {
+        cls: f"{TEST_SUBDIR}/{cls}_test.json" for cls in per_split_class_counts["test"]
+    }
 
+    # The manifest is small provenance only: NO per-entry arrays live here. The
+    # split membership and supporting maps are separate files (see "files").
     return {
         "manifest_schema": MANIFEST_SCHEMA,
         "dataset_version": cfg.dataset_version,
@@ -165,18 +187,99 @@ def build_manifest(
             "cluster_counts": dict(sorted(splits.cluster_counts.items())),
             "per_split_class_counts": per_split_class_counts,
             "per_split_ambiguous_counts": per_split_ambiguous_counts,
-            "entries": per_split,
-            "entry_clusters": entry_clusters,
         },
-        "ligands": {
-            "classes": ligand_classes,
-            "tiers": ligand_tiers,
-            "purification_artifacts": purification_artifacts,
+        "ligands": {"n_purification_artifacts": n_artifacts},
+        # Pointers to the data files written alongside this manifest.
+        "files": {
+            "splits": dict(SPLIT_FILES),
+            "test_by_class": dict(sorted(test_class_files.items())),
+            "clusters": CLUSTERS_FILENAME,
+            "ligand_classes": CLASSES_FILENAME,
+            "ligand_tiers": TIERS_FILENAME,
         },
     }
 
 
+# --------------------------------------------------------------------------- #
+# Split data files (the actual lists of PDB ids + supporting maps)
+# --------------------------------------------------------------------------- #
+def _write_id_list(ids: list[str], path: Path) -> Path:
+    """Write a JSON array of ids, one per line (compact yet grepable)."""
+    path.parent.mkdir(parents=True, exist_ok=True)
+    body = ",\n".join(json.dumps(i) for i in ids)
+    path.write_text(f"[\n{body}\n]\n" if ids else "[]\n", encoding="utf-8")
+    return path
+
+
+def write_split_files(splits, class_map: dict[str, dict], out_dir: str | Path) -> dict[str, Path]:
+    """Write train/val/test id lists + per-class test lists + supporting maps.
+
+    Returns a name->path map of everything written. Pure function of the inputs:
+    ids are sorted, so output is byte-stable.
+    """
+    out = Path(out_dir)
+    per_split: dict[str, list[str]] = {s: [] for s in SPLIT_FILES}
+    for entry, s in splits.entry_split.items():
+        per_split[s].append(entry)
+    for s in per_split:
+        per_split[s].sort()
+
+    written: dict[str, Path] = {}
+    for s, fname in SPLIT_FILES.items():
+        written[s] = _write_id_list(per_split[s], out / fname)
+
+    # Per-class test-id lists: test entries carrying each functional class.
+    test_ids = per_split["test"]
+    class_to_ids: dict[str, list[str]] = {}
+    for eid in test_ids:
+        for cls in class_map.get(eid, {}).get("classes", []):
+            class_to_ids.setdefault(cls, []).append(eid)
+    for cls, ids in class_to_ids.items():
+        written[f"test:{cls}"] = _write_id_list(sorted(ids), out / TEST_SUBDIR / f"{cls}_test.json")
+
+    return written
+
+
+def write_clusters(entry_to_cluster: dict[str, str], out_dir: str | Path) -> Path:
+    """entry_id -> component key, for cluster-balanced sampling."""
+    doc = {
+        "clusters_schema": "if-split/clusters@1",
+        "entry_clusters": dict(sorted(entry_to_cluster.items())),
+    }
+    return _write_json(doc, Path(out_dir) / CLUSTERS_FILENAME, compact=True)
+
+
+def read_clusters(path: str | Path) -> dict[str, str]:
+    path = Path(path)
+    if not path.exists():
+        return {}
+    return dict(json.loads(path.read_text(encoding="utf-8")).get("entry_clusters", {}))
+
+
+def write_classes(class_map: dict[str, dict], out_dir: str | Path) -> Path:
+    """entry_id -> functional class labels."""
+    classes = {eid: info["classes"] for eid, info in sorted(class_map.items())}
+    doc = {"classes_schema": "if-split/classes@1", "classes": classes}
+    return _write_json(doc, Path(out_dir) / CLASSES_FILENAME, compact=True)
+
+
+def read_classes(path: str | Path) -> dict[str, list[str]]:
+    path = Path(path)
+    if not path.exists():
+        return {}
+    return dict(json.loads(path.read_text(encoding="utf-8")).get("classes", {}))
+
+
+def read_id_list(path: str | Path) -> list[str]:
+    """Read a split id-list file (train.json etc.) into a list of ids."""
+    path = Path(path)
+    if not path.exists():
+        return []
+    return list(json.loads(path.read_text(encoding="utf-8")))
+
+
 def write_manifest(manifest: dict[str, Any], out_dir: str | Path) -> Path:
+    # Pretty-print: the manifest is now small (KB) provenance, meant to be read.
     return _write_json(manifest, Path(out_dir) / "manifest.json")
 
 
@@ -185,6 +288,33 @@ def read_manifest(path: str | Path) -> dict[str, Any]:
     if not path.exists():
         raise FileNotFoundError(f"Manifest not found: {path}")
     return json.loads(path.read_text(encoding="utf-8"))
+
+
+# --------------------------------------------------------------------------- #
+# Ligand-tier audit sidecar (bulky; off the load path)
+# --------------------------------------------------------------------------- #
+def build_tiers_doc(class_map: dict[str, dict]) -> dict[str, Any]:
+    """Per-entry, per-component tier + reason — the curation audit trail.
+
+    Pure function of ``class_map`` (the same input as the manifest), so it stays
+    deterministic and byte-stable. Lives in its own file because it is large and
+    read by nobody on the load path.
+    """
+    tiers = {eid: info.get("tiers", {}) for eid, info in sorted(class_map.items())}
+    return {"tiers_schema": TIERS_SCHEMA, "tiers": tiers}
+
+
+def write_tiers(doc: dict[str, Any], out_dir: str | Path) -> Path:
+    return _write_json(doc, Path(out_dir) / TIERS_FILENAME, compact=True)
+
+
+def read_tiers(path: str | Path) -> dict[str, dict]:
+    """Load the tier map from a sidecar file, or {} if absent."""
+    path = Path(path)
+    if not path.exists():
+        return {}
+    doc = json.loads(path.read_text(encoding="utf-8"))
+    return dict(doc.get("tiers", {}))
 
 
 # --------------------------------------------------------------------------- #
@@ -268,6 +398,14 @@ def summarize_manifest(manifest_path: str | Path) -> int:
         print("  test set ambiguous (reported, not labelled):")
         for cls, n in amb.items():
             print(f"    {cls}: {n}")
-    arts = m["ligands"]["purification_artifacts"]
-    print(f"  His-tag/Ni purification artifacts flagged: {len(arts)}")
+    lig = m["ligands"]
+    n_arts = lig.get("n_purification_artifacts", len(lig.get("purification_artifacts", [])))
+    print(f"  His-tag/Ni purification artifacts flagged: {n_arts}")
+    files = m.get("files", {})
+    if files:
+        sf = files.get("splits", {})
+        tbc = files.get("test_by_class", {})
+        print(f"  split files: {', '.join(sf.values())}")
+        if tbc:
+            print(f"  per-class test files: {', '.join(tbc.values())}")
     return 0

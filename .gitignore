@@ -12,15 +12,23 @@ venv/
 data/cache/*
 !data/cache/.gitkeep
 
-# Full build artifacts are large (candidates.jsonl ~320MB, manifest ~59MB) and
-# regenerable from config — keep them out of git. Distribute via a GitHub Release.
-# The examples/ dir holds only small summaries (STATS.txt, manifest.summary.json).
+# Build artifacts. The split itself is tiny (train/val/test.json + per-class test
+# lists + the KB-scale manifest.json) and IS committed under examples/. Only the
+# BULKY, regenerable companions are ignored — they belong in a GitHub Release:
+#   candidates.jsonl (~335MB), ligands.tiers.json (~24MB), and the per-entry maps.
 candidates.jsonl
 dataset.lock
+ligands.tiers.json
+ligands.classes.json
+clusters.json
 splits.registry.json
 splits.registry.json.tmp*
-manifest.json
-!examples/**/manifest.summary.json
+# ...but keep the committed example split (these live only under examples/).
+!examples/**/manifest.json
+!examples/**/train.json
+!examples/**/val.json
+!examples/**/test.json
+!examples/**/test/*.json
 
 # Tooling
 .pytest_cache/

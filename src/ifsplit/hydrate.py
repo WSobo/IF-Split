@@ -15,26 +15,47 @@ from typing import Any
 
 from . import __version__
 from .download import SPLITS, StructureFetcher
-from .manifest import read_manifest
+from .manifest import (
+    CLASSES_FILENAME,
+    CLUSTERS_FILENAME,
+    SPLIT_FILES,
+    TIERS_FILENAME,
+    read_classes,
+    read_clusters,
+    read_id_list,
+    read_manifest,
+    read_tiers,
+)
 
 ProgressFn = Callable[[str], None]
 
 
-def select_targets(manifest: dict[str, Any], splits: list[str]) -> list[tuple[str, str]]:
-    """(entry_id, split) pairs for the requested splits, deterministically ordered."""
-    entries = manifest["splits"]["entries"]
+def select_targets(
+    manifest: dict[str, Any], splits: list[str], base_dir: Path | None = None
+) -> list[tuple[str, str]]:
+    """(entry_id, split) pairs for the requested splits, deterministically ordered.
+
+    Reads each split's id list from its file (train.json etc.) next to the
+    manifest. ``base_dir`` defaults to the manifest's directory.
+    """
+    base = Path(base_dir) if base_dir is not None else Path(".")
+    split_files = manifest.get("files", {}).get("splits", SPLIT_FILES)
     targets: list[tuple[str, str]] = []
     for split in splits:
-        for eid in sorted(entries.get(split, [])):
+        fname = split_files.get(split, f"{split}.json")
+        for eid in sorted(read_id_list(base / fname)):
             targets.append((eid, split))
     return targets
 
 
-def _index_rows(manifest: dict[str, Any], fetch_rows: list[dict]) -> list[dict]:
+def _index_rows(
+    fetch_rows: list[dict],
+    classes: dict[str, list[str]],
+    entry_clusters: dict[str, str],
+    tiers: dict[str, dict] | None = None,
+) -> list[dict]:
     """Enrich each fetched file with split metadata for the ML index."""
-    classes = manifest["ligands"]["classes"]
-    tiers = manifest["ligands"].get("tiers", {})
-    entry_clusters = manifest["splits"].get("entry_clusters", {})
+    tiers = tiers or {}
     rows: list[dict] = []
     for r in fetch_rows:
         eid = r["entry_id"]
@@ -156,11 +177,17 @@ def hydrate(
     Returns a summary dict. Idempotent: re-running skips files already present.
     """
     manifest = read_manifest(manifest_path)
+    src = Path(manifest_path).parent
+    files = manifest.get("files", {})
+    # Split membership + supporting maps live in sidecar files next to the manifest.
+    classes = read_classes(src / files.get("ligand_classes", CLASSES_FILENAME))
+    entry_clusters = read_clusters(src / files.get("clusters", CLUSTERS_FILENAME))
+    tiers = read_tiers(src / files.get("ligand_tiers", TIERS_FILENAME))
     root = Path(root)
     root.mkdir(parents=True, exist_ok=True)
     splits = splits or list(SPLITS)
 
-    targets = select_targets(manifest, splits)
+    targets = select_targets(manifest, splits, base_dir=src)
 
     owns = fetcher is None
     fetcher = fetcher or StructureFetcher(assembly=assembly, workers=workers)
@@ -170,7 +197,7 @@ def hydrate(
         if owns:
             fetcher.close()
 
-    rows = _index_rows(manifest, res.index_rows)
+    rows = _index_rows(res.index_rows, classes, entry_clusters, tiers)
     index_paths = write_index(rows, root)
     (root / "manifest.json").write_text(
         json.dumps(manifest, indent=2, sort_keys=True) + "\n", encoding="utf-8"

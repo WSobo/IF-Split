@@ -1,33 +1,52 @@
 # Example split — IF-Split-2026.05.31
 
-A full-PDB build at a **today's-date cutoff** (snapshot `2026-05-31`), produced
-entirely from RCSB metadata — **no structure coordinates downloaded**. This is a
-worked example of what `if-split build` emits; reproduce it with:
+A full-PDB split at a **today's-date cutoff** (snapshot `2026-05-31`), produced
+entirely from RCSB metadata — **no structure coordinates downloaded**. The split
+itself is committed here: plain lists of PDB ids, KB-to-MB in size. Reproduce it
+byte-for-byte with:
 
 ```bash
 uv run if-split build --config examples/IF-Split-2026.05.31/config.yaml --out data/out
 ```
 
-## What's here
+## The split (committed)
 
-| File | What it is |
-|---|---|
-| [`config.yaml`](config.yaml) | The exact config used (= `config/default.yaml` with `snapshot_date: 2026-05-31`). |
-| [`STATS.txt`](STATS.txt) | `if-split stats` output for the build. |
-| [`manifest.summary.json`](manifest.summary.json) | The manifest's **aggregate** sections only (config, filter, clustering, split counts). |
-
-The **full artifacts are not in git** — they're large and regenerable:
-
-| Artifact | Size | |
+| File | Size | What it is |
 |---|--:|---|
-| `candidates.jsonl` | ~320 MB | snapshot definition: per-entity sequences + curation signals |
-| `manifest.json` | ~59 MB | full record incl. per-split entry lists, entry→component map, per-entry ligand tiers |
-| `dataset.lock` | ~3 MB | reproduction anchor: embedded config + all entry IDs + candidates SHA-256 |
-| `splits.registry.json` | ~440 KB | canonical_key → split, for growth-stable regeneration |
+| [`train.json`](train.json) | 1.5 MB | training-set PDB ids (one per line) |
+| [`val.json`](val.json) | 108 KB | validation-set PDB ids |
+| [`test.json`](test.json) | 100 KB | test-set PDB ids (all of them) |
+| [`test/metal_test.json`](test/metal_test.json) | 36 KB | test ids with a functional **metal** site |
+| [`test/small_molecule_test.json`](test/small_molecule_test.json) | 28 KB | test ids with a functional **small molecule** |
+| [`test/nucleotide_test.json`](test/nucleotide_test.json) | 8 KB | test ids that are protein↔**nucleic-acid** complexes |
+| [`manifest.json`](manifest.json) | 4 KB | provenance: config, counts, clustering stats, file index |
+| [`config.yaml`](config.yaml) | — | the exact config used (= `config/default.yaml`, cutoff pinned) |
+| [`STATS.txt`](STATS.txt) | — | `if-split stats` output |
 
-To distribute these as a citable, downloadable split, attach them to a GitHub
-Release (or Zenodo) rather than committing them. `build` reproduces them exactly
-from `config.yaml` (same config hash → byte-identical manifest).
+Each `*.json` split file is a flat JSON array of PDB ids — `grep`-friendly and
+loadable in one line:
+
+```python
+import json
+train = json.load(open("examples/IF-Split-2026.05.31/train.json"))
+metal_test = json.load(open("examples/IF-Split-2026.05.31/test/metal_test.json"))
+```
+
+## Not committed (bulky, regenerable)
+
+These are produced by the same `build` but kept out of git; distribute via a
+GitHub Release / Zenodo if you want them downloadable:
+
+| Artifact | Size | What it is |
+|---|--:|---|
+| `candidates.jsonl` | ~335 MB | snapshot definition: per-entity sequences + curation signals (the hash anchor) |
+| `ligands.tiers.json` | ~24 MB | per-component curation audit trail (tier + reason) |
+| `ligands.classes.json` | ~3.7 MB | entry → functional class labels |
+| `clusters.json` | ~3.4 MB | entry → sequence-cluster component (for `sample_by_cluster`) |
+| `dataset.lock` | ~3 MB | reproduction anchor: embedded config + all entry ids + candidates SHA-256 |
+
+`build` regenerates everything from `config.yaml` (same config hash → identical
+output).
 
 ## Headline numbers
 
