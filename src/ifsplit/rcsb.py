@@ -43,6 +43,10 @@ _RETRY_STATUS = {429, 500, 502, 503, 504}
 #     protein/NA contact (the holo gate for the nucleic_acid class). A single integer
 #     in the assembly-info block — far cheaper than listing every interface object
 #     (a ribosome has hundreds). Present for X-ray AND EM.
+#   - is_subject_of_investigation (per nonpolymer instance): RCSB's curated
+#     "ligand of interest" flag. Catches tightly but NON-covalently bound cofactors
+#     (FAD/NAD/FMN/NADP, many inhibitors) that nonpolymer_bound_components misses —
+#     that field is bond-based, so it omits non-covalent binders. One bool/instance.
 _ENTRY_QUERY = """
 query($ids: [String!]!) {
   entries(entry_ids: $ids) {
@@ -77,6 +81,9 @@ query($ids: [String!]!) {
     }
     nonpolymer_entities {
       nonpolymer_comp { chem_comp { id name formula type } }
+      nonpolymer_entity_instances {
+        rcsb_nonpolymer_instance_validation_score { is_subject_of_investigation }
+      }
     }
     assemblies {
       rcsb_id

@@ -16,7 +16,11 @@ tier to decide what counts as real ligand context — this is the lever that
 improves *training* quality, not just test reporting.
 
 Signals used (all from the Data API, no coordinates):
-  - ``bound_components``  : the comp actually contacts the protein (buffer gate)
+  - ``bound_components``  : the comp is covalently/coordination-bonded to the
+                            protein (buffer gate; bond-based, misses non-covalent)
+  - ``investigated_comp_ids`` : RCSB curated it a "subject of investigation" — a
+                            ligand of interest; catches non-covalent cofactors
+                            (FAD/NAD/FMN/NADP, inhibitors) bound_components misses
   - ``affinity_comp_ids`` : a measured binding affinity exists (strong positive)
   - chem-comp ``formula`` : metal-only vs organic
   - His-tag + Ni/Co       : the IMAC purification-artifact pattern (existing rule)
@@ -204,6 +208,7 @@ def tier_component(
     cid = comp.comp_id
     bound = cid in set(record.bound_components)
     has_affinity = cid in set(record.affinity_comp_ids)
+    investigated = cid in set(record.investigated_comp_ids)
 
     if is_metal_ion(comp):
         # Lone counterion / phasing atom -> artifact regardless of binding.
@@ -220,6 +225,8 @@ def tier_component(
             return TIER_AMBIGUOUS, "purification_metal_uncorroborated", None
         if bound:
             return TIER_FUNCTIONAL, "metal_bound", CLASS_METAL
+        if investigated:
+            return TIER_FUNCTIONAL, "metal_investigated", CLASS_METAL
         # "Trust biological metals" but require contact: an unbound metal far from
         # the protein is adventitious -> ambiguous, not functional.
         return TIER_AMBIGUOUS, "metal_unbound", None
@@ -231,6 +238,11 @@ def tier_component(
         return TIER_FUNCTIONAL, "ligand_affinity", CLASS_SMALL_MOLECULE
     if bound:
         return TIER_FUNCTIONAL, "ligand_bound", CLASS_SMALL_MOLECULE
+    # RCSB-curated "subject of investigation": catches non-covalently bound
+    # cofactors/inhibitors (FAD/NAD/FMN/NADP, ...) that the bond-based
+    # bound_components field misses.
+    if investigated:
+        return TIER_FUNCTIONAL, "ligand_investigated", CLASS_SMALL_MOLECULE
     return TIER_AMBIGUOUS, "ligand_unbound", None
 
 
@@ -268,11 +280,15 @@ def classify_components(record: CandidateRecord, cfg: Config) -> dict:
     ambiguous_classes: set[str] = set()
 
     affinity_ids = set(record.affinity_comp_ids)
+    investigated_ids = set(record.investigated_comp_ids)
     for comp in record.nonpolymer_comps:
+        # A lone Ni/Co is "uncorroborated" only if nothing vouches for it: no
+        # measured affinity AND not curated as a subject of investigation.
         uncorroborated = (
             lone_purification_metal
             and comp.comp_id in purification
             and comp.comp_id not in affinity_ids
+            and comp.comp_id not in investigated_ids
         )
         tier, reason, label = tier_component(
             comp,

@@ -26,8 +26,20 @@ def _cfg() -> Config:
     return load_config(DEFAULT_CONFIG)
 
 
-def _record(comps, *, bound=None, affinity=None, seq="ACDEFGHIKLMNPQRSTVWY", ptype="Protein"):
-    """Build a CandidateRecord from a crafted Data-API-shaped dict."""
+def _record(
+    comps,
+    *,
+    bound=None,
+    affinity=None,
+    investigated=None,
+    seq="ACDEFGHIKLMNPQRSTVWY",
+    ptype="Protein",
+):
+    """Build a CandidateRecord from a crafted Data-API-shaped dict.
+
+    ``investigated`` = comp ids RCSB flagged subject-of-investigation (SOI='Y').
+    """
+    investigated = set(investigated or [])
     entry = {
         "rcsb_id": "TEST",
         "exptl": [{"method": "X-RAY DIFFRACTION"}],
@@ -48,7 +60,17 @@ def _record(comps, *, bound=None, affinity=None, seq="ACDEFGHIKLMNPQRSTVWY", pty
             }
         ],
         "nonpolymer_entities": [
-            {"nonpolymer_comp": {"chem_comp": {"id": cid, "formula": f}}} for cid, f in comps
+            {
+                "nonpolymer_comp": {"chem_comp": {"id": cid, "formula": f}},
+                "nonpolymer_entity_instances": [
+                    {
+                        "rcsb_nonpolymer_instance_validation_score": [
+                            {"is_subject_of_investigation": "Y" if cid in investigated else "N"}
+                        ]
+                    }
+                ],
+            }
+            for cid, f in comps
         ],
         "assemblies": [
             {"rcsb_id": "TEST-1", "rcsb_assembly_info": {"polymer_monomer_count": len(seq)}}
@@ -111,6 +133,39 @@ def test_affinity_forces_functional_even_if_unbound_list_empty():
     res = classify_components(rec, _cfg())
     assert res["tiers"]["STI"]["tier"] == TIER_FUNCTIONAL
     assert res["small_molecules"] == ["STI"]
+
+
+def test_investigated_cofactor_is_functional_even_if_unbound():
+    # FAD-like case: non-covalently bound (absent from bound_components) but RCSB
+    # flags it subject-of-investigation -> functional, not ambiguous.
+    rec = _record([("FAD", "C27 H33 N9 O15 P2")], bound=[], investigated=["FAD"])
+    res = classify_components(rec, _cfg())
+    assert res["tiers"]["FAD"]["tier"] == TIER_FUNCTIONAL
+    assert res["tiers"]["FAD"]["reason"] == "ligand_investigated"
+    assert "small_molecule" in res["classes"]
+
+
+def test_uninvestigated_unbound_ligand_stays_ambiguous():
+    rec = _record([("STI", "C29 H31 N7 O")], bound=[], investigated=[])
+    res = classify_components(rec, _cfg())
+    assert res["tiers"]["STI"]["tier"] == TIER_AMBIGUOUS
+
+
+def test_investigated_buffer_still_artifact():
+    # A blacklisted additive is an artifact even if (oddly) flagged investigated:
+    # the additive gate precedes the SOI signal.
+    rec = _record([("GOL", "C3 H8 O3")], investigated=["GOL"])
+    res = classify_components(rec, _cfg())
+    assert res["tiers"]["GOL"]["tier"] == TIER_ARTIFACT
+
+
+def test_investigated_nickel_corroborates_not_artifact():
+    # A lone Ni flagged subject-of-investigation is corroborated -> functional,
+    # not demoted to ambiguous.
+    rec = _record([("NI", "Ni")], bound=["NI"], investigated=["NI"], seq="ACDEFGHIKLMNPQRSTVWY")
+    res = classify_components(rec, _cfg())
+    assert res["tiers"]["NI"]["tier"] == TIER_FUNCTIONAL
+    assert res["metals"] == ["NI"]
 
 
 def test_additive_is_artifact():

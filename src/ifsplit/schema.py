@@ -103,6 +103,10 @@ class CandidateRecord(BaseModel):
     # binding affinity (rcsb_binding_affinity). Both are the buffer-vs-ligand gate.
     bound_components: list[str] = []
     affinity_comp_ids: list[str] = []
+    # comp ids RCSB curated as "subject of investigation" (a ligand of interest).
+    # Catches tightly but non-covalently bound cofactors/inhibitors that
+    # bound_components (bond-based) misses; another positive buffer-vs-ligand gate.
+    investigated_comp_ids: list[str] = []
     # RCSB-computed count of protein<->nucleic-acid interface entities across the
     # entry's assemblies (rcsb_assembly_info.num_prot_na_interface_entities). > 0
     # verifies a real protein/NA contact (Stage 4 holo gate for the nucleic_acid
@@ -171,6 +175,7 @@ class CandidateRecord(BaseModel):
         polymers.sort(key=lambda e: e.entity_id)
 
         comps: dict[str, NonpolymerComp] = {}
+        investigated: set[str] = set()
         for n in entry.get("nonpolymer_entities") or []:
             cc = (n.get("nonpolymer_comp") or {}).get("chem_comp") or {}
             cid = cc.get("id")
@@ -181,6 +186,12 @@ class CandidateRecord(BaseModel):
                     formula=cc.get("formula"),
                     comp_type=cc.get("type"),
                 )
+            # "subject of investigation" = Y on any instance -> this comp is a
+            # curated ligand of interest (covalent or not).
+            for inst in n.get("nonpolymer_entity_instances") or []:
+                for vs in inst.get("rcsb_nonpolymer_instance_validation_score") or []:
+                    if cid and vs.get("is_subject_of_investigation") == "Y":
+                        investigated.add(cid.upper())
         nonpolymers = [comps[k] for k in sorted(comps)]
 
         # Validation-report summaries arrive as 1-element lists (or null).
@@ -210,6 +221,7 @@ class CandidateRecord(BaseModel):
             nonpolymer_comps=nonpolymers,
             bound_components=bound,
             affinity_comp_ids=affinity,
+            investigated_comp_ids=sorted(investigated),
             protein_na_interface_count=prot_na_interfaces,
             quality=quality,
         )
