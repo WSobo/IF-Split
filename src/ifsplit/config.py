@@ -58,6 +58,11 @@ class Config(BaseModel):
     # purification_metals disables the heuristic.
     purification_metals: list[str] = Field(default_factory=lambda: ["NI", "CO"])
     histag_min_run: int = Field(default=6, gt=0)
+    # A shorter His run counts as a tag *only if it sits at a chain terminus*:
+    # a 6xHis tag with a few residues unmodeled or trimmed from the deposited
+    # sequence still leaves a short terminal His run. Internal His clusters (real
+    # metalloprotein motifs) are not flagged. 0 disables the terminal rule.
+    histag_terminal_min_run: int = Field(default=3, ge=0)
     exclude_purification_artifacts: bool = True
 
     # --- clustering + split ---

@@ -218,8 +218,17 @@ so no coordinates are downloaded.)
 
 The His-tag/Ni curation catches a known blemish in the LigandMPNN metal set:
 structures whose only "metal site" is a poly-His tag chelating Ni/Co from
-affinity purification. Live examples from a real build: `101M → {HEM:
-functional, SO4: artifact}`, `102L → {BME: artifact, CL: artifact}`.
+affinity purification. A poly-His run anywhere — or a short run at a chain
+terminus (`histag_terminal_min_run`, catching 6×His tags left partial by
+unmodeled or trimmed residues) — flags the entry's Ni/Co as an `artifact`.
+
+But a real audit showed the deeper issue: **~96% of lone Ni/Co entries have no
+His-tag in the deposited sequence at all** (the tag is trimmed from the SEQRES
+record, not just unmodeled), so a sequence scan can never see it. So even with no
+detectable tag, a *lone* Ni/Co (the entry's only metal) with no measured affinity
+is demoted from `functional` to `ambiguous` — reported, not labelled. Real metals
+(Zn, Mg, Fe, …), and Ni/Co backed by an affinity or sitting alongside a genuine
+metal, are untouched. On the full PDB this re-tiers ~2.7% of the metal set.
 
 Crucially, **the structure always stays in its split** — a protein with a junk
 ion is still a good backbone; we just don't label the junk. A consumer wanting
@@ -267,8 +276,9 @@ in every manifest, so two builds with the same hash used identical settings.
 | `excluded_het` | waters + common ions | Extra components forced to `artifact`. |
 | `use_biological_assembly` | `true` | Count residues from assembly 1, not the deposited asymmetric unit. |
 | `purification_metals` | `[NI, CO]` | Metals treated as IMAC tags; `[]` disables the heuristic. |
-| `histag_min_run` | `6` | His-run length that marks a purification tag. |
-| `exclude_purification_artifacts` | `true` | Demote His-tag metals to `artifact`. |
+| `histag_min_run` | `6` | His-run length (anywhere) that marks a purification tag. |
+| `histag_terminal_min_run` | `3` | Shorter His-run at a chain terminus that also counts as a tag (partial/unmodeled 6×His). |
+| `exclude_purification_artifacts` | `true` | Demote His-tag metals to `artifact`; lone uncorroborated Ni/Co → `ambiguous`. |
 | `identity_threshold` | `0.30` | Clustering cutoff (RCSB levels: 30/50/70/90/95/100). |
 | `clustering_backend` | `precomputed` | `precomputed` (RCSB clusters) or `mmseqs2` (run your own). |
 | `split_fractions` | 0.80 / 0.10 / 0.10 | train / val / test. |

@@ -68,13 +68,17 @@ per component). Splitting on components is what prevents cross-split leakage; us
 
 ## Curation highlights (holo-gated, annotate-never-destroy)
 
-- **Test set, functional tier:** metal 4,099 · small-molecule 3,530 · nucleic-acid 586
-- **Test set, ambiguous (reported, not labelled):** small-molecule 3,596 · metal 73 · nucleic-acid 1
+- **Test set, functional tier:** metal 3,984 · small-molecule 3,530 · nucleic-acid 586
+- **Test set, ambiguous (reported, not labelled):** small-molecule 3,596 · metal 187 · nucleic-acid 1
   - The small-molecule ambiguous count ≈ the functional one: roughly half of
     bound-looking small molecules aren't corroborated by contact or a measured
     affinity, so they're flagged rather than silently labelled.
-- **404** His-tag/Ni(Co) purification artifacts flagged and demoted from the metal
-  class — the LigandMPNN metal-set blemish, caught automatically.
+  - The metal ambiguous count includes lone, uncorroborated Ni/Co (likely IMAC
+    artifacts whose His-tag is absent from the deposited sequence) — demoted from
+    functional, not dropped.
+- **415** His-tag/Ni(Co) purification artifacts flagged and demoted from the metal
+  class — the LigandMPNN metal-set blemish, caught automatically (full His run or
+  a partial terminal tag).
 
 Every structure stays in its split regardless of ligand quality; only the labels
 and confidence tiers change.

@@ -14,11 +14,19 @@ use_biological_assembly: true      # biounits, as in LigandMPNN (assembly 1)
 # Curation: purification-artifact detection (Stage 4). A poly-His tag that
 # coordinates Ni/Co is an artifact of affinity purification, not a biological
 # metal site — a known blemish in the LigandMPNN metal set. An entry whose only
-# metal is one of these AND that has a His-tag of >= histag_min_run residues is
-# flagged, and (by default) its purification metal is dropped from the metal
-# class. Set purification_metals: [] to disable.
+# metal is a purification metal AND that carries a His-tag (a >= histag_min_run
+# run anywhere, OR a >= histag_terminal_min_run run at a chain terminus — to
+# catch 6xHis tags left partial by unmodeled/trimmed residues) is flagged as an
+# artifact. Set purification_metals: [] to disable.
+#
+# Even without a detectable tag, a *lone* Ni/Co with no measured affinity is
+# demoted from `functional` to `ambiguous` (reported, not labelled): ~96% of
+# lone Ni/Co in the PDB have no His-tag in the deposited sequence, so a bare
+# contact can't be trusted as a biological metal site. Real metals (Zn, Mg, Fe,
+# Mn, …) and Ni/Co alongside another real metal or with affinity are unaffected.
 purification_metals: ["NI", "CO"]
 histag_min_run: 6
+histag_terminal_min_run: 3
 exclude_purification_artifacts: true
 
 identity_threshold: 0.30           # clustering cutoff (Data API levels: 30/50/70/90/95/100)

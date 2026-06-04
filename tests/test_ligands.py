@@ -77,6 +77,17 @@ def test_longest_residue_run_and_histag():
     assert has_histag("GSGSGHHHHHGS", 6) is False  # only 5
 
 
+def test_terminal_histag_catches_partial_tag():
+    # A C-terminal HHH (a 6xHis with 3 residues unmodeled/trimmed) is NOT caught
+    # by the full-run rule, but IS caught by the terminal rule.
+    seq = "MKTAYIAKQRQISFVKSHFSRQLEERLGEFHHH"  # terminal run of 3
+    assert has_histag(seq, 6) is False
+    assert has_histag(seq, 6, terminal_min_run=3) is True
+    # An *internal* HHH (a real metal motif, far from either end) is NOT caught.
+    internal = "M" + "A" * 30 + "HHH" + "A" * 30 + "K"
+    assert has_histag(internal, 6, terminal_min_run=3) is False
+
+
 # ------------------------------- tiering ----------------------------------- #
 def test_bound_ligand_is_functional():
     rec = _record([("STI", "C29 H31 N7 O")], bound=["STI"])
@@ -130,6 +141,35 @@ def test_bound_metal_is_functional():
     assert res["tiers"]["MG"]["tier"] == TIER_FUNCTIONAL
     assert res["metals"] == ["MG"]
     assert "metal" in res["classes"]
+
+
+def test_lone_bound_nickel_no_tag_is_ambiguous_not_functional():
+    # Ni is the only metal, bound, but no His-tag and no affinity: most such lone
+    # Ni have their tag trimmed from the sequence -> demote to ambiguous.
+    rec = _record([("NI", "Ni")], bound=["NI"], seq="ACDEFGHIKLMNPQRSTVWY")
+    res = classify_components(rec, _cfg())
+    assert res["tiers"]["NI"]["tier"] == TIER_AMBIGUOUS
+    assert res["tiers"]["NI"]["reason"] == "purification_metal_uncorroborated"
+    assert res["metals"] == []
+    assert "metal" in res["ambiguous_classes"]
+
+
+def test_lone_nickel_with_affinity_stays_functional():
+    # A measured binding affinity corroborates a real Ni site -> functional.
+    rec = _record([("NI", "Ni")], bound=["NI"], affinity=["NI"], seq="ACDEFGHIKLMNPQRSTVWY")
+    res = classify_components(rec, _cfg())
+    assert res["tiers"]["NI"]["tier"] == TIER_FUNCTIONAL
+    assert res["metals"] == ["NI"]
+
+
+def test_nickel_with_real_metal_stays_functional():
+    # Ni alongside a real biological metal (Zn) is not a lone-Ni case -> both
+    # bound metals stay functional (entry_metals is not a subset of {NI, CO}).
+    rec = _record([("NI", "Ni"), ("ZN", "Zn")], bound=["NI", "ZN"], seq="ACDEFGHIKLMNPQRSTVWY")
+    res = classify_components(rec, _cfg())
+    assert res["tiers"]["NI"]["tier"] == TIER_FUNCTIONAL
+    assert res["tiers"]["ZN"]["tier"] == TIER_FUNCTIONAL
+    assert set(res["metals"]) == {"NI", "ZN"}
 
 
 # --------------------- purification-artifact curation ---------------------- #

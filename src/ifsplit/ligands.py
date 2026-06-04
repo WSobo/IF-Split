@@ -112,9 +112,31 @@ def longest_residue_run(seq: str, residue: str = "H") -> int:
     return best
 
 
-def has_histag(seq: str, min_run: int) -> bool:
-    """True if ``seq`` contains a poly-histidine run of at least ``min_run``."""
-    return longest_residue_run(seq, "H") >= min_run
+def terminal_residue_run(seq: str, residue: str = "H", window: int = 20) -> int:
+    """Longest run of ``residue`` within ``window`` residues of either terminus.
+
+    A purification tag is terminal by construction, so a short His run near a
+    chain end is tag-like; the same run buried internally is more likely a real
+    motif. Used to recover His-tags partially unmodeled or trimmed from the
+    deposited sequence (where the full 6xHis no longer appears).
+    """
+    if not seq:
+        return 0
+    s = seq.upper()
+    return max(longest_residue_run(s[:window], residue), longest_residue_run(s[-window:], residue))
+
+
+def has_histag(seq: str, min_run: int, terminal_min_run: int = 0) -> bool:
+    """True if ``seq`` carries a poly-histidine tag.
+
+    Positive if there is a His run of at least ``min_run`` anywhere, OR (when
+    ``terminal_min_run`` > 0) a shorter His run of at least ``terminal_min_run``
+    at a chain terminus — catching 6xHis tags left partial by unmodeled/trimmed
+    residues without flagging internal His-rich metal sites.
+    """
+    if longest_residue_run(seq, "H") >= min_run:
+        return True
+    return bool(terminal_min_run) and terminal_residue_run(seq, "H") >= terminal_min_run
 
 
 def has_protein_na_interface(record: CandidateRecord) -> bool:
@@ -136,19 +158,25 @@ def is_purification_artifact(
     *,
     purification_metals: set[str],
     histag_min_run: int,
+    histag_terminal_min_run: int = 0,
 ) -> bool:
     """Flag the His-tag-binds-Ni/Co purification-artifact pattern.
 
     True only when (a) the entry has at least one metal, (b) *every* metal it has
-    is a purification metal, and (c) some protein chain carries a His-tag. A real
-    metal site (e.g. a catalytic Zn) present alongside a tag is NOT flagged.
+    is a purification metal, and (c) some protein chain carries a His-tag (full
+    run, or a short *terminal* run per ``histag_terminal_min_run``). A real metal
+    site (e.g. a catalytic Zn) present alongside a tag is NOT flagged.
     """
     if not purification_metals:
         return False
     metals = {c.comp_id for c in metal_comps(record)}
     if not metals or not metals <= purification_metals:
         return False
-    return any(has_histag(e.seq, histag_min_run) for e in record.polymer_entities if e.is_protein)
+    return any(
+        has_histag(e.seq, histag_min_run, histag_terminal_min_run)
+        for e in record.polymer_entities
+        if e.is_protein
+    )
 
 
 def tier_component(
@@ -159,12 +187,19 @@ def tier_component(
     blacklist: set[str],
     purification: set[str],
     is_artifact_entry: bool,
+    uncorroborated_purification: bool = False,
 ) -> tuple[str, str, str | None]:
     """Tier a single non-protein component.
 
     Returns ``(tier, reason, class_label_or_None)``. The class label is set only
     for the ``functional`` tier (the default threshold); ``ambiguous`` components
     return their would-be class as None so they are reported but not labelled.
+
+    ``uncorroborated_purification`` is set by the caller for a purification metal
+    (Ni/Co) that is the entry's *only* metal and has no measured affinity and no
+    detected His-tag: most lone Ni/Co have their tag trimmed from the deposited
+    sequence, so a contact alone can't be trusted as a biological site -> it is
+    demoted from functional to ambiguous (reported, not labelled).
     """
     cid = comp.comp_id
     bound = cid in set(record.bound_components)
@@ -179,6 +214,10 @@ def tier_component(
             return TIER_ARTIFACT, "histag_metal", None
         if has_affinity:
             return TIER_FUNCTIONAL, "metal_affinity", CLASS_METAL
+        # Lone, uncorroborated purification metal: a likely IMAC artifact whose tag
+        # is absent from the deposited sequence -> ambiguous, not functional.
+        if uncorroborated_purification:
+            return TIER_AMBIGUOUS, "purification_metal_uncorroborated", None
         if bound:
             return TIER_FUNCTIONAL, "metal_bound", CLASS_METAL
         # "Trust biological metals" but require contact: an unbound metal far from
@@ -208,6 +247,19 @@ def classify_components(record: CandidateRecord, cfg: Config) -> dict:
         record,
         purification_metals=purification,
         histag_min_run=cfg.histag_min_run,
+        histag_terminal_min_run=cfg.histag_terminal_min_run,
+    )
+
+    # An entry whose *only* metal is a purification metal (Ni/Co) is a lone-Ni/Co
+    # case. If it's also not a detected His-tag artifact, the tag is likely just
+    # absent from the deposited sequence (true of ~96% of lone Ni/Co), so a metal
+    # here can't be trusted as biological without affinity -> demote to ambiguous.
+    entry_metals = {c.comp_id for c in metal_comps(record)}
+    lone_purification_metal = (
+        bool(purification)
+        and bool(entry_metals)
+        and entry_metals <= purification
+        and not is_artifact_entry
     )
 
     tiers: dict[str, dict[str, str]] = {}
@@ -215,7 +267,13 @@ def classify_components(record: CandidateRecord, cfg: Config) -> dict:
     functional_sms: list[str] = []
     ambiguous_classes: set[str] = set()
 
+    affinity_ids = set(record.affinity_comp_ids)
     for comp in record.nonpolymer_comps:
+        uncorroborated = (
+            lone_purification_metal
+            and comp.comp_id in purification
+            and comp.comp_id not in affinity_ids
+        )
         tier, reason, label = tier_component(
             comp,
             record,
@@ -223,6 +281,7 @@ def classify_components(record: CandidateRecord, cfg: Config) -> dict:
             blacklist=blacklist,
             purification=purification,
             is_artifact_entry=is_artifact_entry,
+            uncorroborated_purification=uncorroborated,
         )
         tiers[comp.comp_id] = {"tier": tier, "reason": reason}
         if tier == TIER_FUNCTIONAL and label == CLASS_METAL:
