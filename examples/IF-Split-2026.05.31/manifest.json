@@ -1,13 +1,13 @@
 {
   "candidates": {
-    "count": 223422,
-    "sha256": "62116f0183c2eb9a1c3bf69a36331748b920a1b9e182c65eae7518b0c86336ad"
+    "count": 223419,
+    "sha256": "302da149ddc0bc8ef62e92fe8f249146f9f37119fca7ea4ab5fbe26f3c6b15d7"
   },
   "clustering": {
     "backend": "precomputed",
     "identity": 30,
-    "multichain_entries": 38834,
-    "n_clusters": 19587,
+    "multichain_entries": 38832,
+    "n_clusters": 19589,
     "n_raw_clusters": 34222,
     "unclustered_entries": 316
   },
@@ -76,7 +76,7 @@
       "too_large": 5550
     },
     "dropped": 8628,
-    "kept": 214794
+    "kept": 214791
   },
   "if_split_version": "0.1.0",
   "ligands": {
@@ -85,46 +85,46 @@
   "manifest_schema": "if-split/manifest@2",
   "splits": {
     "cluster_counts": {
-      "test": 1981,
-      "train": 15613,
-      "val": 1993
+      "test": 1982,
+      "train": 15615,
+      "val": 1992
     },
     "entry_counts": {
-      "test": 12396,
-      "train": 188672,
-      "val": 13726
+      "test": 12409,
+      "train": 188662,
+      "val": 13720
     },
     "per_split_ambiguous_counts": {
       "test": {
-        "metal": 187,
+        "metal": 166,
         "nucleic_acid": 1,
-        "small_molecule": 3596
+        "small_molecule": 419
       },
       "train": {
-        "metal": 2337,
+        "metal": 2061,
         "nucleic_acid": 11,
-        "small_molecule": 58418
+        "small_molecule": 6144
       },
       "val": {
-        "metal": 594,
-        "small_molecule": 4059
+        "metal": 562,
+        "small_molecule": 514
       }
     },
     "per_split_class_counts": {
       "test": {
-        "metal": 3984,
+        "metal": 4012,
         "nucleic_acid": 586,
-        "small_molecule": 3530
+        "small_molecule": 6713
       },
       "train": {
-        "metal": 54842,
+        "metal": 55113,
         "nucleic_acid": 9948,
-        "small_molecule": 50497
+        "small_molecule": 102762
       },
       "val": {
-        "metal": 3991,
+        "metal": 4019,
         "nucleic_acid": 539,
-        "small_molecule": 3147
+        "small_molecule": 6692
       }
     },
     "test_minimum_shortfalls": {}

@@ -50,16 +50,16 @@ output).
 
 ## Headline numbers
 
-- **223,422** candidates (X-ray + EM, ≤ 3.5 Å, released ≤ 2026-05-31)
-- **214,794 kept** — dropped 3,078 no-protein, 5,550 over-size (≥ 6000 residues)
-- **34,222** raw RCSB sequence clusters @ 30% identity → **19,587 leakage-safe
-  components** after union-find merged **38,834** multi-chain bridging entries
+- **223,419** candidates (X-ray + EM, ≤ 3.5 Å, released ≤ 2026-05-31)
+- **214,791 kept** — dropped 3,078 no-protein, 5,550 over-size (≥ 6000 residues)
+- **34,222** raw RCSB sequence clusters @ 30% identity → **19,589 leakage-safe
+  components** after union-find merged **38,832** multi-chain bridging entries
 
 | Split | Entries | Components | Component % |
 |---|--:|--:|--:|
-| train | 188,672 | 15,613 | 79.7% |
-| val   |  13,726 |  1,993 | 10.2% |
-| test  |  12,396 |  1,981 | 10.1% |
+| train | 188,662 | 15,615 | 79.7% |
+| val   |  13,720 |  1,992 | 10.2% |
+| test  |  12,409 |  1,982 | 10.1% |
 
 **The split is balanced on sequence *components*, not entry counts** — that's why
 train holds ~88% of entries (redundant families like lysozyme carry many entries
@@ -68,11 +68,11 @@ per component). Splitting on components is what prevents cross-split leakage; us
 
 ## Curation highlights (holo-gated, annotate-never-destroy)
 
-- **Test set, functional tier:** metal 3,984 · small-molecule 3,530 · nucleic-acid 586
-- **Test set, ambiguous (reported, not labelled):** small-molecule 3,596 · metal 187 · nucleic-acid 1
-  - The small-molecule ambiguous count ≈ the functional one: roughly half of
-    bound-looking small molecules aren't corroborated by contact or a measured
-    affinity, so they're flagged rather than silently labelled.
+- **Test set, functional tier:** metal 4,012 · small-molecule 6,713 · nucleic-acid 586
+- **Test set, ambiguous (reported, not labelled):** small-molecule 419 · metal 166 · nucleic-acid 1
+  - Functional small molecules far exceed ambiguous (6,713 vs 419): the
+    `is_subject_of_investigation` gate recovers non-covalently bound cofactors
+    (FAD/NAD/FMN/NADP) and inhibitors that the bond-based contact field misses.
   - The metal ambiguous count includes lone, uncorroborated Ni/Co (likely IMAC
     artifacts whose His-tag is absent from the deposited sequence) — demoted from
     functional, not dropped.
