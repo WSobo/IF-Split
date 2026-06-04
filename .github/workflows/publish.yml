@@ -1,0 +1,45 @@
+name: Publish to PyPI
+
+# Builds the wheel/sdist and publishes to PyPI when a version tag is pushed,
+# using PyPI Trusted Publishing (OIDC) — no API tokens or stored secrets.
+# One-time setup on pypi.org: Account -> Publishing -> add a trusted publisher
+#   Owner: WSobo   Repo: IF-Split   Workflow: publish.yml   Environment: pypi
+on:
+  push:
+    tags: ["v*"]
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  build:
+    name: Build distributions
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: Install uv
+        uses: astral-sh/setup-uv@v5
+      - name: Build sdist + wheel
+        run: uv build
+      - name: Check metadata
+        run: uvx twine check dist/*
+      - uses: actions/upload-artifact@v4
+        with:
+          name: dist
+          path: dist/
+
+  publish:
+    name: Publish to PyPI
+    needs: build
+    runs-on: ubuntu-latest
+    environment: pypi
+    permissions:
+      id-token: write  # required for Trusted Publishing (OIDC)
+    steps:
+      - uses: actions/download-artifact@v4
+        with:
+          name: dist
+          path: dist/
+      - name: Publish
+        uses: pypa/gh-action-pypi-publish@release/v1

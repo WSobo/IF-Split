@@ -163,6 +163,51 @@ def test_registry_pins_assignment(sample_entries, artifact_entry):
     assert set(res.cluster_split.values()) == {"test"}
 
 
+def test_test_minimums_recruit_components_no_leakage(sample_entries, artifact_entry):
+    # 1A1F carries a functional metal (bound Zn). With the pure hash it may not be
+    # in test; a metal floor of 1 must pull its whole component into test.
+    recs = _records(sample_entries, artifact_entry)
+    kept, _ = filter_candidates(recs, _cfg())
+    class_map = {r.entry_id: classify_components(r, _cfg()) for r in kept}
+    entry_classes = {eid: info["classes"] for eid, info in class_map.items()}
+    cr = build_clusters(kept, _cfg())
+    cfg_min = _cfg(test_min_per_class={"metal": 1})
+    res = assign_splits(cr, cfg_min, entry_classes=entry_classes)
+    # The floor is met and the structural no-leakage invariant still holds.
+    metal_in_test = sum(
+        1 for e, s in res.entry_split.items() if s == "test" and "metal" in entry_classes.get(e, [])
+    )
+    assert metal_in_test >= 1
+    assert res.minimum_shortfalls == {}
+    check_no_leakage(res, cr)
+
+
+def test_test_minimums_report_shortfall_when_supply_short(sample_entries, artifact_entry):
+    recs = _records(sample_entries, artifact_entry)
+    kept, _ = filter_candidates(recs, _cfg())
+    class_map = {r.entry_id: classify_components(r, _cfg()) for r in kept}
+    entry_classes = {eid: info["classes"] for eid, info in class_map.items()}
+    cr = build_clusters(kept, _cfg())
+    # Demand far more metal entries than exist -> shortfall reported, not forced.
+    cfg_min = _cfg(test_min_per_class={"metal": 999})
+    res = assign_splits(cr, cfg_min, entry_classes=entry_classes)
+    assert res.minimum_shortfalls.get("metal", 0) > 0
+    check_no_leakage(res, cr)
+
+
+def test_minimums_off_by_default_matches_pure_hash(sample_entries, artifact_entry):
+    recs = _records(sample_entries, artifact_entry)
+    kept, _ = filter_candidates(recs, _cfg())
+    cr = build_clusters(kept, _cfg())
+    base = assign_splits(cr, _cfg())  # no entry_classes, default empty minimums
+    assert base.minimum_shortfalls == {}
+    # Providing classes but no minimums must not change the assignment.
+    class_map = {r.entry_id: classify_components(r, _cfg()) for r in kept}
+    ec = {eid: info["classes"] for eid, info in class_map.items()}
+    same = assign_splits(cr, _cfg(), entry_classes=ec)
+    assert same.entry_split == base.entry_split
+
+
 def test_fractions_roughly_respected_on_many_keys():
     # Synthetic: hash 3000 distinct keys, check broad proportions hold.
     cfg = _cfg()

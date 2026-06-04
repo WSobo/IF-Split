@@ -27,6 +27,15 @@ split_fractions: {train: 0.80, val: 0.10, test: 0.10}
 split_salt: "snapsplit-v1"         # bump to reshuffle intentionally
 seed: 0
 
+# Optional test-set stratification top-up. A floor on the number of test entries
+# carrying each functional ligand class. Empty = off (pure deterministic hash).
+# When set, after the base split any class below its floor recruits WHOLE sequence
+# components (never individual entries -> no leakage) into test, in deterministic
+# hash order, skipping registry-pinned components (growth stays stable). A floor
+# larger than the available supply is met as far as possible; the shortfall is
+# reported in the manifest, not forced. Example: {metal: 500, nucleotide: 200}
+test_min_per_class: {}
+
 # Quality filters (Stage 3) — wwPDB validation-report metrics, fetched as
 # metadata (NO coordinate download). Each cap is optional: null disables it. An
 # entry is dropped only when the metric is present AND exceeds the cap; entries

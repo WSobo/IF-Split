@@ -22,7 +22,7 @@ fails loudly if it is ever violated - a real guard, not a tautology.
 from __future__ import annotations
 
 import hashlib
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 
 from .cluster import ClusterResult
 from .config import Config
@@ -53,17 +53,91 @@ class SplitResult:
     entry_split: dict[str, str]  # entry_id -> split
     counts: dict[str, int]  # split -> entry count
     cluster_counts: dict[str, int]  # split -> component count
+    # Per-class test floors that could not be fully met (class -> shortfall). Empty
+    # when no minimums were requested or all were satisfied. Reported, never forced.
+    minimum_shortfalls: dict[str, int] = field(default_factory=dict)
+
+
+def _enforce_test_minimums(
+    cluster_split: dict[str, str],
+    clusters: ClusterResult,
+    cfg: Config,
+    entry_classes: dict[str, list[str]],
+    registry: dict[str, str],
+) -> tuple[dict[str, str], dict[str, int]]:
+    """Recruit whole components into test until per-class floors are met.
+
+    Leakage-safe (moves components, never entries), deterministic (hash-ordered),
+    and growth-stable (never overrides a registry-pinned component). Returns the
+    updated ``cluster_split`` and a ``{class: shortfall}`` map for any floor that
+    could not be fully satisfied from the available supply.
+    """
+    minimums = {c: n for c, n in cfg.test_min_per_class.items() if n > 0}
+    if not minimums:
+        return cluster_split, {}
+
+    cluster_split = dict(cluster_split)
+    # Per-component count of entries carrying each class (so test totals update O(1)).
+    comp_class_counts: dict[str, dict[str, int]] = {}
+    for key, entries in clusters.cluster_members.items():
+        counts: dict[str, int] = {}
+        for e in entries:
+            for cls in entry_classes.get(e, []):
+                counts[cls] = counts.get(cls, 0) + 1
+        comp_class_counts[key] = counts
+
+    test_totals: dict[str, int] = {}
+    for key, split in cluster_split.items():
+        if split == "test":
+            for cls, n in comp_class_counts[key].items():
+                test_totals[cls] = test_totals.get(cls, 0) + n
+
+    shortfalls: dict[str, int] = {}
+    for cls in sorted(minimums):
+        need = minimums[cls]
+        eligible = [
+            key
+            for key in clusters.cluster_members
+            if cluster_split[key] != "test"
+            and comp_class_counts[key].get(cls, 0) > 0
+            and key not in registry  # respect pinned assignments (growth stability)
+        ]
+        eligible.sort(key=lambda k: (bucket(k, cfg.split_salt), k))
+        for key in eligible:
+            if test_totals.get(cls, 0) >= need:
+                break
+            cluster_split[key] = "test"
+            for c, n in comp_class_counts[key].items():
+                test_totals[c] = test_totals.get(c, 0) + n
+        deficit = need - test_totals.get(cls, 0)
+        if deficit > 0:
+            shortfalls[cls] = deficit
+    return cluster_split, shortfalls
 
 
 def assign_splits(
-    clusters: ClusterResult, cfg: Config, registry: dict[str, str] | None = None
+    clusters: ClusterResult,
+    cfg: Config,
+    registry: dict[str, str] | None = None,
+    entry_classes: dict[str, list[str]] | None = None,
 ) -> SplitResult:
-    """Assign every component (and thus every entry) to a split."""
+    """Assign every component (and thus every entry) to a split.
+
+    With ``cfg.test_min_per_class`` set and ``entry_classes`` provided, a
+    deterministic top-up recruits whole components into test to meet per-class
+    floors (see :func:`_enforce_test_minimums`).
+    """
     registry = registry or {}
 
     cluster_split: dict[str, str] = {
         key: registry.get(key, split_for_key(key, cfg)) for key in clusters.cluster_members
     }
+
+    shortfalls: dict[str, int] = {}
+    if cfg.test_min_per_class and entry_classes is not None:
+        cluster_split, shortfalls = _enforce_test_minimums(
+            cluster_split, clusters, cfg, entry_classes, registry
+        )
 
     counts = {s: 0 for s in SPLITS}
     entry_split: dict[str, str] = {}
@@ -81,6 +155,7 @@ def assign_splits(
         entry_split=dict(sorted(entry_split.items())),
         counts=counts,
         cluster_counts=cluster_counts,
+        minimum_shortfalls=dict(sorted(shortfalls.items())),
     )
 
 

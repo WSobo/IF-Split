@@ -187,6 +187,7 @@ def build_manifest(
             "cluster_counts": dict(sorted(splits.cluster_counts.items())),
             "per_split_class_counts": per_split_class_counts,
             "per_split_ambiguous_counts": per_split_ambiguous_counts,
+            "test_minimum_shortfalls": dict(sorted(splits.minimum_shortfalls.items())),
         },
         "ligands": {"n_purification_artifacts": n_artifacts},
         # Pointers to the data files written alongside this manifest.
@@ -398,6 +399,11 @@ def summarize_manifest(manifest_path: str | Path) -> int:
         print("  test set ambiguous (reported, not labelled):")
         for cls, n in amb.items():
             print(f"    {cls}: {n}")
+    shortfalls = sp.get("test_minimum_shortfalls", {})
+    if shortfalls:
+        print("  test minimum shortfalls (floor exceeded available supply):")
+        for cls, n in shortfalls.items():
+            print(f"    {cls}: short by {n}")
     lig = m["ligands"]
     n_arts = lig.get("n_purification_artifacts", len(lig.get("purification_artifacts", [])))
     print(f"  His-tag/Ni purification artifacts flagged: {n_arts}")

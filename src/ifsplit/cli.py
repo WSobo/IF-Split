@@ -97,10 +97,17 @@ def cmd_build(args: argparse.Namespace) -> int:
 
     print("Stage 6 - assign splits (deterministic hash):")
     registry = read_registry(args.registry) if args.registry else {}
-    splits = assign_splits(clusters, cfg, registry=registry)
+    entry_classes = {eid: info["classes"] for eid, info in class_map.items()}
+    splits = assign_splits(clusters, cfg, registry=registry, entry_classes=entry_classes)
     check_no_leakage(splits, clusters)  # structural guarantee; raises on violation
     c = splits.counts
     print(f"  train={c['train']} val={c['val']} test={c['test']}  (no cross-split leakage)")
+    if cfg.test_min_per_class:
+        if splits.minimum_shortfalls:
+            short = ", ".join(f"{k}:{v}" for k, v in splits.minimum_shortfalls.items())
+            print(f"  test minimums: applied; SHORTFALL (not enough supply) -> {short}")
+        else:
+            print("  test minimums: applied; all per-class floors met")
 
     print("Stage 7 - manifest + registry:")
     manifest = build_manifest(

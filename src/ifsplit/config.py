@@ -69,6 +69,16 @@ class Config(BaseModel):
     split_salt: str = Field(min_length=1)
     seed: int = Field(ge=0)
 
+    # --- test-set minimums (opt-in stratification top-up) ---
+    # Floor on the number of test entries carrying each functional ligand class,
+    # e.g. {"metal": 500, "nucleotide": 200}. Empty (default) = pure deterministic
+    # hash, no top-up. When set, after the base assignment any class below its floor
+    # recruits *whole components* (never individual entries, so no leakage) into
+    # test in deterministic hash order, skipping components already pinned by a
+    # registry (so growth stays stable). A floor larger than the available supply
+    # is satisfied as far as possible and the shortfall is reported, not forced.
+    test_min_per_class: dict[str, int] = Field(default_factory=dict)
+
     # --- quality filters (Stage 3): wwPDB validation-report metrics ---
     # Metadata only (no coordinates). Each cap is optional (None disables it). An
     # entry is dropped only when the metric is present AND violates the cap;
@@ -95,6 +105,14 @@ class Config(BaseModel):
     @classmethod
     def _normalize_codes(cls, v: list[str]) -> list[str]:
         return [h.strip().upper() for h in v]
+
+    @field_validator("test_min_per_class")
+    @classmethod
+    def _check_minimums(cls, v: dict[str, int]) -> dict[str, int]:
+        for k, n in v.items():
+            if n < 0:
+                raise ValueError(f"test_min_per_class[{k!r}] must be >= 0, got {n}")
+        return v
 
     @property
     def dataset_version(self) -> str:
