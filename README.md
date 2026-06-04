@@ -83,6 +83,9 @@ uv run if-split build --registry data/out/splits.registry.json --out data/out2
 
 # OPTIONAL: download the actual structures for a built split (see below).
 uv run if-split fetch data/out/manifest.json --split test --out data/structures
+
+# Emit a portable, shareable split spec (see "Sharing a split spec" below).
+uv run if-split spec data/out/manifest.json --name my-split --out my-split.ifsplit.yaml
 ```
 
 ### Outputs (`--out` directory)
@@ -261,11 +264,54 @@ for epoch in range(3):
     batch_ids = ds.train.sample_by_cluster(seed=epoch)
 ```
 
+## Sharing a split spec
+
+The config **is** the shareable recipe. Everything that affects the split lives in
+one small YAML file with a content hash, so you can hand someone that file and they
+reproduce your methodology exactly — like `params.yaml` in DVC. `if-split spec`
+emits a portable, self-identifying version from any build or config:
+
+```bash
+# Extract a stand-alone spec from a finished build (config is embedded in the manifest):
+uv run if-split spec data/out/manifest.json --name "my-split" --author "you" \
+    --out my-split.ifsplit.yaml
+
+# Anyone reproduces your split from just that file:
+uv run if-split build --config my-split.ifsplit.yaml --out their/out
+```
+
+The emitted file carries a `spec:` header that announces what it is and pins the
+expected hash:
+
+```yaml
+spec:
+  ifsplit_spec: ifsplit/config@1          # schema id — the file says what it is
+  name: my-split
+  author: you
+  created_with: if-split 0.1.0
+  expected_config_hash: 3b63318286fd2ac4994f34d10936be05
+snapshot_date: '2026-05-31'
+resolution_max_A: 3.5
+# ... all output-affecting settings ...
+```
+
+On load, if `expected_config_hash` no longer matches the settings (someone edited
+them after stamping), IF-Split warns. The `spec:` metadata is **excluded from the
+hash**, so name/author/description never change the split identity — two specs that
+differ only in their labels produce byte-identical outputs.
+
+| Artifact | Question it answers | Size |
+|---|---|--:|
+| `*.ifsplit.yaml` (or `config.yaml`) | *"How did you make this split?"* — the recipe | ~KB |
+| `manifest.json` | *"What's in it?"* — counts, provenance, file index | ~KB |
+| `dataset.lock` | *"Reproduce the exact bytes"* — pins entry set + candidates SHA | ~MB |
+
 ## Configuration
 
 Everything that affects the output lives in one YAML file
 ([`config/default.yaml`](config/default.yaml)); its canonical hash is embedded
-in every manifest, so two builds with the same hash used identical settings.
+in every manifest, so two builds with the same hash used identical settings. It
+doubles as a shareable **split spec** — see [Sharing a split spec](#sharing-a-split-spec).
 
 | Key | Default | Meaning |
 |---|---|---|

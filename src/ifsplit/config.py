@@ -19,6 +19,27 @@ from typing import Any, Literal
 import yaml
 from pydantic import BaseModel, ConfigDict, Field, field_validator, model_validator
 
+SPEC_SCHEMA = "ifsplit/config@1"
+
+
+class SpecMeta(BaseModel):
+    """Self-identifying header + human metadata for a shareable split spec.
+
+    These fields are *descriptive only* and are deliberately EXCLUDED from
+    ``config_hash`` — two identical splits with different names/authors must still
+    share a hash. ``expected_config_hash`` lets a shared spec self-verify: on load,
+    if it is set and does not match the computed hash, the user is warned.
+    """
+
+    model_config = ConfigDict(extra="forbid")
+
+    ifsplit_spec: str = SPEC_SCHEMA  # schema id, so the file announces what it is
+    name: str | None = None
+    description: str | None = None
+    author: str | None = None
+    created_with: str | None = None  # e.g. "if-split 0.1.0"
+    expected_config_hash: str | None = None
+
 
 class SplitFractions(BaseModel):
     """Train/val/test partition fractions; must sum to 1.0."""
@@ -101,6 +122,11 @@ class Config(BaseModel):
     ligand_context_radius_A: float = Field(gt=0)
     max_ligand_atoms: int = Field(gt=0)
 
+    # --- shareable-spec metadata (descriptive only; EXCLUDED from config_hash) ---
+    # A self-identifying header + optional human metadata, so a config.yaml doubles
+    # as a portable "split spec" you can hand someone to reproduce your methodology.
+    spec: SpecMeta | None = None
+
     @field_validator("experimental_methods")
     @classmethod
     def _normalize_methods(cls, v: list[str]) -> list[str]:
@@ -130,13 +156,36 @@ class Config(BaseModel):
         return round(self.identity_threshold * 100)
 
     def canonical_dict(self) -> dict[str, Any]:
-        """JSON-mode dump (dates -> ISO strings) used for hashing and manifests."""
-        return self.model_dump(mode="json")
+        """JSON-mode dump of the output-affecting settings (for hashing/manifests).
+
+        The ``spec`` metadata is descriptive, not output-affecting, so it is
+        excluded here — two splits identical but for name/author hash the same.
+        """
+        d = self.model_dump(mode="json")
+        d.pop("spec", None)
+        return d
 
     def config_hash(self) -> str:
         """Deterministic, formatting-independent hash of the settings."""
         canonical = json.dumps(self.canonical_dict(), sort_keys=True, separators=(",", ":"))
         return hashlib.blake2b(canonical.encode("utf-8"), digest_size=16).hexdigest()
+
+    def to_spec_dict(self, *, stamp_hash: bool = True) -> dict[str, Any]:
+        """A portable split-spec mapping: a self-identifying header + all settings.
+
+        Suitable for ``yaml.safe_dump`` and re-loading via :func:`load_config`. The
+        ``spec`` header carries the schema id and (optionally) the expected
+        config-hash so the shared file self-verifies on reload.
+        """
+        from . import __version__
+
+        meta = (self.spec or SpecMeta()).model_dump(mode="json", exclude_none=True)
+        meta["ifsplit_spec"] = SPEC_SCHEMA
+        meta.setdefault("created_with", f"if-split {__version__}")
+        if stamp_hash:
+            meta["expected_config_hash"] = self.config_hash()
+        body = self.canonical_dict()  # settings only (no spec)
+        return {"spec": meta, **body}
 
 
 def load_config(path: str | Path) -> Config:
@@ -148,4 +197,17 @@ def load_config(path: str | Path) -> Config:
         raw = yaml.safe_load(fh)
     if not isinstance(raw, dict):
         raise ValueError(f"Config must be a YAML mapping, got {type(raw).__name__}: {path}")
-    return Config.model_validate(raw)
+    cfg = Config.model_validate(raw)
+    # If a shared spec stamped an expected hash, verify we reproduce it. A mismatch
+    # means the settings were edited after stamping (or a tool-version difference) —
+    # warn, don't fail, so the file stays usable.
+    expected = cfg.spec.expected_config_hash if cfg.spec else None
+    if expected and expected != cfg.config_hash():
+        import warnings
+
+        warnings.warn(
+            f"spec.expected_config_hash {expected} != computed {cfg.config_hash()}: "
+            f"the settings in {path} differ from when the spec was stamped.",
+            stacklevel=2,
+        )
+    return cfg

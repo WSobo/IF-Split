@@ -104,3 +104,54 @@ def test_unknown_key_rejected():
     d["totally_made_up"] = True
     with pytest.raises(ValidationError):
         Config.model_validate(d)
+
+
+# ------------------------------- spec sharing ------------------------------ #
+def test_spec_metadata_excluded_from_hash():
+    # Two configs identical but for spec metadata must hash the same.
+    base = Config.model_validate(_good_dict())
+    d = _good_dict()
+    d["spec"] = {"name": "my-split", "author": "WSobo", "description": "demo"}
+    withmeta = Config.model_validate(d)
+    assert withmeta.spec is not None
+    assert withmeta.config_hash() == base.config_hash()
+
+
+def test_to_spec_dict_roundtrips_to_same_hash():
+    cfg = load_config(DEFAULT_CONFIG)
+    doc = cfg.to_spec_dict(stamp_hash=True)
+    assert doc["spec"]["ifsplit_spec"] == "ifsplit/config@1"
+    assert doc["spec"]["expected_config_hash"] == cfg.config_hash()
+    # Reloading the emitted spec yields the same output-affecting settings.
+    back = Config.model_validate(doc)
+    assert back.config_hash() == cfg.config_hash()
+
+
+def test_spec_hash_mismatch_warns(tmp_path):
+    import warnings
+
+    import yaml
+
+    cfg = load_config(DEFAULT_CONFIG)
+    doc = cfg.to_spec_dict(stamp_hash=True)
+    doc["resolution_max_A"] = 2.0  # change a setting AFTER stamping the hash
+    p = tmp_path / "tampered.ifsplit.yaml"
+    p.write_text(yaml.safe_dump(doc), encoding="utf-8")
+    with warnings.catch_warnings(record=True) as w:
+        warnings.simplefilter("always")
+        load_config(p)
+    assert any("expected_config_hash" in str(x.message) for x in w)
+
+
+def test_spec_matching_hash_no_warn(tmp_path):
+    import warnings
+
+    import yaml
+
+    cfg = load_config(DEFAULT_CONFIG)
+    p = tmp_path / "clean.ifsplit.yaml"
+    p.write_text(yaml.safe_dump(cfg.to_spec_dict(stamp_hash=True)), encoding="utf-8")
+    with warnings.catch_warnings(record=True) as w:
+        warnings.simplefilter("always")
+        load_config(p)
+    assert not any("expected_config_hash" in str(x.message) for x in w)

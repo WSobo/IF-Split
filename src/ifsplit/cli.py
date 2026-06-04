@@ -11,6 +11,7 @@ from __future__ import annotations
 
 import argparse
 import sys
+from pathlib import Path
 
 from pydantic import ValidationError
 
@@ -151,6 +152,42 @@ def cmd_stats(args: argparse.Namespace) -> int:
     return summarize_manifest(args.manifest)
 
 
+def cmd_spec(args: argparse.Namespace) -> int:
+    """Emit a portable, self-identifying split spec (YAML) from a build or config.
+
+    The source may be a manifest.json (the config is embedded in it) or an existing
+    config YAML. The output is a small file you can share so anyone can reproduce
+    your split with `if-split build --config <that file>`.
+    """
+    import yaml
+
+    from .config import Config, SpecMeta
+    from .manifest import read_manifest
+
+    src = Path(args.source)
+    if src.name.endswith(".json"):
+        cfg = Config.model_validate(read_manifest(src)["config"])
+    else:
+        cfg = load_config(src)
+
+    # Apply optional human metadata overrides from flags.
+    meta = (cfg.spec or SpecMeta()).model_dump(exclude_none=True)
+    for field in ("name", "description", "author"):
+        val = getattr(args, field, None)
+        if val is not None:
+            meta[field] = val
+    cfg = cfg.model_copy(update={"spec": SpecMeta(**meta)})
+
+    doc = cfg.to_spec_dict(stamp_hash=True)
+    text = yaml.safe_dump(doc, sort_keys=False, default_flow_style=False)
+    if args.out:
+        Path(args.out).write_text(text, encoding="utf-8")
+        print(f"wrote split spec -> {args.out}  (config_hash {cfg.config_hash()})")
+    else:
+        sys.stdout.write(text)
+    return 0
+
+
 # Confirm before a pull larger than this many structures unless --yes is given.
 _FETCH_CONFIRM_THRESHOLD = 1000
 
@@ -266,6 +303,17 @@ def build_parser() -> argparse.ArgumentParser:
     )
     ps.add_argument("manifest", help="Path to manifest.json")
     ps.set_defaults(func=cmd_stats)
+
+    psp = sub.add_parser(
+        "spec",
+        help="Emit a portable, shareable split spec (YAML) from a manifest or config.",
+    )
+    psp.add_argument("source", help="Path to a manifest.json or a config YAML.")
+    psp.add_argument("--out", default=None, help="Write spec here (default: stdout).")
+    psp.add_argument("--name", default=None, help="Human-readable split name.")
+    psp.add_argument("--description", default=None, help="One-line description.")
+    psp.add_argument("--author", default=None, help="Author/attribution.")
+    psp.set_defaults(func=cmd_spec)
 
     pf = sub.add_parser(
         "fetch",
