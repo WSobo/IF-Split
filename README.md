@@ -155,7 +155,7 @@ A `build` runs eight stages; none touch coordinates.
 |---|---|---|
 | 1 — enumerate | `enumerate.py`, `rcsb.py` | RCSB Search → entry IDs; Data API (GraphQL, batched) → sequences, ligands, residue counts, cluster membership → `candidates.jsonl`. |
 | 3 — filter | `parse.py` | Drop no-protein / no-sequence / oversized entries (assembly-1 residue count vs `max_total_residues`), plus optional wwPDB validation-report quality caps (clashscore, R-free, Ramachandran/rotamer/RSRZ) — all from metadata. Every drop is logged with its reason. |
-| 4 — ligands | `ligands.py` | Tier each non-protein component `functional`/`ambiguous`/`artifact`; derive class labels (metal / small-molecule / nucleotide). Nucleotide is functional only with a verified protein↔NA assembly interface. **Annotate, never drop.** |
+| 4 — ligands | `ligands.py` | Tier each non-protein component `functional`/`ambiguous`/`artifact`; derive class labels (metal / small-molecule / nucleic-acid). `nucleic_acid` = a protein↔DNA/RNA *complex* (verified assembly interface), **not** a bound mononucleotide. **Annotate, never drop.** |
 | 5 — cluster | `cluster.py` | Group protein entities by RCSB precomputed cluster id at `identity_threshold`; canonical key = smallest member id. |
 | 6 — split | `split.py` | Deterministic hash → train/val/test; assert no cluster spans two splits; audit residual secondary-chain overlap. |
 | 7 — manifest | `manifest.py` | Emit lock + manifest + registry (all deterministic, no wall-clock fields). |
@@ -205,11 +205,16 @@ machine-readable reason, from RCSB metadata signals:
 **Holo gating (metadata-only).** Presence isn't enough. A small molecule or metal
 is `functional` only if RCSB reports it *contacting* the protein (`bound_components`)
 or it has a measured binding affinity; an unbound one is `ambiguous`. A DNA/RNA
-chain is `functional` *nucleotide* only when the biological assembly has a verified
-protein↔nucleic-acid interface (`rcsb_interface_info.polymer_composition == "Protein/NA"`)
-— a co-deposited but non-contacting oligo is reported `ambiguous`, never silently
+chain is `functional` `nucleic_acid` only when the biological assembly has a verified
+protein↔nucleic-acid interface (`num_prot_na_interface_entities > 0`) — a
+co-deposited but non-contacting oligo is reported `ambiguous`, never silently
 labelled. (Interfaces are RCSB-computed metadata, available for X-ray *and* cryo-EM,
 so no coordinates are downloaded.)
+
+> The `nucleic_acid` class is the protein–nucleic-acid **complex** category (DNA/RNA
+> polymer chains), matching LigandMPNN's "nucleotide" split. Bound *mononucleotide*
+> ligands (ATP, GTP, NAD, SAM, …) are not this class — they fall under
+> `small_molecule`.
 
 The His-tag/Ni curation catches a known blemish in the LigandMPNN metal set:
 structures whose only "metal site" is a poly-His tag chelating Ni/Co from

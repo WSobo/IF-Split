@@ -15,7 +15,7 @@ The split itself is plain lists of PDB ids, each its own file:
 - ``train.json`` / ``val.json`` / ``test.json`` - the entry ids in each split
   (one id per line; grepable and trivially loadable).
 - ``test/<class>_test.json`` - the test ids carrying each functional ligand class
-  (``metal`` / ``small_molecule`` / ``nucleotide``), for per-class evaluation.
+  (``metal`` / ``small_molecule`` / ``nucleic_acid``), for per-class evaluation.
 
 Supporting maps (only needed for sampling / curation, not to read the split):
 - ``clusters.json`` - entry_id -> component key (for cluster-balanced sampling).

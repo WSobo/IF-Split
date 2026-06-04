@@ -18,7 +18,7 @@ uv run if-split build --config examples/IF-Split-2026.05.31/config.yaml --out da
 | [`test.json`](test.json) | 100 KB | test-set PDB ids (all of them) |
 | [`test/metal_test.json`](test/metal_test.json) | 36 KB | test ids with a functional **metal** site |
 | [`test/small_molecule_test.json`](test/small_molecule_test.json) | 28 KB | test ids with a functional **small molecule** |
-| [`test/nucleotide_test.json`](test/nucleotide_test.json) | 8 KB | test ids that are protein↔**nucleic-acid** complexes |
+| [`test/nucleic_acid_test.json`](test/nucleic_acid_test.json) | 8 KB | test ids that are protein↔**nucleic-acid** complexes (DNA/RNA chains) |
 | [`manifest.json`](manifest.json) | 4 KB | provenance: config, counts, clustering stats, file index |
 | [`config.yaml`](config.yaml) | — | the exact config used (= `config/default.yaml`, cutoff pinned) |
 | [`STATS.txt`](STATS.txt) | — | `if-split stats` output |
@@ -68,8 +68,8 @@ per component). Splitting on components is what prevents cross-split leakage; us
 
 ## Curation highlights (holo-gated, annotate-never-destroy)
 
-- **Test set, functional tier:** metal 4,099 · small-molecule 3,530 · nucleotide 586
-- **Test set, ambiguous (reported, not labelled):** small-molecule 3,596 · metal 73 · nucleotide 1
+- **Test set, functional tier:** metal 4,099 · small-molecule 3,530 · nucleic-acid 586
+- **Test set, ambiguous (reported, not labelled):** small-molecule 3,596 · metal 73 · nucleic-acid 1
   - The small-molecule ambiguous count ≈ the functional one: roughly half of
     bound-looking small molecules aren't corroborated by contact or a measured
     affinity, so they're flagged rather than silently labelled.

@@ -49,9 +49,10 @@
       "val": 0.1
     },
     "split_salt": "snapsplit-v1",
+    "test_min_per_class": {},
     "use_biological_assembly": true
   },
-  "config_hash": "eaa0d1757f53cb929794c21e7d47fcf4",
+  "config_hash": "b95391b48ccb55c501248e2ed70f2d83",
   "dataset_version": "IF-Split-2026.05.31",
   "files": {
     "clusters": "clusters.json",
@@ -64,7 +65,7 @@
     },
     "test_by_class": {
       "metal": "test/metal_test.json",
-      "nucleotide": "test/nucleotide_test.json",
+      "nucleic_acid": "test/nucleic_acid_test.json",
       "small_molecule": "test/small_molecule_test.json"
     }
   },
@@ -95,12 +96,12 @@
     "per_split_ambiguous_counts": {
       "test": {
         "metal": 73,
-        "nucleotide": 1,
+        "nucleic_acid": 1,
         "small_molecule": 3596
       },
       "train": {
         "metal": 1233,
-        "nucleotide": 11,
+        "nucleic_acid": 11,
         "small_molecule": 58418
       },
       "val": {
@@ -111,19 +112,20 @@
     "per_split_class_counts": {
       "test": {
         "metal": 4099,
-        "nucleotide": 586,
+        "nucleic_acid": 586,
         "small_molecule": 3530
       },
       "train": {
         "metal": 55952,
-        "nucleotide": 9948,
+        "nucleic_acid": 9948,
         "small_molecule": 50497
       },
       "val": {
         "metal": 4535,
-        "nucleotide": 539,
+        "nucleic_acid": 539,
         "small_molecule": 3147
       }
-    }
+    },
+    "test_minimum_shortfalls": {}
   }
 }

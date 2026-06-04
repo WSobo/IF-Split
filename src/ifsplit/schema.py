@@ -105,7 +105,7 @@ class CandidateRecord(BaseModel):
     affinity_comp_ids: list[str] = []
     # RCSB-computed count of protein<->nucleic-acid interface entities across the
     # entry's assemblies (rcsb_assembly_info.num_prot_na_interface_entities). > 0
-    # verifies a real protein/NA contact (Stage 4 holo gate for the nucleotide
+    # verifies a real protein/NA contact (Stage 4 holo gate for the nucleic_acid
     # class) — distinguishing a true complex from a co-deposited oligo.
     protein_na_interface_count: int = 0
     # wwPDB validation-report summary (Stage 3 quality filters). All fields

@@ -9,7 +9,7 @@ junk ion is still a good training backbone). Each non-protein component is tiere
   - ``artifact``    : buffer / cryoprotectant / counterion / purification tag
 
 with a machine-readable reason. Ligand-*class* labels (metal / small_molecule /
-nucleotide) derive from the tier via a config threshold (default: only
+nucleic_acid) derive from the tier via a config threshold (default: only
 ``functional`` sets a class label; ``ambiguous`` is reported but not labelled;
 ``artifact`` is excluded). A downstream featurizer reads the same per-component
 tier to decide what counts as real ligand context — this is the lever that
@@ -21,7 +21,7 @@ Signals used (all from the Data API, no coordinates):
   - chem-comp ``formula`` : metal-only vs organic
   - His-tag + Ni/Co       : the IMAC purification-artifact pattern (existing rule)
   - protein_na_interface_count: a protein<->nucleic-acid assembly interface (>0)
-                            verifies a real contact (holo gate for nucleotide)
+                            verifies a real contact (holo gate for nucleic_acid)
 """
 
 from __future__ import annotations
@@ -33,7 +33,7 @@ from .schema import CandidateRecord, NonpolymerComp
 
 # Ligand classes IF-Split tracks.
 CLASS_METAL = "metal"
-CLASS_NUCLEOTIDE = "nucleotide"
+CLASS_NUCLEIC_ACID = "nucleic_acid"
 CLASS_SMALL_MOLECULE = "small_molecule"
 
 # Confidence tiers.
@@ -233,18 +233,19 @@ def classify_components(record: CandidateRecord, cfg: Config) -> dict:
             # Record the would-be class for reporting (metal vs small molecule).
             ambiguous_classes.add(CLASS_METAL if is_metal_ion(comp) else CLASS_SMALL_MOLECULE)
 
-    # Nucleotide class = DNA/RNA polymer chains. Functional only if the protein
-    # actually *interfaces* the nucleic acid (RCSB assembly-interface metadata);
-    # an NA chain with no protein/NA interface is co-deposited, not holo, so the
-    # class is reported as ambiguous, not labelled. Non-polymer nucleotides
-    # (ATP/GTP/NAD) are handled above as small molecules.
-    has_nucleotide = any(e.is_nucleic for e in record.polymer_entities)
-    nucleotide_functional = has_nucleotide and has_protein_na_interface(record)
-    if has_nucleotide:
-        if nucleotide_functional:
+    # nucleic_acid class = the entry has DNA/RNA *polymer chains*. Functional only
+    # if the protein actually *interfaces* the nucleic acid (RCSB assembly-interface
+    # metadata); an NA chain with no protein/NA interface is co-deposited, not holo,
+    # so the class is reported as ambiguous, not labelled. NB: this is the
+    # protein/nucleic-acid *complex* class, NOT bound mononucleotide ligands
+    # (ATP/GTP/NAD) -- those are handled above as small molecules.
+    has_nucleic_acid = any(e.is_nucleic for e in record.polymer_entities)
+    nucleic_acid_functional = has_nucleic_acid and has_protein_na_interface(record)
+    if has_nucleic_acid:
+        if nucleic_acid_functional:
             tiers["nucleic_acid"] = {"tier": TIER_FUNCTIONAL, "reason": "protein_na_interface"}
         else:
-            ambiguous_classes.add(CLASS_NUCLEOTIDE)
+            ambiguous_classes.add(CLASS_NUCLEIC_ACID)
             tiers["nucleic_acid"] = {"tier": TIER_AMBIGUOUS, "reason": "no_protein_na_interface"}
 
     classes: set[str] = set()
@@ -252,8 +253,8 @@ def classify_components(record: CandidateRecord, cfg: Config) -> dict:
         classes.add(CLASS_METAL)
     if functional_sms:
         classes.add(CLASS_SMALL_MOLECULE)
-    if nucleotide_functional:
-        classes.add(CLASS_NUCLEOTIDE)
+    if nucleic_acid_functional:
+        classes.add(CLASS_NUCLEIC_ACID)
 
     return {
         "entry_id": record.entry_id,
@@ -261,7 +262,7 @@ def classify_components(record: CandidateRecord, cfg: Config) -> dict:
         "ambiguous_classes": sorted(ambiguous_classes - classes),
         "metals": sorted(functional_metals),
         "small_molecules": sorted(functional_sms),
-        "has_nucleotide": has_nucleotide,
+        "has_nucleic_acid": has_nucleic_acid,
         "tiers": dict(sorted(tiers.items())),
         "purification_artifact": is_artifact_entry,
     }

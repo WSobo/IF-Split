@@ -172,18 +172,18 @@ def test_classify_4hhb_small_molecule_and_no_metal(sample_entries):
     assert res["small_molecules"] == ["HEM"]  # bound cofactor
     assert res["tiers"]["PO4"]["tier"] == TIER_ARTIFACT  # buffer
     assert res["metals"] == []
-    assert res["has_nucleotide"] is False
+    assert res["has_nucleic_acid"] is False
 
 
-def test_classify_1a1f_metal_and_nucleotide(sample_entries):
+def test_classify_1a1f_metal_and_nucleic_acid(sample_entries):
     rec = CandidateRecord.from_data_api(sample_entries["1A1F"])
     res = classify_components(rec, _cfg())
     assert "metal" in res["classes"]  # real bound Zn
-    assert "nucleotide" in res["classes"]  # DNA chains, verified protein/NA interface
+    assert "nucleic_acid" in res["classes"]  # DNA chains, verified protein/NA interface
     assert res["metals"] == ["ZN"]
 
 
-# ----------------------- nucleotide holo gate (interface) ------------------ #
+# -------------------- nucleic_acid holo gate (interface) ------------------- #
 def _protein_na_record(prot_na_interfaces: int | None) -> CandidateRecord:
     """A protein + DNA entry; optional protein<->NA interface count on assembly 1.
 
@@ -225,23 +225,23 @@ def _protein_na_record(prot_na_interfaces: int | None) -> CandidateRecord:
     )
 
 
-def test_nucleotide_functional_with_protein_na_interface():
+def test_nucleic_acid_functional_with_protein_na_interface():
     res = classify_components(_protein_na_record(2), _cfg())  # 2 protein/NA interfaces
-    assert res["has_nucleotide"] is True
-    assert "nucleotide" in res["classes"]
+    assert res["has_nucleic_acid"] is True
+    assert "nucleic_acid" in res["classes"]
     assert res["tiers"]["nucleic_acid"]["tier"] == TIER_FUNCTIONAL
 
 
-def test_nucleotide_ambiguous_without_interface():
+def test_nucleic_acid_ambiguous_without_interface():
     # DNA present but zero protein/NA interfaces (co-deposited, not holo).
     res = classify_components(_protein_na_record(0), _cfg())
-    assert res["has_nucleotide"] is True
-    assert "nucleotide" not in res["classes"]
-    assert "nucleotide" in res["ambiguous_classes"]
+    assert res["has_nucleic_acid"] is True
+    assert "nucleic_acid" not in res["classes"]
+    assert "nucleic_acid" in res["ambiguous_classes"]
     assert res["tiers"]["nucleic_acid"]["tier"] == TIER_AMBIGUOUS
 
 
-def test_nucleotide_ambiguous_when_no_interface_data():
+def test_nucleic_acid_ambiguous_when_no_interface_data():
     res = classify_components(_protein_na_record(None), _cfg())
-    assert "nucleotide" not in res["classes"]
-    assert "nucleotide" in res["ambiguous_classes"]
+    assert "nucleic_acid" not in res["classes"]
+    assert "nucleic_acid" in res["ambiguous_classes"]

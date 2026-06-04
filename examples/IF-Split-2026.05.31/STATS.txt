@@ -1,4 +1,4 @@
-IF-Split-2026.05.31  (config eaa0d1757f53cb929794c21e7d47fcf4)
+IF-Split-2026.05.31  (config b95391b48ccb55c501248e2ed70f2d83)
   candidates: 223422  kept: 214794  dropped: 8628
     - no_protein_entity: 3078
     - too_large: 5550
@@ -9,12 +9,12 @@ IF-Split-2026.05.31  (config eaa0d1757f53cb929794c21e7d47fcf4)
     test :   12396 entries     1981 components
   test set by ligand class (functional tier):
     metal: 4099
-    nucleotide: 586
+    nucleic_acid: 586
     small_molecule: 3530
   test set ambiguous (reported, not labelled):
     metal: 73
-    nucleotide: 1
+    nucleic_acid: 1
     small_molecule: 3596
   His-tag/Ni purification artifacts flagged: 404
   split files: test.json, train.json, val.json
-  per-class test files: test/metal_test.json, test/nucleotide_test.json, test/small_molecule_test.json
+  per-class test files: test/metal_test.json, test/nucleic_acid_test.json, test/small_molecule_test.json

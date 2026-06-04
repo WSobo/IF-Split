@@ -71,7 +71,7 @@ class Config(BaseModel):
 
     # --- test-set minimums (opt-in stratification top-up) ---
     # Floor on the number of test entries carrying each functional ligand class,
-    # e.g. {"metal": 500, "nucleotide": 200}. Empty (default) = pure deterministic
+    # e.g. {"metal": 500, "nucleic_acid": 200}. Empty (default) = pure deterministic
     # hash, no top-up. When set, after the base assignment any class below its floor
     # recruits *whole components* (never individual entries, so no leakage) into
     # test in deterministic hash order, skipping components already pinned by a

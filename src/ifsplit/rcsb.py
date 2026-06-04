@@ -40,7 +40,7 @@ _RETRY_STATUS = {429, 500, 502, 503, 504}
 #     1-element list. Metadata, not coordinates — keeps the no-download invariant.
 #   - rcsb_assembly_info.num_prot_na_interface_entities: RCSB-computed count of
 #     protein<->nucleic-acid interface entities in the assembly; > 0 verifies a real
-#     protein/NA contact (the holo gate for the nucleotide class). A single integer
+#     protein/NA contact (the holo gate for the nucleic_acid class). A single integer
 #     in the assembly-info block — far cheaper than listing every interface object
 #     (a ribosome has hundreds). Present for X-ray AND EM.
 _ENTRY_QUERY = """
