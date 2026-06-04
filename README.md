@@ -1,5 +1,9 @@
 # IF-Split
 
+[![CI](https://github.com/WSobo/IF-Split/actions/workflows/ci.yml/badge.svg)](https://github.com/WSobo/IF-Split/actions/workflows/ci.yml)
+[![PyPI](https://img.shields.io/pypi/v/if-split.svg)](https://pypi.org/project/if-split/)
+[![Python](https://img.shields.io/pypi/pyversions/if-split.svg)](https://pypi.org/project/if-split/)
+
 **A reproducible, date-pinned, ligand-aware train/val/test splitter for the PDB.**
 
 IF-Split borrows the *split logic* of LigandMPNN (Dauparas et al., *Nature
@@ -41,16 +45,23 @@ records and sequences. Coordinates are an optional, downstream concern.
 
 ## Install
 
-Requires Python ≥ 3.11 and [`uv`](https://docs.astral.sh/uv/). `build` needs
-only network access to RCSB — no external binaries. (The optional `mmseqs2`
-clustering backend and the optional coordinate/featurization path via `gemmi`
-are Linux-native, so run under Linux/WSL if you use them.)
+Requires Python ≥ 3.11. `build` needs only network access to RCSB — no external
+binaries.
 
 ```bash
+pip install if-split          # from PyPI
+```
+
+Or for development, with [`uv`](https://docs.astral.sh/uv/):
+
+```bash
+git clone https://github.com/WSobo/IF-Split && cd IF-Split
 uv sync          # creates .venv from uv.lock, installs deps + dev tools (ruff, pytest)
 ```
 
-`uv.lock` is committed, so environments are reproducible.
+`uv.lock` is committed, so dev environments are reproducible. (The optional
+coordinate/featurization path via `gemmi` is Linux-native, so run under
+Linux/WSL if you use `fetch`.)
 
 ## Quickstart
 
