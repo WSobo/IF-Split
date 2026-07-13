@@ -5,6 +5,7 @@ from __future__ import annotations
 from ifsplit.schema import (
     CandidateRecord,
     canonical_jsonl_bytes,
+    metal_symbols_in_annotation,
     read_candidates_jsonl,
     sha256_hex,
 )
@@ -43,6 +44,42 @@ def test_nucleic_entity_has_no_cluster_ids(sample_entries):
     rec = CandidateRecord.from_data_api(sample_entries["1A1F"])
     dna = next(e for e in rec.polymer_entities if e.is_nucleic)
     assert dna.cluster_ids == {}
+
+
+def test_metal_symbols_in_annotation():
+    assert metal_symbols_in_annotation("nickel cation binding") == {"NI"}
+    assert metal_symbols_in_annotation("Urease nickel binding site") == {"NI"}
+    assert metal_symbols_in_annotation("cobalt ion binding") == {"CO"}
+    assert metal_symbols_in_annotation("zinc ion binding") == {"ZN"}
+    # A generic metal term with no named element -> the METAL sentinel.
+    assert metal_symbols_in_annotation("transition metal ion binding") == {"METAL"}
+    # No metal mentioned at all.
+    assert metal_symbols_in_annotation("serine-type endopeptidase activity") == set()
+    assert metal_symbols_in_annotation(None) == set()
+
+
+def test_metal_annotations_extracted_from_data_api():
+    entry = {
+        "rcsb_id": "TEST",
+        "polymer_entities": [
+            {
+                "rcsb_id": "TEST_1",
+                "entity_poly": {
+                    "rcsb_entity_polymer_type": "Protein",
+                    "pdbx_seq_one_letter_code_can": "ACDE",
+                },
+                "rcsb_polymer_entity_annotation": [
+                    {"type": "GO", "name": "nickel cation binding"},
+                    {"type": "InterPro", "name": "Urease, alpha subunit"},
+                ],
+            }
+        ],
+    }
+    rec = CandidateRecord.from_data_api(entry)
+    assert rec.polymer_entities[0].metal_annotations == ["NI"]
+    # A protein with no metal annotation gets an empty list (backward compatible).
+    entry["polymer_entities"][0]["rcsb_polymer_entity_annotation"] = []
+    assert CandidateRecord.from_data_api(entry).polymer_entities[0].metal_annotations == []
 
 
 def test_nonpolymer_comps_sorted(sample_entries):

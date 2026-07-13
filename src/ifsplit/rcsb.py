@@ -47,6 +47,11 @@ _RETRY_STATUS = {429, 500, 502, 503, 504}
 #     "ligand of interest" flag. Catches tightly but NON-covalently bound cofactors
 #     (FAD/NAD/FMN/NADP, many inhibitors) that nonpolymer_bound_components misses —
 #     that field is bond-based, so it omits non-covalent binders. One bool/instance.
+#   - rcsb_polymer_entity_annotation (GO/InterPro/Pfam): the protein's functional
+#     annotation. A term like "nickel cation binding" / "Urease nickel binding site"
+#     says the PROTEIN is a native Ni/Co metalloenzyme — a positive gate that rescues
+#     a lone Ni/Co the His-tag heuristic would otherwise demote (Stage 4). All from
+#     RCSB, so no separate UniProt dependency and it rides in the locked snapshot.
 _ENTRY_QUERY = """
 query($ids: [String!]!) {
   entries(entry_ids: $ids) {
@@ -78,6 +83,7 @@ query($ids: [String!]!) {
         pdbx_seq_one_letter_code_can
       }
       rcsb_cluster_membership { cluster_id identity }
+      rcsb_polymer_entity_annotation { type name }
     }
     nonpolymer_entities {
       nonpolymer_comp { chem_comp { id name formula type } }

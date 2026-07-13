@@ -19,6 +19,33 @@ from collections.abc import Iterable
 
 from pydantic import BaseModel, ConfigDict
 
+# Metal-name words as they appear in GO/InterPro/Pfam annotation strings, mapped to
+# their CCD element symbols. A name that mentions "metal" generically (e.g.
+# "transition metal ion binding") with no named element yields the GENERIC_METAL
+# sentinel. Stage 4 uses this to tell a native-Ni/Co metalloenzyme (its own metal is
+# annotated) from a metalloprotein whose native metal is something else (a Ni/Co
+# substitute) from a protein with no metal annotation at all.
+METAL_ANNOTATION_TERMS: dict[str, str] = {
+    "nickel": "NI", "cobalt": "CO", "zinc": "ZN", "iron": "FE", "ferrous": "FE",
+    "ferric": "FE", "magnesium": "MG", "manganese": "MN", "calcium": "CA",
+    "copper": "CU", "cadmium": "CD", "molybdenum": "MO", "tungsten": "W",
+}  # fmt: skip
+GENERIC_METAL = "METAL"
+
+
+def metal_symbols_in_annotation(name: str | None) -> set[str]:
+    """Metal element symbols named in an annotation string.
+
+    ``"nickel cation binding"`` -> ``{"NI"}``; ``"transition metal ion binding"`` ->
+    ``{"METAL"}`` (generic); a term with no metal -> ``set()``. A named element wins
+    over the generic sentinel.
+    """
+    n = (name or "").lower()
+    named = {sym for word, sym in METAL_ANNOTATION_TERMS.items() if word in n}
+    if named:
+        return named
+    return {GENERIC_METAL} if "metal" in n else set()
+
 
 class PolymerEntity(BaseModel):
     model_config = ConfigDict(extra="forbid")
@@ -30,6 +57,11 @@ class PolymerEntity(BaseModel):
     # RCSB precomputed cluster ids by identity level, e.g. {30: 48, 95: 1239}.
     # Empty for non-protein entities (RCSB clusters proteins only).
     cluster_ids: dict[int, int] = {}
+    # Metal element symbols this protein is annotated (GO/InterPro/Pfam) to bind,
+    # e.g. ["NI"] for a urease, ["ZN"] for a zinc enzyme, ["METAL"] for a generic
+    # "metal ion binding" term. Empty when no metal annotation exists. Stage 4 uses
+    # it to rescue native Ni/Co metalloenzymes from the purification-artifact demotion.
+    metal_annotations: list[str] = []
 
     @property
     def is_protein(self) -> bool:
@@ -163,6 +195,9 @@ class CandidateRecord(BaseModel):
                 cid = cm.get("cluster_id")
                 if ident is not None and cid is not None:
                     cluster_ids[int(ident)] = int(cid)
+            metal_annots: set[str] = set()
+            for ann in p.get("rcsb_polymer_entity_annotation") or []:
+                metal_annots |= metal_symbols_in_annotation(ann.get("name"))
             polymers.append(
                 PolymerEntity(
                     entity_id=p["rcsb_id"],  # verbatim
@@ -170,6 +205,7 @@ class CandidateRecord(BaseModel):
                     seq_len=len(seq),
                     seq=seq,
                     cluster_ids=cluster_ids,
+                    metal_annotations=sorted(metal_annots),
                 )
             )
         polymers.sort(key=lambda e: e.entity_id)
