@@ -20,10 +20,13 @@ use_biological_assembly: true      # biounits, as in LigandMPNN (assembly 1)
 # artifact. Set purification_metals: [] to disable.
 #
 # Even without a detectable tag, a *lone* Ni/Co with no measured affinity is
-# demoted from `functional` to `ambiguous` (reported, not labelled): ~96% of
-# lone Ni/Co in the PDB have no His-tag in the deposited sequence, so a bare
-# contact can't be trusted as a biological metal site. Real metals (Zn, Mg, Fe,
-# Mn, …) and Ni/Co alongside another real metal or with affinity are unaffected.
+# demoted from `functional` to `ambiguous` (reported, not labelled): ~82% of lone
+# Ni/Co in the PDB carry no detectable His-tag (IMAC tags are often absent from
+# the deposited SEQRES), so a bare contact is weak evidence of a biological metal
+# site. This re-tiers roughly 70% of the lone-Ni/Co set and does over-fire on some
+# real bare-Ni/Co enzymes, which the annotate-never-drop tier keeps recoverable.
+# Real metals (Zn, Mg, Fe, Mn, …) and Ni/Co alongside another real metal or with
+# affinity are unaffected. See scripts/audit_nico_histag.py for the derivation.
 purification_metals: ["NI", "CO"]
 histag_min_run: 6
 histag_terminal_min_run: 3

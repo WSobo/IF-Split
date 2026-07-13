@@ -225,13 +225,16 @@ affinity purification. A poly-His run anywhere — or a short run at a chain
 terminus (`histag_terminal_min_run`, catching 6×His tags left partial by
 unmodeled or trimmed residues) — flags the entry's Ni/Co as an `artifact`.
 
-But a real audit showed the deeper issue: **~96% of lone Ni/Co entries have no
-His-tag in the deposited sequence at all** (the tag is trimmed from the SEQRES
-record, not just unmodeled), so a sequence scan can never see it. So even with no
+But an audit (reproducible via [`scripts/audit_nico_histag.py`](scripts/audit_nico_histag.py))
+showed a subtler issue: **~82% of lone Ni/Co entries carry no detectable His-tag
+in the deposited sequence** — IMAC tags are frequently absent from the SEQRES
+record, not just unmodeled, so a sequence scan can't recover them. So even with no
 detectable tag, a *lone* Ni/Co (the entry's only metal) with no measured affinity
-is demoted from `functional` to `ambiguous` — reported, not labelled. Real metals
-(Zn, Mg, Fe, …), and Ni/Co backed by an affinity or sitting alongside a genuine
-metal, are untouched. On the full PDB this re-tiers ~2.7% of the metal set.
+is demoted from `functional` to `ambiguous` — reported, not labelled. This is a
+deliberately conservative call: it re-tiers roughly **70% of the lone-Ni/Co set**
+and *does* over-fire on some genuine bare-Ni/Co enzymes (urease, cobalt methionine
+aminopeptidase, nitrile hydratase, …). Real metals (Zn, Mg, Fe, …), and Ni/Co
+backed by an affinity or sitting alongside a genuine metal, are untouched.
 
 Crucially, **the structure always stays in its split** — a protein with a junk
 ion is still a good backbone; we just don't label the junk. A consumer wanting

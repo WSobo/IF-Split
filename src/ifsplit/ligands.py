@@ -201,9 +201,12 @@ def tier_component(
 
     ``uncorroborated_purification`` is set by the caller for a purification metal
     (Ni/Co) that is the entry's *only* metal and has no measured affinity and no
-    detected His-tag: most lone Ni/Co have their tag trimmed from the deposited
-    sequence, so a contact alone can't be trusted as a biological site -> it is
-    demoted from functional to ambiguous (reported, not labelled).
+    detected His-tag: ~82% of lone Ni/Co carry no detectable His-tag in the
+    deposited sequence (IMAC tags are often absent from SEQRES, not just
+    unmodeled), so a bare contact is weak evidence of a biological site -> it is
+    demoted from functional to ambiguous (reported, never dropped). This
+    deliberately over-fires on some real bare-Ni/Co enzymes; the annotate-never-
+    drop tier keeps them recoverable. See scripts/audit_nico_histag.py.
     """
     cid = comp.comp_id
     bound = cid in set(record.bound_components)
@@ -263,9 +266,10 @@ def classify_components(record: CandidateRecord, cfg: Config) -> dict:
     )
 
     # An entry whose *only* metal is a purification metal (Ni/Co) is a lone-Ni/Co
-    # case. If it's also not a detected His-tag artifact, the tag is likely just
-    # absent from the deposited sequence (true of ~96% of lone Ni/Co), so a metal
-    # here can't be trusted as biological without affinity -> demote to ambiguous.
+    # case. If it's also not a detected His-tag artifact, a bare Ni/Co is still weak
+    # evidence: ~82% of lone Ni/Co carry no detectable His-tag (IMAC tags are often
+    # absent from the deposited SEQRES) so a scan can't recover them -> without
+    # affinity/SOI, demote to ambiguous. (scripts/audit_nico_histag.py)
     entry_metals = {c.comp_id for c in metal_comps(record)}
     lone_purification_metal = (
         bool(purification)
