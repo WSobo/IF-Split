@@ -201,8 +201,8 @@ machine-readable reason, from RCSB metadata signals:
 
 | Tier | Meaning | Example reasons |
 |---|---|---|
-| `functional` | Real ligand/site → gets a class label | bound to protein (`nonpolymer_bound_components`) or has measured binding affinity |
-| `ambiguous` | Present but uncorroborated → reported, **not** labelled | `metal_unbound`, `ligand_unbound` |
+| `functional` | Real ligand/site → gets a class label | `metal_bound`/`ligand_bound` (contacts protein), `*_affinity` (measured), `*_investigated` (RCSB SOI), `metal_annotated` (protein annotated to bind this metal) |
+| `ambiguous` | Present but uncorroborated → reported, **not** labelled | `metal_unbound`, `ligand_unbound`, `metal_site_nonnative`, `purification_metal_uncorroborated` |
 | `artifact` | Buffer / counterion / purification tag → excluded from labels | `additive`, `counterion`, `histag_metal` |
 
 **Holo gating (metadata-only).** Presence isn't enough. A small molecule or metal
@@ -229,18 +229,32 @@ But an audit (reproducible via [`scripts/audit_nico_histag.py`](scripts/audit_ni
 showed a subtler issue: **~82% of lone Ni/Co entries carry no detectable His-tag
 in the deposited sequence** — IMAC tags are frequently absent from the SEQRES
 record, not just unmodeled, so a sequence scan can't recover them. So even with no
-detectable tag, a *lone* Ni/Co (the entry's only metal) with no measured affinity
-is demoted from `functional` to `ambiguous` — reported, not labelled. This is a
-deliberately conservative call: it re-tiers roughly **70% of the lone-Ni/Co set**
-and *does* over-fire on some genuine bare-Ni/Co enzymes (urease, cobalt methionine
-aminopeptidase, nitrile hydratase, …). Real metals (Zn, Mg, Fe, …), and Ni/Co
-backed by an affinity or sitting alongside a genuine metal, are untouched.
+detectable tag, a *lone* Ni/Co (the entry's only metal) with no corroboration is
+demoted from `functional` to `ambiguous` — reported, not labelled.
+
+To avoid over-firing on genuine bare-Ni/Co enzymes (urease, cobalt methionine
+aminopeptidase, nitrile hydratase, …), a lone Ni/Co is **rescued to `functional`
+(`metal_annotated`)** when the protein's RCSB GO/InterPro/Pfam annotation says it
+binds that metal. A protein that binds a *different* native metal (Ni/Co as an
+isomorphous substitute — e.g. Co in a Mg enzyme) is reported `metal_site_nonnative`
+so a consumer can choose to keep it; one with no metal annotation at all stays
+`purification_metal_uncorroborated`. All from RCSB's own metadata (no extra
+UniProt call). Real metals (Zn, Mg, Fe, …), and Ni/Co with affinity/SOI or beside
+a genuine metal, are untouched. Rerun [`scripts/eval_metal_tiering.py`](scripts/eval_metal_tiering.py)
+to measure the tier distribution over the whole lone-Ni/Co set.
 
 Crucially, **the structure always stays in its split** — a protein with a junk
 ion is still a good backbone; we just don't label the junk. A consumer wanting
 "pristine metal sites only" vs "maximum scale, I'll filter myself" changes a
 threshold, not the build. The same per-component tier is what a downstream
 featurizer reads to decide what counts as real ligand context.
+
+> **Per-instance is a featurizer concern.** These tiers are per *component* — they
+> establish whether a structure contains a real Ni/Co site, not *which* of several
+> same-element ions is it. A deposition can hold both a catalytic Ni and a surface
+> crystallization Ni under one `NI` id, and no metadata separates them (adventitious
+> Ni binds surface His/Asp with the same geometry as a catalytic site). Deciding
+> which individual ion to featurize is left to the coordinate-level featurizer.
 
 ### Test-set representation
 
