@@ -281,6 +281,45 @@ for epoch in range(3):
     batch_ids = ds.train.sample_by_cluster(seed=epoch)
 ```
 
+### Training strategies for inverse folding
+
+An inverse-folding model consumes two different things, with opposite scale/quality
+tradeoffs. IF-Split emits **both from the same leakage-safe split**, so you pick a
+strategy without re-deriving the split:
+
+| Corpus | What | Use it for |
+|---|---|---|
+| **Backbones** — every kept structure | `ds.train.backbones` | ProteinMPNN-style, ligand-agnostic. The scale lever — a structure with only junk ions or no ligand is still a good backbone. |
+| **Conditioning targets** — the `functional`-tier ligands | `ds.train.conditioning_targets()` | LigandMPNN-style. One row per `(structure, ligand)`; junk is never a target. The quality lever. |
+
+```python
+ds = load_dataset("data/out/manifest.json")
+
+# 1. Backbone-only training (max data): every structure.
+backbones = ds.train.backbones
+
+# 2. Ligand-conditioned training: condition on the real ligands only.
+targets = ds.train.conditioning_targets()                 # metal / small_molecule / nucleic_acid
+metal_targets = ds.train.conditioning_targets(classes=["metal"])
+
+# 3. Condition on ALL of a structure's ligands at once (group by entry), or one at a time:
+for entry_id, ligs in ds.train.targets_by_entry().items():
+    ctx = [(t.ligand_class, t.comp_id) for t in ligs]     # e.g. [("small_molecule","HEM")]
+
+# 4. Only structures that actually carry a conditioning target:
+conditioned = ds.train.conditioned_entry_ids()            # subset of backbones
+
+# 5. Opt in to non-native metal pockets (real sites where Ni/Co substitutes the
+#    native metal) — good for a metal-site-geometry model, off by default:
+any_site = ds.train.conditioning_targets(include_nonnative=True)
+```
+
+The full corpus is also written to `targets.jsonl` (one row per target: entry, split,
+cluster, class, comp_id, tier, reason) and mirrored into `index.parquet`'s
+`conditioning_targets` column after `fetch`, so a featurizer extracts context atoms for
+exactly those ligands. Which *instance* of a multi-copy metal to featurize is a
+coordinate-level choice left to the featurizer (see the per-instance note above).
+
 ## Sharing a split spec
 
 The config **is** the shareable recipe. Everything that affects the split lives in

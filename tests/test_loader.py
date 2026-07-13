@@ -10,11 +10,13 @@ from ifsplit.dataset import load_dataset
 from ifsplit.ligands import classify_components
 from ifsplit.manifest import (
     build_manifest,
+    build_targets,
     build_tiers_doc,
     write_classes,
     write_clusters,
     write_manifest,
     write_split_files,
+    write_targets,
     write_tiers,
 )
 from ifsplit.parse import drop_summary, filter_candidates
@@ -48,7 +50,13 @@ def _build(tmp_path, sample_entries, artifact_entry):
     write_clusters(cr.entry_to_cluster, tmp_path)
     write_classes(class_map, tmp_path)
     write_tiers(build_tiers_doc(class_map), tmp_path)
+    write_targets(build_targets(class_map, sp, cr), tmp_path)
     return write_manifest(m, tmp_path)
+
+
+def _all_targets(ds, **kw):
+    """Conditioning targets across all splits."""
+    return [t for s in ("train", "val", "test") for t in ds.split(s).conditioning_targets(**kw)]
 
 
 def test_loader_views_total(tmp_path, sample_entries, artifact_entry):
@@ -116,6 +124,58 @@ def test_manifest_lean_tiers_in_sidecar(tmp_path, sample_entries, artifact_entry
     tiers_4hhb = tiers.get("4HHB", {})
     assert tiers_4hhb.get("PO4", {}).get("tier") == "artifact"
     assert tiers_4hhb.get("HEM", {}).get("tier") == "functional"
+
+
+def test_conditioning_targets_are_functional_only(tmp_path, sample_entries, artifact_entry):
+    ds = load_dataset(_build(tmp_path, sample_entries, artifact_entry))
+    targets = _all_targets(ds)
+    assert all(t.tier == "functional" for t in targets)
+    # 4HHB -> HEM (small_molecule); 1A1F -> ZN (metal) + nucleic_acid.
+    tset = {(t.entry_id, t.ligand_class, t.comp_id) for t in targets}
+    assert ("4HHB", "small_molecule", "HEM") in tset
+    assert ("1A1F", "metal", "ZN") in tset
+    assert ("1A1F", "nucleic_acid", None) in tset
+    # The His-tag/Ni artifact entry contributes NO conditioning target.
+    assert not any(t.entry_id == "pdb_00009xyz" for t in targets)
+
+
+def test_backbones_include_every_structure(tmp_path, sample_entries, artifact_entry):
+    ds = load_dataset(_build(tmp_path, sample_entries, artifact_entry))
+    backbones = {e for s in ("train", "val", "test") for e in ds.split(s).backbones}
+    assert backbones == {"4HHB", "1A1F", "pdb_00009xyz"}  # every kept structure
+    conditioned = {t.entry_id for t in _all_targets(ds)}
+    # The artifact-only entry is a backbone but not a conditioning target.
+    assert "pdb_00009xyz" in backbones
+    assert "pdb_00009xyz" not in conditioned
+    assert conditioned < backbones
+
+
+def test_targets_by_entry_groups_1a1f(tmp_path, sample_entries, artifact_entry):
+    ds = load_dataset(_build(tmp_path, sample_entries, artifact_entry))
+    for s in ("train", "val", "test"):
+        grouped = ds.split(s).targets_by_entry()
+        if "1A1F" in grouped:
+            classes = {t.ligand_class for t in grouped["1A1F"]}
+            assert classes == {"metal", "nucleic_acid"}  # both of 1A1F's targets, grouped
+            return
+    raise AssertionError("1A1F not found in any split")
+
+
+def test_class_filter_on_conditioning_targets(tmp_path, sample_entries, artifact_entry):
+    ds = load_dataset(_build(tmp_path, sample_entries, artifact_entry))
+    metals = _all_targets(ds, classes=["metal"])
+    assert metals and all(t.ligand_class == "metal" for t in metals)
+    assert all(t.entry_id == "1A1F" for t in metals)  # only 1A1F has a functional metal
+
+
+def test_manifest_training_summary(tmp_path, sample_entries, artifact_entry):
+    from ifsplit.manifest import read_manifest
+
+    m = read_manifest(_build(tmp_path, sample_entries, artifact_entry))
+    tr = m["training"]
+    assert tr["n_backbones"] == 3
+    assert tr["n_conditioning_targets"] == 3  # HEM + ZN + nucleic_acid
+    assert m["files"]["targets"] == "targets.jsonl"
 
 
 def test_per_class_test_files_written(tmp_path, sample_entries, artifact_entry):

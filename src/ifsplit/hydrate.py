@@ -19,11 +19,13 @@ from .manifest import (
     CLASSES_FILENAME,
     CLUSTERS_FILENAME,
     SPLIT_FILES,
+    TARGETS_FILENAME,
     TIERS_FILENAME,
     read_classes,
     read_clusters,
     read_id_list,
     read_manifest,
+    read_targets,
     read_tiers,
 )
 
@@ -53,9 +55,16 @@ def _index_rows(
     classes: dict[str, list[str]],
     entry_clusters: dict[str, str],
     tiers: dict[str, dict] | None = None,
+    targets: dict[str, list[str]] | None = None,
 ) -> list[dict]:
-    """Enrich each fetched file with split metadata for the ML index."""
+    """Enrich each fetched file with split metadata for the ML index.
+
+    ``conditioning_targets`` is the list of functional-tier ligand comp ids the
+    featurizer should condition on for this structure (``"nucleic_acid"`` for a
+    protein/NA complex); empty means a backbone-only example.
+    """
     tiers = tiers or {}
+    targets = targets or {}
     rows: list[dict] = []
     for r in fetch_rows:
         eid = r["entry_id"]
@@ -68,6 +77,7 @@ def _index_rows(
                 "cluster": entry_clusters.get(eid),
                 "ligand_classes": classes.get(eid, []),
                 "ligand_tiers": tiers.get(eid, {}),
+                "conditioning_targets": targets.get(eid, []),
             }
         )
     rows.sort(key=lambda r: (r["split"], r["entry_id"]))
@@ -183,6 +193,11 @@ def hydrate(
     classes = read_classes(src / files.get("ligand_classes", CLASSES_FILENAME))
     entry_clusters = read_clusters(src / files.get("clusters", CLUSTERS_FILENAME))
     tiers = read_tiers(src / files.get("ligand_tiers", TIERS_FILENAME))
+    # entry -> functional conditioning-target comp ids (nucleic_acid uses that literal).
+    target_comps: dict[str, list[str]] = {}
+    for t in read_targets(src / files.get("targets", TARGETS_FILENAME)):
+        if t.get("tier") == "functional":
+            target_comps.setdefault(t["entry_id"], []).append(t.get("comp_id") or t["class"])
     root = Path(root)
     root.mkdir(parents=True, exist_ok=True)
     splits = splits or list(SPLITS)
@@ -197,7 +212,7 @@ def hydrate(
         if owns:
             fetcher.close()
 
-    rows = _index_rows(res.index_rows, classes, entry_clusters, tiers)
+    rows = _index_rows(res.index_rows, classes, entry_clusters, tiers, target_comps)
     index_paths = write_index(rows, root)
     (root / "manifest.json").write_text(
         json.dumps(manifest, indent=2, sort_keys=True) + "\n", encoding="utf-8"
