@@ -107,6 +107,19 @@ class FakeFetcher:
         pass
 
 
+class CtxFakeFetcher(FakeFetcher):
+    """FakeFetcher usable as a context manager; tolerates cmd_fetch's kwargs."""
+
+    def __init__(self, assembly=True, **_kw):
+        super().__init__(assembly=assembly)
+
+    def __enter__(self):
+        return self
+
+    def __exit__(self, *exc):
+        self.close()
+
+
 @pytest.fixture
 def manifest_path(tmp_path, sample_entries, artifact_entry):
     cfg = load_config(DEFAULT_CONFIG)
@@ -144,6 +157,38 @@ def test_select_targets_orders_and_scopes(manifest_path):
     # Subsetting to one split returns only that split's entries.
     test_only = select_targets(m, ["test"], base_dir=base)
     assert all(s == "test" for _, s in test_only)
+
+
+def test_fetch_reads_split_lists_relative_to_manifest(tmp_path, manifest_path, monkeypatch):
+    # Regression: `fetch` must resolve train.json/test.json next to the MANIFEST,
+    # not the current working directory. Run from a foreign cwd (the documented
+    # usage `if-split fetch data/out/manifest.json --split ...` from the repo root)
+    # and confirm it still selects + hydrates the entries instead of the previous
+    # silent "nothing to fetch" no-op.
+    import argparse
+
+    import ifsplit.download as download
+    from ifsplit.cli import cmd_fetch
+
+    monkeypatch.setattr(download, "StructureFetcher", CtxFakeFetcher)
+    foreign = tmp_path / "elsewhere"
+    foreign.mkdir()
+    monkeypatch.chdir(foreign)
+
+    out = tmp_path / "structures"
+    args = argparse.Namespace(
+        manifest=str(manifest_path),
+        split=["train", "val", "test"],
+        all=False,
+        asymmetric_unit=False,
+        workers=2,
+        yes=True,
+        out=str(out),
+    )
+    assert cmd_fetch(args) == 0
+    # Before the fix this returned early and built nothing.
+    assert (out / "index.jsonl").exists()
+    assert (out / "index.jsonl").read_text().splitlines()  # at least one structure
 
 
 def test_hydrate_builds_ml_tree(tmp_path, manifest_path):

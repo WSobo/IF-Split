@@ -215,7 +215,10 @@ def cmd_fetch(args: argparse.Namespace) -> int:
         return 2
 
     manifest = read_manifest(args.manifest)
-    targets = select_targets(manifest, splits)
+    # Split id-lists (train.json etc.) live next to the manifest, NOT in the cwd —
+    # resolve them relative to the manifest so the documented invocation works from
+    # any directory (hydrate() below already does this for the real fetch).
+    targets = select_targets(manifest, splits, base_dir=Path(args.manifest).parent)
     if not targets:
         print(f"nothing to fetch for split(s): {', '.join(splits)}")
         return 0
