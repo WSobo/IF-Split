@@ -24,8 +24,17 @@ Signals used (all from the Data API, no coordinates):
   - ``affinity_comp_ids`` : a measured binding affinity exists (strong positive)
   - chem-comp ``formula`` : metal-only vs organic
   - His-tag + Ni/Co       : the IMAC purification-artifact pattern (existing rule)
+  - metal_annotations     : RCSB GO/InterPro/Pfam terms naming the metal the protein
+                            binds ("nickel cation binding"). A native Ni/Co
+                            metalloenzyme is rescued from the His-tag demotion; a
+                            non-native-metal site is reported metal_site_nonnative.
   - protein_na_interface_count: a protein<->nucleic-acid assembly interface (>0)
                             verifies a real contact (holo gate for nucleic_acid)
+
+Per-instance real-vs-adventitious (which of several same-element ions is the real
+site) is a *coordinate*-level question metadata can't answer -- RCSB ligand-neighbor
+geometry does not separate a catalytic Ni from a surface-His Ni -- so it is left to
+the downstream featurizer; Stage 4 makes the coarse entry-level call only.
 """
 
 from __future__ import annotations
@@ -191,6 +200,7 @@ def tier_component(
     blacklist: set[str],
     purification: set[str],
     is_artifact_entry: bool,
+    annotated_metals: set[str] = frozenset(),
     uncorroborated_purification: bool = False,
 ) -> tuple[str, str, str | None]:
     """Tier a single non-protein component.
@@ -199,14 +209,21 @@ def tier_component(
     for the ``functional`` tier (the default threshold); ``ambiguous`` components
     return their would-be class as None so they are reported but not labelled.
 
+    ``annotated_metals`` is the set of metal symbols the entry's proteins are
+    annotated (RCSB GO/InterPro/Pfam) to bind. A *strong positive* — a measured
+    affinity, a curated SOI, or the protein being annotated to bind THIS metal —
+    means real metal biology is present and overrides the His-tag heuristic.
+
     ``uncorroborated_purification`` is set by the caller for a purification metal
-    (Ni/Co) that is the entry's *only* metal and has no measured affinity and no
-    detected His-tag: ~82% of lone Ni/Co carry no detectable His-tag in the
-    deposited sequence (IMAC tags are often absent from SEQRES, not just
-    unmodeled), so a bare contact is weak evidence of a biological site -> it is
-    demoted from functional to ambiguous (reported, never dropped). This
-    deliberately over-fires on some real bare-Ni/Co enzymes; the annotate-never-
-    drop tier keeps them recoverable. See scripts/audit_nico_histag.py.
+    (Ni/Co) that is the entry's *only* metal with no affinity, SOI, matching metal
+    annotation, or detected His-tag. ~82% of lone Ni/Co carry no detectable His-tag
+    in the deposited sequence (IMAC tags are often absent from SEQRES), so a bare
+    contact is weak evidence -> demote to ambiguous (reported, never dropped),
+    subdivided by whether the protein is a metalloprotein at all:
+      - ``metal_site_nonnative``: a real metal site whose native metal isn't Ni/Co
+        (a Ni/Co substitute) — reported so a consumer can choose to keep it.
+      - ``purification_metal_uncorroborated``: no metal annotation at all.
+    See scripts/audit_nico_histag.py and scripts/eval_metal_tiering.py.
     """
     cid = comp.comp_id
     bound = cid in set(record.bound_components)
@@ -217,19 +234,27 @@ def tier_component(
         # Lone counterion / phasing atom -> artifact regardless of binding.
         if cid in COUNTERION_COMPS:
             return TIER_ARTIFACT, "counterion", None
-        # His-tag/Ni(Co) IMAC purification artifact.
-        if is_artifact_entry and cfg.exclude_purification_artifacts and cid in purification:
-            return TIER_ARTIFACT, "histag_metal", None
+        # Strong positive biological evidence overrides the purification heuristic: a
+        # measured affinity, a curated SOI, or the protein annotated to bind THIS
+        # metal all mean the entry contains real metal biology (even if a His-tag is
+        # also present -- comp-level tiering can't split a catalytic from a tag ion).
         if has_affinity:
             return TIER_FUNCTIONAL, "metal_affinity", CLASS_METAL
-        # Lone, uncorroborated purification metal: a likely IMAC artifact whose tag
-        # is absent from the deposited sequence -> ambiguous, not functional.
+        if cid in annotated_metals:
+            return TIER_FUNCTIONAL, "metal_annotated", CLASS_METAL
+        if investigated:
+            return TIER_FUNCTIONAL, "metal_investigated", CLASS_METAL
+        # His-tag/Ni(Co) IMAC purification artifact (nothing above vouched for it).
+        if is_artifact_entry and cfg.exclude_purification_artifacts and cid in purification:
+            return TIER_ARTIFACT, "histag_metal", None
+        # Lone, uncorroborated purification metal with no detectable tag -> ambiguous,
+        # subdivided by whether the protein is a metalloprotein at all.
         if uncorroborated_purification:
+            if annotated_metals:
+                return TIER_AMBIGUOUS, "metal_site_nonnative", None
             return TIER_AMBIGUOUS, "purification_metal_uncorroborated", None
         if bound:
             return TIER_FUNCTIONAL, "metal_bound", CLASS_METAL
-        if investigated:
-            return TIER_FUNCTIONAL, "metal_investigated", CLASS_METAL
         # "Trust biological metals" but require contact: an unbound metal far from
         # the protein is adventitious -> ambiguous, not functional.
         return TIER_AMBIGUOUS, "metal_unbound", None
@@ -269,7 +294,7 @@ def classify_components(record: CandidateRecord, cfg: Config) -> dict:
     # case. If it's also not a detected His-tag artifact, a bare Ni/Co is still weak
     # evidence: ~82% of lone Ni/Co carry no detectable His-tag (IMAC tags are often
     # absent from the deposited SEQRES) so a scan can't recover them -> without
-    # affinity/SOI, demote to ambiguous. (scripts/audit_nico_histag.py)
+    # affinity/SOI/annotation, demote to ambiguous. (scripts/audit_nico_histag.py)
     entry_metals = {c.comp_id for c in metal_comps(record)}
     lone_purification_metal = (
         bool(purification)
@@ -277,6 +302,10 @@ def classify_components(record: CandidateRecord, cfg: Config) -> dict:
         and entry_metals <= purification
         and not is_artifact_entry
     )
+    # Metals the entry's proteins are annotated (RCSB GO/InterPro/Pfam) to bind.
+    annotated_metals = {
+        m for e in record.polymer_entities if e.is_protein for m in e.metal_annotations
+    }
 
     tiers: dict[str, dict[str, str]] = {}
     functional_metals: list[str] = []
@@ -287,12 +316,13 @@ def classify_components(record: CandidateRecord, cfg: Config) -> dict:
     investigated_ids = set(record.investigated_comp_ids)
     for comp in record.nonpolymer_comps:
         # A lone Ni/Co is "uncorroborated" only if nothing vouches for it: no
-        # measured affinity AND not curated as a subject of investigation.
+        # affinity, no SOI, and no annotation that the protein binds this metal.
         uncorroborated = (
             lone_purification_metal
             and comp.comp_id in purification
             and comp.comp_id not in affinity_ids
             and comp.comp_id not in investigated_ids
+            and comp.comp_id not in annotated_metals
         )
         tier, reason, label = tier_component(
             comp,
@@ -301,6 +331,7 @@ def classify_components(record: CandidateRecord, cfg: Config) -> dict:
             blacklist=blacklist,
             purification=purification,
             is_artifact_entry=is_artifact_entry,
+            annotated_metals=annotated_metals,
             uncorroborated_purification=uncorroborated,
         )
         tiers[comp.comp_id] = {"tier": tier, "reason": reason}

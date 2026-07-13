@@ -32,12 +32,15 @@ def _record(
     bound=None,
     affinity=None,
     investigated=None,
+    annotations=None,
     seq="ACDEFGHIKLMNPQRSTVWY",
     ptype="Protein",
 ):
     """Build a CandidateRecord from a crafted Data-API-shaped dict.
 
     ``investigated`` = comp ids RCSB flagged subject-of-investigation (SOI='Y').
+    ``annotations`` = GO/InterPro/Pfam annotation names on the protein entity
+    (e.g. ["nickel cation binding"]).
     """
     investigated = set(investigated or [])
     entry = {
@@ -57,6 +60,9 @@ def _record(
                     "rcsb_entity_polymer_type": ptype,
                     "pdbx_seq_one_letter_code_can": seq,
                 },
+                "rcsb_polymer_entity_annotation": [
+                    {"type": "GO", "name": n} for n in (annotations or [])
+                ],
             }
         ],
         "nonpolymer_entities": [
@@ -215,6 +221,47 @@ def test_lone_nickel_with_affinity_stays_functional():
     res = classify_components(rec, _cfg())
     assert res["tiers"]["NI"]["tier"] == TIER_FUNCTIONAL
     assert res["metals"] == ["NI"]
+
+
+def test_lone_nickel_with_matching_metal_annotation_is_rescued():
+    # The protein is annotated (GO) as a nickel-binding enzyme (urease-like): a lone
+    # Ni with no tag/affinity is rescued to functional, not demoted.
+    rec = _record([("NI", "Ni")], bound=["NI"], annotations=["nickel cation binding"])
+    res = classify_components(rec, _cfg())
+    assert res["tiers"]["NI"]["tier"] == TIER_FUNCTIONAL
+    assert res["tiers"]["NI"]["reason"] == "metal_annotated"
+    assert res["metals"] == ["NI"]
+
+
+def test_lone_nickel_nonnative_metal_annotation_is_ambiguous_nonnative():
+    # A real metalloprotein whose annotated metal is Zn (Ni is a substitute): stays
+    # ambiguous, but with the distinguishing metal_site_nonnative reason.
+    rec = _record([("NI", "Ni")], bound=["NI"], annotations=["zinc ion binding"])
+    res = classify_components(rec, _cfg())
+    assert res["tiers"]["NI"]["tier"] == TIER_AMBIGUOUS
+    assert res["tiers"]["NI"]["reason"] == "metal_site_nonnative"
+    assert res["metals"] == []
+    assert "metal" in res["ambiguous_classes"]
+
+
+def test_lone_nickel_generic_metal_annotation_is_nonnative_not_uncorroborated():
+    # A generic "transition metal ion binding" term marks a metalloprotein without
+    # naming Ni -> metal_site_nonnative, distinct from the no-annotation case.
+    rec = _record([("NI", "Ni")], bound=["NI"], annotations=["transition metal ion binding"])
+    res = classify_components(rec, _cfg())
+    assert res["tiers"]["NI"]["reason"] == "metal_site_nonnative"
+
+
+def test_metal_annotation_overrides_histag_demotion():
+    # A His-tagged construct of a real nickel enzyme: positive annotation beats the
+    # purification heuristic (comp-level tiering can't split tag-Ni from catalytic-Ni,
+    # so real metal biology present -> functional).
+    tagged = "MGHHHHHHSSG" + "ACDEFGIKLMNPQRSTVWY" * 2
+    rec = _record([("NI", "Ni")], bound=["NI"], annotations=["nickel cation binding"], seq=tagged)
+    res = classify_components(rec, _cfg())
+    assert res["purification_artifact"] is True  # a His-tag IS detected
+    assert res["tiers"]["NI"]["tier"] == TIER_FUNCTIONAL  # but annotation overrides it
+    assert res["tiers"]["NI"]["reason"] == "metal_annotated"
 
 
 def test_nickel_with_real_metal_stays_functional():
