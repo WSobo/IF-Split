@@ -21,6 +21,12 @@ from pydantic import BaseModel, ConfigDict, Field, field_validator, model_valida
 
 SPEC_SCHEMA = "ifsplit/config@1"
 
+# RCSB publishes precomputed polymer-entity clusters at only these identity
+# percentages, so the "precomputed" backend can look up a cluster id only at one
+# of them. Any other level would match nothing and silently make every entity a
+# singleton (no clustering, hence cross-split leakage) — so we reject it up front.
+RCSB_IDENTITY_LEVELS: frozenset[int] = frozenset({30, 50, 70, 90, 95, 100})
+
 
 class SpecMeta(BaseModel):
     """Self-identifying header + human metadata for a shareable split spec.
@@ -144,6 +150,29 @@ class Config(BaseModel):
             if n < 0:
                 raise ValueError(f"test_min_per_class[{k!r}] must be >= 0, got {n}")
         return v
+
+    @model_validator(mode="after")
+    def _identity_level_supported(self) -> Config:
+        """Reject identity thresholds the precomputed backend can't actually use.
+
+        The precomputed backend looks up ``identity_level`` in each entity's RCSB
+        ``rcsb_cluster_membership``, which exists only at RCSB_IDENTITY_LEVELS. An
+        unsupported level (e.g. 0.40 -> 40%) matches nothing, so every entity would
+        fall into its own singleton cluster: no clustering, and cross-split sequence
+        leakage that ``check_no_leakage`` cannot detect. Fail loudly instead. The
+        mmseqs2 backend clusters at an arbitrary threshold, so it is exempt.
+        """
+        if (
+            self.clustering_backend == "precomputed"
+            and self.identity_level not in RCSB_IDENTITY_LEVELS
+        ):
+            levels = ", ".join(str(x) for x in sorted(RCSB_IDENTITY_LEVELS))
+            raise ValueError(
+                f"identity_threshold={self.identity_threshold} -> {self.identity_level}% is not an "
+                f"RCSB precomputed cluster level. For clustering_backend='precomputed' use one of "
+                f"{levels}% (i.e. 0.30/0.50/0.70/0.90/0.95/1.00); otherwise no clustering happens."
+            )
+        return self
 
     @property
     def dataset_version(self) -> str:

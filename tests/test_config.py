@@ -86,6 +86,32 @@ def test_identity_threshold_out_of_range_rejected():
         Config.model_validate(d)
 
 
+def test_precomputed_identity_threshold_must_be_an_rcsb_level():
+    # 0.40 -> 40% is a natural-looking value but is NOT an RCSB precomputed level;
+    # accepting it would silently produce all-singleton clusters (no clustering ->
+    # cross-split leakage). It must be rejected for the precomputed backend.
+    d = _good_dict()
+    d["identity_threshold"] = 0.40
+    with pytest.raises(ValidationError):
+        Config.model_validate(d)
+
+
+def test_all_rcsb_identity_levels_accepted_for_precomputed():
+    for frac in (0.30, 0.50, 0.70, 0.90, 0.95, 1.00):
+        d = _good_dict()
+        d["identity_threshold"] = frac
+        assert Config.model_validate(d).identity_level == round(frac * 100)
+
+
+def test_nonstandard_identity_level_allowed_for_mmseqs2_backend():
+    # mmseqs2 clusters at an arbitrary threshold, so a non-RCSB level is fine there
+    # even though the precomputed backend rejects it.
+    d = _good_dict()
+    d["identity_threshold"] = 0.40
+    d["clustering_backend"] = "mmseqs2"
+    assert Config.model_validate(d).identity_level == 40
+
+
 def test_clustering_backend_default_is_precomputed():
     d = _good_dict()
     del d["clustering_backend"]
