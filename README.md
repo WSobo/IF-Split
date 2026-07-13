@@ -202,7 +202,7 @@ machine-readable reason, from RCSB metadata signals:
 | Tier | Meaning | Example reasons |
 |---|---|---|
 | `functional` | Real ligand/site → gets a class label | `metal_bound`/`ligand_bound` (contacts protein), `*_affinity` (measured), `*_investigated` (RCSB SOI), `metal_annotated` (protein annotated to bind this metal) |
-| `ambiguous` | Present but uncorroborated → reported, **not** labelled | `metal_unbound`, `ligand_unbound`, `metal_site_nonnative`, `purification_metal_uncorroborated` |
+| `ambiguous` | Present but uncorroborated → reported, **not** labelled | `metal_unbound`, `ligand_unbound`, `metal_site_nonnative`, `glycan`, `purification_metal_uncorroborated` |
 | `artifact` | Buffer / counterion / purification tag → excluded from labels | `additive`, `counterion`, `histag_metal` |
 
 **Holo gating (metadata-only).** Presence isn't enough. A small molecule or metal
@@ -255,6 +255,16 @@ featurizer reads to decide what counts as real ligand context.
 > crystallization Ni under one `NI` id, and no metadata separates them (adventitious
 > Ni binds surface His/Asp with the same geometry as a catalytic site). Deciding
 > which individual ion to featurize is left to the coordinate-level featurizer.
+
+**Glycans aren't ligand pockets.** A carbohydrate (RCSB CCD type `*saccharide*` —
+NAG/BMA/MAN/…, and sugar-detergents like LMT) is overwhelmingly decorative
+glycosylation or a purification detergent, not a site an inverse-folding model
+conditions on. So a carbohydrate is tiered `glycan` (reported, not a small-molecule
+target) unless it has a *measured binding affinity* — RCSB's `is_subject_of_investigation`
+flag is too noisy for sugars (it flags glycosylation and detergents), so it doesn't
+rescue here. A genuine lectin/glycosidase ligand is recoverable as an opt-in target
+(`include_ambiguous=True`). Real cofactors (ATP, NAD, HEM, FAD) and structural lipids
+(cardiolipin, phosphatidyl-*) are `non-polymer`, not saccharides, so they're untouched.
 
 ### Test-set representation
 
@@ -309,9 +319,9 @@ for entry_id, ligs in ds.train.targets_by_entry().items():
 # 4. Only structures that actually carry a conditioning target:
 conditioned = ds.train.conditioned_entry_ids()            # subset of backbones
 
-# 5. Opt in to non-native metal pockets (real sites where Ni/Co substitutes the
-#    native metal) — good for a metal-site-geometry model, off by default:
-any_site = ds.train.conditioning_targets(include_nonnative=True)
+# 5. Opt in to ambiguous targets — non-native metal pockets (Ni/Co substituting the
+#    native metal) and glycans (glycosylation / lectin ligands) — off by default:
+any_site = ds.train.conditioning_targets(include_ambiguous=True)
 ```
 
 The full corpus is also written to `targets.jsonl` (one row per target: entry, split,

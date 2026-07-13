@@ -12,7 +12,8 @@ inverse-folding model actually consumes:
   no ligand is still a good backbone.
 - **Conditioning targets** (``conditioning_targets``): the ``functional``-tier
   ligands to condition on (LigandMPNN-style), one per (structure, ligand). Junk is
-  never a target. ``metal_site_nonnative`` pockets are opt-in via ``include_nonnative``.
+  never a target. Ambiguous opt-ins (``metal_site_nonnative`` pockets, ``glycan``
+  carbohydrates) are available via ``include_ambiguous``.
 
 The PDB is heavily redundant (thousands of near-identical lysozyme / kinase
 co-crystals). ``sample_by_cluster`` draws one entry per sequence cluster per epoch
@@ -79,19 +80,20 @@ class SplitView:
         return list(self.entry_ids)
 
     def conditioning_targets(
-        self, classes: list[str] | None = None, *, include_nonnative: bool = False
+        self, classes: list[str] | None = None, *, include_ambiguous: bool = False
     ) -> list[ConditioningTarget]:
         """Ligand-conditioning targets in this split (LigandMPNN-style).
 
-        ``functional``-tier only by default; ``include_nonnative`` also returns the
-        opt-in ``metal_site_nonnative`` pockets (real sites whose native metal isn't
-        Ni/Co). ``classes`` filters to given ligand classes (metal / small_molecule /
-        nucleic_acid). One entry per (structure, ligand) - group by ``entry_id`` to
-        condition on all of a structure's ligands at once.
+        ``functional``-tier only by default; ``include_ambiguous`` also returns the
+        opt-in ambiguous targets: ``metal_site_nonnative`` pockets (a real site whose
+        native metal isn't Ni/Co) and ``glycan`` carbohydrates (glycosylation vs a
+        genuine lectin/glycosidase ligand). ``classes`` filters to given ligand classes
+        (metal / small_molecule / nucleic_acid). One entry per (structure, ligand) -
+        group by ``entry_id`` to condition on all of a structure's ligands at once.
         """
         out = []
         for t in self.targets:
-            if t.tier != "functional" and not include_nonnative:
+            if t.tier != "functional" and not include_ambiguous:
                 continue
             if classes is not None and t.ligand_class not in classes:
                 continue
@@ -99,19 +101,19 @@ class SplitView:
         return out
 
     def targets_by_entry(
-        self, classes: list[str] | None = None, *, include_nonnative: bool = False
+        self, classes: list[str] | None = None, *, include_ambiguous: bool = False
     ) -> dict[str, list[ConditioningTarget]]:
         """Conditioning targets grouped by structure (condition-on-all view)."""
         groups: dict[str, list[ConditioningTarget]] = {}
-        for t in self.conditioning_targets(classes, include_nonnative=include_nonnative):
+        for t in self.conditioning_targets(classes, include_ambiguous=include_ambiguous):
             groups.setdefault(t.entry_id, []).append(t)
         return dict(sorted(groups.items()))
 
     def conditioned_entry_ids(
-        self, classes: list[str] | None = None, *, include_nonnative: bool = False
+        self, classes: list[str] | None = None, *, include_ambiguous: bool = False
     ) -> list[str]:
         """Sorted entry ids that carry >=1 conditioning target (ligand-conditioned set)."""
-        return sorted(self.targets_by_entry(classes, include_nonnative=include_nonnative))
+        return sorted(self.targets_by_entry(classes, include_ambiguous=include_ambiguous))
 
     def cluster_groups(self) -> dict[str, list[str]]:
         """Map cluster key -> sorted entry ids within this split."""

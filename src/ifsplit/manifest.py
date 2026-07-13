@@ -272,8 +272,9 @@ def build_targets(class_map: dict[str, dict], splits, clusters) -> list[dict]:
     A *target* is a ligand a ligand-conditioned inverse-folding model should condition
     on. ``functional``-tier ligands (metal / small_molecule / nucleic_acid) are targets
     by default. A ``metal_site_nonnative`` site (a real metal pocket whose native metal
-    isn't Ni/Co) is emitted as an *opt-in* target at tier ``ambiguous`` so a consumer
-    can add non-native metal pockets. Artifact / uncorroborated ligands are never
+    isn't Ni/Co) and a ``glycan`` (a carbohydrate: glycosylation or a lectin ligand) are
+    emitted as *opt-in* targets at tier ``ambiguous`` so a consumer can add them.
+    Artifact / uncorroborated ligands are never
     targets -- their structures are still usable *backbones*, just with nothing to
     condition on. Finest grain (one row per target) so a consumer can condition on all
     of a structure's targets at once (group by entry_id) or one at a time. Pure and
@@ -315,10 +316,15 @@ def build_targets(class_map: dict[str, dict], splits, clusters) -> list[dict]:
         if "nucleic_acid" in info.get("classes", []):
             reason = tiers.get("nucleic_acid", {}).get("reason", "protein_na_interface")
             rows.append(row(entry, "nucleic_acid", None, "functional", reason))
-        # Opt-in non-native metal pockets (a real site, Ni/Co substituting the native metal).
+        # Opt-in ambiguous targets, recoverable if a consumer wants them: a real metal
+        # site whose native metal isn't Ni/Co, or a carbohydrate (glycosylation vs a
+        # genuine lectin/glycosidase ligand).
         for comp, t in tiers.items():
-            if t.get("reason") == "metal_site_nonnative":
-                rows.append(row(entry, "metal", comp, "ambiguous", "metal_site_nonnative"))
+            reason = t.get("reason")
+            if reason == "metal_site_nonnative":
+                rows.append(row(entry, "metal", comp, "ambiguous", reason))
+            elif reason == "glycan":
+                rows.append(row(entry, "small_molecule", comp, "ambiguous", reason))
 
     rows.sort(key=lambda r: (r["entry_id"], r["class"], r["comp_id"] or "", r["tier"]))
     return rows
