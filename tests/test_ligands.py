@@ -33,6 +33,7 @@ def _record(
     affinity=None,
     investigated=None,
     annotations=None,
+    comp_types=None,
     seq="ACDEFGHIKLMNPQRSTVWY",
     ptype="Protein",
 ):
@@ -67,7 +68,9 @@ def _record(
         ],
         "nonpolymer_entities": [
             {
-                "nonpolymer_comp": {"chem_comp": {"id": cid, "formula": f}},
+                "nonpolymer_comp": {
+                    "chem_comp": {"id": cid, "formula": f, "type": (comp_types or {}).get(cid)}
+                },
                 "nonpolymer_entity_instances": [
                     {
                         "rcsb_nonpolymer_instance_validation_score": [
@@ -186,6 +189,68 @@ def test_counterion_metal_is_artifact():
     res = classify_components(rec, _cfg())
     assert res["tiers"]["NA"]["tier"] == TIER_ARTIFACT
     assert res["metals"] == []
+
+
+def test_bound_halide_anion_is_counterion_not_ligand():
+    # Regression: a bound halide (F/I) is a counterion, not a functional small
+    # molecule. Previously the counterion check sat inside the metal branch, which
+    # is False for anions, so a bound F leaked through as ligand_bound.
+    for anion in ("F", "I", "IOD"):
+        rec = _record([(anion, anion)], bound=[anion])
+        res = classify_components(rec, _cfg())
+        assert res["tiers"][anion]["tier"] == TIER_ARTIFACT
+        assert res["tiers"][anion]["reason"] == "counterion"
+        assert res["small_molecules"] == []
+
+
+def test_bound_glycan_is_glycan_not_small_molecule():
+    # A bound N-acetylglucosamine with no SOI/affinity is decorative glycosylation,
+    # not a ligand pocket -> reported glycan, not a small-molecule target.
+    rec = _record(
+        [("NAG", "C8 H15 N O6")],
+        bound=["NAG"],
+        comp_types={"NAG": "D-saccharide, beta linking"},
+    )
+    res = classify_components(rec, _cfg())
+    assert res["tiers"]["NAG"]["tier"] == TIER_AMBIGUOUS
+    assert res["tiers"]["NAG"]["reason"] == "glycan"
+    assert res["small_molecules"] == []
+    assert "small_molecule" in res["ambiguous_classes"]
+
+
+def test_investigated_glycan_is_still_glycan_soi_does_not_rescue():
+    # RCSB's SOI flag is noisy for carbohydrates (it flags glycosylation + detergents),
+    # so an SOI-only glycan is NOT rescued -> stays glycan, not a small-molecule target.
+    rec = _record(
+        [("MAN", "C6 H12 O6")],
+        bound=["MAN"],
+        investigated=["MAN"],
+        comp_types={"MAN": "D-saccharide, alpha linking"},
+    )
+    res = classify_components(rec, _cfg())
+    assert res["tiers"]["MAN"]["tier"] == TIER_AMBIGUOUS
+    assert res["tiers"]["MAN"]["reason"] == "glycan"
+    assert res["small_molecules"] == []
+
+
+def test_glycan_with_affinity_is_functional():
+    rec = _record(
+        [("GAL", "C6 H12 O6")],
+        bound=["GAL"],
+        affinity=["GAL"],
+        comp_types={"GAL": "D-saccharide, beta linking"},
+    )
+    res = classify_components(rec, _cfg())
+    assert res["tiers"]["GAL"]["tier"] == TIER_FUNCTIONAL
+    assert res["small_molecules"] == ["GAL"]
+
+
+def test_non_saccharide_bound_ligand_still_functional():
+    # A bound non-sugar ligand is unaffected by the glycan gate.
+    rec = _record([("STI", "C29 H31 N7 O")], bound=["STI"], comp_types={"STI": "non-polymer"})
+    res = classify_components(rec, _cfg())
+    assert res["tiers"]["STI"]["tier"] == TIER_FUNCTIONAL
+    assert res["tiers"]["STI"]["reason"] == "ligand_bound"
 
 
 def test_unbound_metal_is_ambiguous():

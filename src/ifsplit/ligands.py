@@ -23,6 +23,12 @@ Signals used (all from the Data API, no coordinates):
                             (FAD/NAD/FMN/NADP, inhibitors) bound_components misses
   - ``affinity_comp_ids`` : a measured binding affinity exists (strong positive)
   - chem-comp ``formula`` : metal-only vs organic
+  - chem-comp ``type``    : RCSB's CCD classification; a "*saccharide*" type marks a
+                            carbohydrate (decorative glycosylation or a sugar-detergent)
+                            -> reported ``glycan`` rather than a small-molecule target,
+                            unless a measured affinity vouches for it (SOI is noisy for
+                            glycans, so it does not rescue; a real lectin ligand is an
+                            opt-in target via the glycan tier)
   - His-tag + Ni/Co       : the IMAC purification-artifact pattern (existing rule)
   - metal_annotations     : RCSB GO/InterPro/Pfam terms naming the metal the protein
                             binds ("nickel cation binding"). A native Ni/Co
@@ -79,10 +85,16 @@ COUNTERION_COMPS: frozenset[str] = frozenset(
 DEFAULT_ADDITIVE_BLACKLIST: frozenset[str] = frozenset(
     {
         "HOH", "DOD",  # water
-        "GOL", "EDO", "PEG", "PG4", "PGE", "1PE", "2PE", "P6G", "PE4", "MPD",
-        "SO4", "PO4", "ACT", "ACY", "FMT", "EPE", "MES", "TRS", "BME", "DTT",
-        "IMD", "DMS", "BOG", "OLC", "LDA", "SCN", "AZI", "NO3", "CO3", "FLC",
-        "TLA", "CIT", "MLI", "IOD", "GLC", "BCN", "MRD", "BU3", "P33",
+        # PEGs / polyethylene glycols
+        "GOL", "EDO", "PEG", "PG4", "PGE", "1PE", "2PE", "P6G", "PE4", "PE3", "PE5",
+        "PG0", "PG5", "PG6", "7PE", "12P", "15P", "XPE", "PEU", "P4G", "MPD", "MRD", "P33",
+        # cryoprotectants / alcohols
+        "BU3", "BU1", "BU2", "MOH", "EOH", "IPA", "PDO", "PGO", "PGR",
+        # buffers / salts / crystallization additives
+        "SO4", "PO4", "ACT", "ACY", "FMT", "EPE", "MES", "TRS", "BTB", "BIS", "CAC",
+        "SCN", "AZI", "NO3", "CO3", "FLC", "TLA", "CIT", "MLI", "IOD", "TAR", "IMD", "BCN",
+        # reducing agents / non-sugar detergents (sugar detergents are caught by is_glycan)
+        "BME", "DTT", "DTU", "TCE", "DMS", "BOG", "OLC", "LDA", "C8E", "SDS", "DAO", "HED",
     }
 )  # fmt: skip
 
@@ -107,6 +119,20 @@ def is_metal_ion(comp: NonpolymerComp) -> bool:
     if not elems:
         elems = {comp.comp_id} if comp.comp_id in METAL_ELEMENTS else set()
     return bool(elems) and elems <= METAL_ELEMENTS
+
+
+def is_glycan(comp: NonpolymerComp) -> bool:
+    """True if the component is a carbohydrate (CCD ``type`` tags it a saccharide).
+
+    Catches both decorative glycosylation (NAG/BMA/MAN/FUC...) and sugar-derived
+    detergents (LMT/BOG). Such a carbohydrate with no measured affinity is a surface
+    modification or a purification detergent -- not a ligand pocket -- so Stage 4
+    reports it as a ``glycan`` rather than labelling it a small-molecule conditioning
+    target. A genuine lectin/glycosidase ligand (measured affinity) stays functional;
+    otherwise it is recoverable via the opt-in glycan tier. Uses RCSB's own CCD
+    classification (no hardcoded sugar list).
+    """
+    return bool(comp.comp_type) and "saccharide" in comp.comp_type.lower()
 
 
 def longest_residue_run(seq: str, residue: str = "H") -> int:
@@ -230,10 +256,13 @@ def tier_component(
     has_affinity = cid in set(record.affinity_comp_ids)
     investigated = cid in set(record.investigated_comp_ids)
 
+    # Monatomic counterion / phasing atom -- cation (Na/K) OR anion (Cl/Br/I/F) -- is
+    # a crystallization/phasing additive, not a site. Checked before the metal branch
+    # so ANIONS (which are not metals, so is_metal_ion is False) are covered too.
+    if cid in COUNTERION_COMPS:
+        return TIER_ARTIFACT, "counterion", None
+
     if is_metal_ion(comp):
-        # Lone counterion / phasing atom -> artifact regardless of binding.
-        if cid in COUNTERION_COMPS:
-            return TIER_ARTIFACT, "counterion", None
         # Strong positive biological evidence overrides the purification heuristic: a
         # measured affinity, a curated SOI, or the protein annotated to bind THIS
         # metal all mean the entry contains real metal biology (even if a His-tag is
@@ -262,15 +291,24 @@ def tier_component(
     # Non-metal small molecule.
     if cid in blacklist:
         return TIER_ARTIFACT, "additive", None
+    # A measured binding affinity is the one signal that definitively marks a real
+    # carbohydrate ligand, so it rescues even a sugar.
     if has_affinity:
         return TIER_FUNCTIONAL, "ligand_affinity", CLASS_SMALL_MOLECULE
-    if bound:
-        return TIER_FUNCTIONAL, "ligand_bound", CLASS_SMALL_MOLECULE
+    # A carbohydrate (RCSB CCD type "*saccharide*") with no measured affinity is
+    # decorative glycosylation or a sugar-detergent, not a ligand pocket. RCSB's SOI
+    # flag is noisy for glycans -- it flags glycosylation and detergents (verified:
+    # ~85% of glycan instances are SOI-flagged) -- so it does NOT rescue here. Report
+    # as glycan; a genuine lectin/glycosidase ligand is recoverable via the glycan
+    # tier (an opt-in conditioning target).
+    if is_glycan(comp):
+        return TIER_AMBIGUOUS, "glycan", None
     # RCSB-curated "subject of investigation": catches non-covalently bound
-    # cofactors/inhibitors (FAD/NAD/FMN/NADP, ...) that the bond-based
-    # bound_components field misses.
+    # cofactors/inhibitors (FAD/NAD/FMN/NADP, ...) that bond-based bound_components misses.
     if investigated:
         return TIER_FUNCTIONAL, "ligand_investigated", CLASS_SMALL_MOLECULE
+    if bound:
+        return TIER_FUNCTIONAL, "ligand_bound", CLASS_SMALL_MOLECULE
     return TIER_AMBIGUOUS, "ligand_unbound", None
 
 
