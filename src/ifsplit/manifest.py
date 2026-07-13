@@ -45,6 +45,7 @@ TIERS_SCHEMA = "if-split/tiers@1"
 TIERS_FILENAME = "ligands.tiers.json"
 CLASSES_FILENAME = "ligands.classes.json"
 CLUSTERS_FILENAME = "clusters.json"
+TARGETS_FILENAME = "targets.jsonl"
 SPLIT_FILES = {"train": "train.json", "val": "val.json", "test": "test.json"}
 TEST_SUBDIR = "test"  # per-class test-id lists live here: test/<class>_test.json
 
@@ -155,6 +156,25 @@ def build_manifest(
     }
     n_artifacts = sum(1 for info in class_map.values() if info.get("purification_artifact"))
 
+    # Training corpora: every kept structure is a backbone; the functional-tier
+    # ligands are the conditioning targets (see targets.jsonl / build_targets).
+    targets = build_targets(class_map, splits, clusters)
+    functional_targets = [t for t in targets if t["tier"] == "functional"]
+
+    def _target_counts(split):
+        counts: dict[str, int] = {}
+        for t in functional_targets:
+            if t["split"] == split:
+                counts[t["class"]] = counts.get(t["class"], 0) + 1
+        return dict(sorted(counts.items()))
+
+    training = {
+        "n_backbones": len(splits.entry_split),
+        "n_conditioning_targets": len(functional_targets),
+        "targets_per_split_class": {s: _target_counts(s) for s in SPLITS},
+        "n_optional_nonnative_targets": sum(1 for t in targets if t["tier"] == "ambiguous"),
+    }
+
     # Per-class test-id files that will be written (only classes that occur).
     test_class_files = {
         cls: f"{TEST_SUBDIR}/{cls}_test.json" for cls in per_split_class_counts["test"]
@@ -190,6 +210,7 @@ def build_manifest(
             "test_minimum_shortfalls": dict(sorted(splits.minimum_shortfalls.items())),
         },
         "ligands": {"n_purification_artifacts": n_artifacts},
+        "training": training,
         # Pointers to the data files written alongside this manifest.
         "files": {
             "splits": dict(SPLIT_FILES),
@@ -197,6 +218,7 @@ def build_manifest(
             "clusters": CLUSTERS_FILENAME,
             "ligand_classes": CLASSES_FILENAME,
             "ligand_tiers": TIERS_FILENAME,
+            "targets": TARGETS_FILENAME,
         },
     }
 
@@ -239,6 +261,90 @@ def write_split_files(splits, class_map: dict[str, dict], out_dir: str | Path) -
         written[f"test:{cls}"] = _write_id_list(sorted(ids), out / TEST_SUBDIR / f"{cls}_test.json")
 
     return written
+
+
+# --------------------------------------------------------------------------- #
+# Conditioning-target corpus (the ligand-conditioned training view)
+# --------------------------------------------------------------------------- #
+def build_targets(class_map: dict[str, dict], splits, clusters) -> list[dict]:
+    """One row per (structure, conditioning target) for ligand-conditioned training.
+
+    A *target* is a ligand a ligand-conditioned inverse-folding model should condition
+    on. ``functional``-tier ligands (metal / small_molecule / nucleic_acid) are targets
+    by default. A ``metal_site_nonnative`` site (a real metal pocket whose native metal
+    isn't Ni/Co) is emitted as an *opt-in* target at tier ``ambiguous`` so a consumer
+    can add non-native metal pockets. Artifact / uncorroborated ligands are never
+    targets -- their structures are still usable *backbones*, just with nothing to
+    condition on. Finest grain (one row per target) so a consumer can condition on all
+    of a structure's targets at once (group by entry_id) or one at a time. Pure and
+    deterministic (sorted).
+    """
+    entry_split = splits.entry_split
+    entry_cluster = clusters.entry_to_cluster
+
+    def row(entry, cls, comp_id, tier, reason):
+        return {
+            "entry_id": entry,
+            "split": entry_split[entry],
+            "cluster": entry_cluster.get(entry, entry),
+            "class": cls,
+            "comp_id": comp_id,
+            "tier": tier,
+            "reason": reason,
+        }
+
+    rows: list[dict] = []
+    for entry, info in class_map.items():
+        if entry not in entry_split:
+            continue
+        tiers = info.get("tiers", {})
+        for comp in info.get("metals", []):
+            rows.append(
+                row(entry, "metal", comp, "functional", tiers.get(comp, {}).get("reason", ""))
+            )
+        for comp in info.get("small_molecules", []):
+            rows.append(
+                row(
+                    entry,
+                    "small_molecule",
+                    comp,
+                    "functional",
+                    tiers.get(comp, {}).get("reason", ""),
+                )
+            )
+        if "nucleic_acid" in info.get("classes", []):
+            reason = tiers.get("nucleic_acid", {}).get("reason", "protein_na_interface")
+            rows.append(row(entry, "nucleic_acid", None, "functional", reason))
+        # Opt-in non-native metal pockets (a real site, Ni/Co substituting the native metal).
+        for comp, t in tiers.items():
+            if t.get("reason") == "metal_site_nonnative":
+                rows.append(row(entry, "metal", comp, "ambiguous", "metal_site_nonnative"))
+
+    rows.sort(key=lambda r: (r["entry_id"], r["class"], r["comp_id"] or "", r["tier"]))
+    return rows
+
+
+def write_targets(targets: list[dict], out_dir: str | Path) -> Path:
+    """Write targets.jsonl (one compact JSON object per line; already sorted)."""
+    path = Path(out_dir) / TARGETS_FILENAME
+    path.parent.mkdir(parents=True, exist_ok=True)
+    body = "".join(json.dumps(t, sort_keys=True, separators=(",", ":")) + "\n" for t in targets)
+    path.write_text(body, encoding="utf-8")
+    return path
+
+
+def read_targets(path: str | Path) -> list[dict]:
+    """Read a targets.jsonl conditioning corpus into a list of target rows."""
+    path = Path(path)
+    if not path.exists():
+        return []
+    out: list[dict] = []
+    with open(path, encoding="utf-8") as fh:
+        for line in fh:
+            line = line.strip()
+            if line:
+                out.append(json.loads(line))
+    return out
 
 
 def write_clusters(entry_to_cluster: dict[str, str], out_dir: str | Path) -> Path:
@@ -407,6 +513,19 @@ def summarize_manifest(manifest_path: str | Path) -> int:
     lig = m["ligands"]
     n_arts = lig.get("n_purification_artifacts", len(lig.get("purification_artifacts", [])))
     print(f"  His-tag/Ni purification artifacts flagged: {n_arts}")
+    tr = m.get("training")
+    if tr:
+        print("  training corpora:")
+        print(f"    backbones (all structures):        {tr['n_backbones']}")
+        print(f"    conditioning targets (functional): {tr['n_conditioning_targets']}")
+        by = tr.get("targets_per_split_class", {})
+        for s in ("train", "val", "test"):
+            per = by.get(s, {})
+            if per:
+                print(f"      {s}: {', '.join(f'{c}={n}' for c, n in per.items())}")
+        n_opt = tr.get("n_optional_nonnative_targets", 0)
+        if n_opt:
+            print(f"    opt-in non-native metal sites:     {n_opt}")
     files = m.get("files", {})
     if files:
         sf = files.get("splits", {})
