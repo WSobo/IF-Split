@@ -52,15 +52,16 @@ output).
 ## Headline numbers
 
 - **223,408** candidates (X-ray + EM, ≤ 3.5 Å, released ≤ 2026-05-31)
-- **214,780 kept** — dropped 3,078 no-protein, 5,550 over-size (≥ 6000 residues)
-- **34,224** raw RCSB sequence clusters @ 30% identity → **19,589 leakage-safe
+- **214,765 kept** — dropped 3,078 no-protein, 15 poly-UNK (no usable sequence),
+  5,550 over-size (> 5999 residues)
+- **34,224** raw RCSB sequence clusters @ 30% identity → **19,574 leakage-safe
   components** after union-find merged **38,840** multi-chain bridging entries
 
 | Split | Entries | Components | Component % |
 |---|--:|--:|--:|
-| train | 188,664 | 15,619 | 79.7% |
+| train | 188,650 | 15,605 | 79.7% |
 | val   |  13,723 |  1,991 | 10.2% |
-| test  |  12,393 |  1,979 | 10.1% |
+| test  |  12,392 |  1,978 | 10.1% |
 
 **The split is balanced on sequence *components*, not entry counts** — that's why
 train holds ~88% of entries (redundant families like lysozyme carry many entries
@@ -69,23 +70,31 @@ per component). Splitting on components is what prevents cross-split leakage; us
 
 ## Curation highlights (holo-gated, annotate-never-destroy)
 
-- **Test set, functional tier:** metal 4,033 · small-molecule 6,283 · nucleic-acid 586
-- **Test set, ambiguous (reported, not labelled):** small-molecule 727 · metal 155 · nucleic-acid 1
-  - Functional small molecules far exceed ambiguous (6,283 vs 727): the
+- **Test set, functional tier:** metal 4,110 · small-molecule 6,244 · nucleic-acid 587
+- **Test set, ambiguous (reported, not labelled):** small-molecule 728 · metal 184 · nucleic-acid 1
+  - Functional small molecules far exceed ambiguous (6,244 vs 728): the
     `is_subject_of_investigation` gate recovers non-covalently bound cofactors
     (FAD/NAD/FMN/NADP) and inhibitors that the bond-based contact field misses.
   - **Glycans** (RCSB CCD `type` = *saccharide*: NAG/BMA/MAN/…, and sugar-detergents
     like LMT/BOG) with no measured affinity are tiered `glycan` — decorative
     N-glycosylation and cryo additives, not a ligand pocket — so they sit in the
     ambiguous small-molecule count rather than inflating the functional one. That
-    is why ambiguous small-molecule rose vs the metal-only story (727 here).
+    is why ambiguous small-molecule rose vs the metal-only story (728 here).
   - The metal ambiguous count includes lone, uncorroborated Ni/Co (likely IMAC
-    artifacts whose His-tag is absent from the deposited sequence) — demoted from
-    functional, not dropped. RCSB GO/InterPro metal annotations rescue native
-    Ni/Co enzymes back to functional (why metal functional edged up to 4,033).
+    artifacts whose His-tag is absent from the deposited sequence) and now heavy-atom
+    phasing derivatives (below) — demoted from functional, not dropped. RCSB
+    GO/InterPro metal annotations rescue native metalloenzymes back to functional.
 - **415** His-tag/Ni(Co) purification artifacts flagged and demoted from the metal
   class — the LigandMPNN metal-set blemish, caught automatically (full His run or
   a partial terminal tag).
+- **Heavy-atom phasing derivatives** (Hg/Au/Pt/Pb/Tl/lanthanide MAD soaks) are
+  demoted to `ambiguous` (reported, recoverable) unless a measured affinity, curated
+  SOI, or a matching metal annotation vouches for them — so they leave the functional
+  metal set (into the ambiguous metal count, 184) without being destroyed. Conversely
+  **inorganic Fe-S, metal-oxo, and FeMo clusters** (SF4/FES, the Mn₄CaO₅ OEC) are
+  classed `metal` rather than small-molecule. Net, test-set functional metal moved
+  4,033 → 4,110. A blacklisted additive that is the *measured* ligand (a
+  malonate/citrate with a Ki) now stays functional too.
 
 Every structure stays in its split regardless of ligand quality; only the labels
 and confidence tiers change.
@@ -95,14 +104,14 @@ and confidence tiers change.
 The same build emits **two** corpora keyed off one split, so an inverse-folding
 model can train on scale *and* on quality:
 
-- **Backbones — all 214,780 kept structures.** Every entry is a valid design
+- **Backbones — all 214,765 kept structures.** Every entry is a valid design
   target regardless of ligand quality; this is the *sequence-design* corpus.
-- **Conditioning targets — 223,249 functional ligands** (`targets.jsonl`, one row
+- **Conditioning targets — 222,279 functional ligands** (`targets.jsonl`, one row
   per ligand, keyed to entry + split + class + tier). This is the *what to design
   for* corpus: when a structure holds several ligands, you pick the right one at
   training/inference time instead of conditioning on all of them.
-  - per split (functional): train metal 64,472 · sm 121,120 · na 9,947 ·
-    val metal 4,954 · sm 7,904 · na 539 · test metal 4,502 · sm 9,225 · na 586
+  - per split (functional): train metal 66,611 · sm 118,059 · na 9,991 ·
+    val metal 4,990 · sm 7,813 · na 540 · test metal 4,624 · sm 9,064 · na 587
   - **18,363 opt-in** ambiguous targets (non-native metal sites + glycans) are
     available via `include_ambiguous=True` for a lectin/glycosidase or
     metal-site consumer, and excluded by default.

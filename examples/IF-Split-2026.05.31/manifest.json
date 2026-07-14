@@ -7,12 +7,12 @@
     "backend": "precomputed",
     "identity": 30,
     "multichain_entries": 38840,
-    "n_clusters": 19589,
+    "n_clusters": 19574,
     "n_raw_clusters": 34224,
-    "n_seq_only_components": 19589,
+    "n_seq_only_components": 19574,
     "structural_bridging_families": 0,
     "structural_method": "off",
-    "unclustered_entries": 316
+    "unclustered_entries": 301
   },
   "config": {
     "clustering_backend": "precomputed",
@@ -39,6 +39,7 @@
     "max_rotamer_outlier_pct": null,
     "max_rsrz_outlier_pct": null,
     "max_total_residues": 5999,
+    "min_modeled_residues": 0,
     "purification_metals": [
       "NI",
       "CO"
@@ -58,7 +59,7 @@
     "test_min_per_class": {},
     "use_biological_assembly": true
   },
-  "config_hash": "9adf255823076dda9c19a4986ec53135",
+  "config_hash": "e776d293618d3d3d83bf8a7773fe1378",
   "dataset_version": "IF-Split-2026.05.31",
   "files": {
     "clusters": "clusters.json",
@@ -79,10 +80,11 @@
   "filter": {
     "drop_counts": {
       "no_protein_entity": 3078,
+      "no_protein_sequence": 15,
       "too_large": 5550
     },
-    "dropped": 8628,
-    "kept": 214780
+    "dropped": 8643,
+    "kept": 214765
   },
   "if_split_version": "0.2.0",
   "ligands": {
@@ -93,70 +95,70 @@
     "balance_gaps": {},
     "capped_folds": 0,
     "cluster_counts": {
-      "test": 1979,
-      "train": 15619,
+      "test": 1978,
+      "train": 15605,
       "val": 1991
     },
     "entry_counts": {
-      "test": 12393,
-      "train": 188664,
+      "test": 12392,
+      "train": 188650,
       "val": 13723
     },
     "per_split_ambiguous_counts": {
       "test": {
-        "metal": 155,
+        "metal": 184,
         "nucleic_acid": 1,
-        "small_molecule": 727
+        "small_molecule": 728
       },
       "train": {
-        "metal": 1752,
+        "metal": 2276,
         "nucleic_acid": 10,
-        "small_molecule": 14043
+        "small_molecule": 14105
       },
       "val": {
-        "metal": 549,
-        "small_molecule": 873
+        "metal": 582,
+        "small_molecule": 874
       }
     },
     "per_split_class_counts": {
       "test": {
-        "metal": 4033,
-        "nucleic_acid": 586,
-        "small_molecule": 6283
+        "metal": 4110,
+        "nucleic_acid": 587,
+        "small_molecule": 6244
       },
       "train": {
-        "metal": 55456,
-        "nucleic_acid": 9947,
-        "small_molecule": 93343
+        "metal": 56187,
+        "nucleic_acid": 9991,
+        "small_molecule": 92769
       },
       "val": {
-        "metal": 4045,
-        "nucleic_acid": 539,
-        "small_molecule": 6209
+        "metal": 4064,
+        "nucleic_acid": 540,
+        "small_molecule": 6198
       }
     },
     "strategy": "hash",
     "test_minimum_shortfalls": {}
   },
   "training": {
-    "n_backbones": 214780,
-    "n_conditioning_targets": 223249,
+    "n_backbones": 214765,
+    "n_conditioning_targets": 222279,
     "n_optional_nonnative_targets": 18363,
     "targets_per_split_class": {
       "test": {
-        "metal": 4502,
-        "nucleic_acid": 586,
-        "small_molecule": 9225
+        "metal": 4624,
+        "nucleic_acid": 587,
+        "small_molecule": 9064
       },
       "train": {
-        "metal": 64472,
-        "nucleic_acid": 9947,
-        "small_molecule": 121120
+        "metal": 66611,
+        "nucleic_acid": 9991,
+        "small_molecule": 118059
       },
       "val": {
-        "metal": 4954,
-        "nucleic_acid": 539,
-        "small_molecule": 7904
+        "metal": 4990,
+        "nucleic_acid": 540,
+        "small_molecule": 7813
       }
     }
   }

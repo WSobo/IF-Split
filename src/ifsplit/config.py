@@ -74,6 +74,13 @@ class Config(BaseModel):
     experimental_methods: list[str] = Field(min_length=1)
     resolution_max_A: float = Field(gt=0)
     max_total_residues: int = Field(gt=0)
+    # Opt-in sequence-usability floor (Stage 3). Keep an entry only if some protein
+    # chain has at least this many modeled (non-'X') residues. 0 (default) = off, so
+    # only the always-on empty/all-'X' (poly-UNK) drop applies. A modest value (e.g.
+    # 20) removes tiny peptide fragments and mostly-unknown chains whose sequence is a
+    # poor inverse-folding label; it only ever drops entries whose *every* protein
+    # chain is that short (any() over chains), so multi-chain complexes are unaffected.
+    min_modeled_residues: int = Field(default=0, ge=0)
     excluded_het: list[str] = Field(default_factory=list)
     use_biological_assembly: bool = True
 

@@ -15,6 +15,7 @@ from __future__ import annotations
 
 import hashlib
 import json
+import re
 from collections.abc import Iterable
 
 from pydantic import BaseModel, ConfigDict
@@ -29,6 +30,16 @@ METAL_ANNOTATION_TERMS: dict[str, str] = {
     "nickel": "NI", "cobalt": "CO", "zinc": "ZN", "iron": "FE", "ferrous": "FE",
     "ferric": "FE", "magnesium": "MG", "manganese": "MN", "calcium": "CA",
     "copper": "CU", "cadmium": "CD", "molybdenum": "MO", "tungsten": "W",
+    # Heavy / f-block metals that a bound-ion tiering would otherwise treat as a
+    # phasing artifact: a native site is identified here so it is rescued instead.
+    # Native mercury (MerR/MerA "mercuric" proteins) and lanthanide-dependent
+    # dehydrogenases (XoxF/ExaF use La/Ce/Pr/Nd/...) are the real cases. Words are
+    # element-specific to avoid false hits ("lead"/"gold" are deliberately omitted).
+    "mercury": "HG", "mercuric": "HG", "platinum": "PT", "thallium": "TL",
+    "osmium": "OS", "iridium": "IR", "lanthanum": "LA", "cerium": "CE",
+    "praseodymium": "PR", "neodymium": "ND", "samarium": "SM", "europium": "EU",
+    "gadolinium": "GD", "terbium": "TB", "dysprosium": "DY", "holmium": "HO",
+    "erbium": "ER", "thulium": "TM", "ytterbium": "YB", "lutetium": "LU",
 }  # fmt: skip
 GENERIC_METAL = "METAL"
 
@@ -41,7 +52,11 @@ def metal_symbols_in_annotation(name: str | None) -> set[str]:
     over the generic sentinel.
     """
     n = (name or "").lower()
-    named = {sym for word, sym in METAL_ANNOTATION_TERMS.items() if word in n}
+    # Match whole words, not raw substrings, so "ytterbium" does not also fire
+    # "terbium"/"erbium" (each is a substring of the next). The generic sentinel keeps
+    # a plain substring test so "metallopeptidase" still counts as a (generic) metal.
+    words = set(re.findall(r"[a-z]+", n))
+    named = {sym for word, sym in METAL_ANNOTATION_TERMS.items() if word in words}
     if named:
         return named
     return {GENERIC_METAL} if "metal" in n else set()
@@ -102,8 +117,12 @@ class PolymerEntity(BaseModel):
 
     @property
     def is_nucleic(self) -> bool:
+        # rcsb_entity_polymer_type is one of Protein / DNA / RNA / NA-hybrid / Other.
+        # "NA-hybrid" (a single mixed DNA/RNA strand — R-loops, RNA-primed DNA, chimeric
+        # guides) contains neither "DNA" nor "RNA", so match "HYBRID" too, else a
+        # protein/hybrid complex would silently get no nucleic_acid class.
         t = self.polymer_type.upper()
-        return "DNA" in t or "RNA" in t
+        return "DNA" in t or "RNA" in t or "HYBRID" in t
 
 
 class NonpolymerComp(BaseModel):

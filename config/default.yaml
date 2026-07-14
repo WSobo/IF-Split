@@ -7,7 +7,12 @@
 snapshot_date: "2026-05-30"        # release_date <= this. The reproducibility anchor.
 experimental_methods: ["X-RAY DIFFRACTION", "ELECTRON MICROSCOPY"]
 resolution_max_A: 3.5
-max_total_residues: 5999           # LigandMPNN used "< 6000"
+max_total_residues: 5999           # max residues KEPT (drop if > this); LigandMPNN kept < 6000
+# Opt-in sequence-usability floor: keep an entry only if some protein chain has at
+# least this many modeled (non-X) residues. 0 = off (only the always-on empty/all-X
+# poly-UNK drop applies). Try ~20 to also drop tiny peptide fragments / mostly-unknown
+# chains whose sequence is a poor inverse-folding label.
+min_modeled_residues: 0
 excluded_het: ["HOH", "NA", "CL", "K", "BR"]   # waters + common crystallization ions
 use_biological_assembly: true      # biounits, as in LigandMPNN (assembly 1)
 
