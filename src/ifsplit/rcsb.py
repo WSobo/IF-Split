@@ -181,7 +181,9 @@ class RcsbClient:
                         "parameters": {
                             "attribute": "rcsb_entry_info.resolution_combined",
                             "operator": "less_or_equal",
-                            "value": cfg.resolution_max_A,
+                            # Loosest cap across enabled methods -> pulls a superset;
+                            # per-method tightening is enforced (auditably) in Stage 3.
+                            "value": cfg.search_resolution_cap(),
                         },
                     },
                     {

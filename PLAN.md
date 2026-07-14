@@ -217,9 +217,12 @@ re-featurize from the cleaned structures.
 
 - Operate on the metadata in `candidates.jsonl` (no coordinate parsing). Apply
   filters: drop entries with `total_residues > max_total_residues` (use the
-  assembly residue count when `use_biological_assembly`), drop entries whose only
-  non-protein components are in `excluded_het`, drop entries with no protein
-  polymer entity. Record drop reasons + counts.
+  assembly residue count when `use_biological_assembly`), over the (per-method)
+  resolution cap — re-derived here from `resolution_A` so the cut is auditable and
+  tightenable offline — drop entries whose only non-protein components are in
+  `excluded_het`, drop entries with no protein polymer entity or no usable
+  (non-all-`X`) sequence, plus optional validation-report caps (incl. the cryo-EM
+  map-fit floor). Record drop reasons + counts.
 - Sequences come from the Data API canonical one-letter code, which already maps
   modified residues to canonical parents (e.g. MSE→MET). Coordinate-level
   re-parsing with `gemmi` belongs to the optional featurization path, not here.

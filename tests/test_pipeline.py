@@ -11,9 +11,11 @@ from ifsplit.ligands import classify_components
 from ifsplit.manifest import build_manifest, write_manifest
 from ifsplit.parse import (
     DROP_CLASHSCORE,
+    DROP_EM_INCLUSION,
     DROP_NO_PROTEIN,
     DROP_NO_SEQUENCE,
     DROP_NO_VALIDATION,
+    DROP_RESOLUTION,
     DROP_RFREE,
     DROP_SEQUENCE_TOO_SHORT,
     DROP_TOO_LARGE,
@@ -161,6 +163,81 @@ def test_require_validation_report_drops_reportless_entry():
     kept, drops = filter_candidates([rec], _cfg(require_validation_report=True))
     assert kept == []
     assert drops[0]["reason"] == DROP_NO_VALIDATION
+
+
+# ------------------------ Stage 3: resolution re-filter -------------------- #
+def test_filter_resolution_refilter_is_auditable():
+    # Stage 3 re-derives the resolution cut (Search applied it too) so it is auditable
+    # from candidates.jsonl. An entry over the cap is dropped; at the cap it is kept.
+    over = _seq_record("RES1", "A" * 50).model_copy(update={"resolution_A": 3.8})
+    kept, drops = filter_candidates([over], _cfg())  # default cap 3.5
+    assert kept == []
+    assert drops[0]["reason"] == DROP_RESOLUTION
+    assert drops[0]["resolution"] == 3.8
+    at_cap = _seq_record("RES2", "A" * 50).model_copy(update={"resolution_A": 3.5})
+    assert [r.entry_id for r in filter_candidates([at_cap], _cfg())[0]] == ["RES2"]
+
+
+def test_filter_resolution_missing_is_kept():
+    rec = _seq_record("RESN", "A" * 50).model_copy(update={"resolution_A": None})
+    assert [r.entry_id for r in filter_candidates([rec], _cfg())[0]] == ["RESN"]
+
+
+def test_per_method_resolution_cap():
+    cfg = _cfg(resolution_max_A_by_method={"ELECTRON MICROSCOPY": 3.0})
+    # A 3.2 A cryo-EM entry is dropped by the tighter EM cap...
+    em = _seq_record("EM1", "A" * 50).model_copy(
+        update={"resolution_A": 3.2, "methods": ["ELECTRON MICROSCOPY"]}
+    )
+    kept, drops = filter_candidates([em], cfg)
+    assert kept == []
+    assert drops[0]["reason"] == DROP_RESOLUTION
+    # ...but a 3.2 A X-ray entry passes (its cap is still the global 3.5).
+    xr = _seq_record("XR1", "A" * 50).model_copy(
+        update={"resolution_A": 3.2, "methods": ["X-RAY DIFFRACTION"]}
+    )
+    assert [r.entry_id for r in filter_candidates([xr], cfg)[0]] == ["XR1"]
+
+
+def test_search_resolution_cap_is_loosest():
+    # The Search query must pull a superset: the loosest cap across enabled methods.
+    assert (
+        _cfg(resolution_max_A_by_method={"ELECTRON MICROSCOPY": 3.0}).search_resolution_cap() == 3.5
+    )
+    assert (
+        _cfg(
+            resolution_max_A_by_method={"X-RAY DIFFRACTION": 4.0, "ELECTRON MICROSCOPY": 3.0}
+        ).search_resolution_cap()
+        == 4.0
+    )
+
+
+# ---------------------- Stage 3: cryo-EM map-fit floor --------------------- #
+def _with_em_inclusion(entry_id: str, value: float | None) -> CandidateRecord:
+    rec = _seq_record(entry_id, "A" * 50)
+    return rec.model_copy(
+        update={"quality": rec.quality.model_copy(update={"em_backbone_inclusion": value})}
+    )
+
+
+def test_em_backbone_inclusion_floor_drops_low_fit():
+    cfg = _cfg(min_em_backbone_inclusion=0.7)
+    kept, drops = filter_candidates([_with_em_inclusion("EMLO", 0.6)], cfg)
+    assert kept == []
+    assert drops[0]["reason"] == DROP_EM_INCLUSION
+    assert drops[0]["value"] == 0.6
+    # At/above the floor is kept.
+    assert [r.entry_id for r in filter_candidates([_with_em_inclusion("EMHI", 0.85)], cfg)[0]] == [
+        "EMHI"
+    ]
+
+
+def test_em_floor_ignores_entries_without_the_metric():
+    # X-ray entries have no em_backbone_inclusion -> the floor never drops them.
+    cfg = _cfg(min_em_backbone_inclusion=0.7)
+    assert [r.entry_id for r in filter_candidates([_with_em_inclusion("XNOEM", None)], cfg)[0]] == [
+        "XNOEM"
+    ]
 
 
 def test_drop_summary_counts():

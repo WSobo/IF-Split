@@ -10,8 +10,12 @@ Operates on the records in ``candidates.jsonl``. Drops entries that:
   modeled (non-``X``) residues (``sequence_too_short``): tiny peptide fragments and
   mostly-unknown chains,
 - exceed the residue cap (``too_large``): ``total_residues > max_total_residues``,
+- exceed the (per-method) resolution cap (``resolution_too_low``): re-derived here
+  from ``resolution_A`` so the cut is auditable from ``candidates.jsonl`` and can be
+  tightened offline; ``resolution_max_A_by_method`` lets X-ray and cryo-EM differ,
 - violate an (optional) wwPDB validation-report quality cap — clashscore, R-free,
-  Ramachandran/rotamer/RSRZ outliers — or lack a report when one is required.
+  Ramachandran/rotamer/RSRZ outliers, EM map-fit floor — or lack a report when
+  one is required.
 
 When ``use_biological_assembly`` the residue count is taken from assembly 1
 (``<entry>-1``); otherwise the deposited polymer monomer count is used. Quality
@@ -29,12 +33,25 @@ DROP_NO_PROTEIN = "no_protein_entity"
 DROP_NO_SEQUENCE = "no_protein_sequence"
 DROP_SEQUENCE_TOO_SHORT = "sequence_too_short"
 DROP_TOO_LARGE = "too_large"
+DROP_RESOLUTION = "resolution_too_low"
 DROP_CLASHSCORE = "clashscore_too_high"
 DROP_RFREE = "rfree_too_high"
 DROP_RAMACHANDRAN = "ramachandran_outliers_too_high"
 DROP_ROTAMER = "rotamer_outliers_too_high"
 DROP_RSRZ = "rsrz_outliers_too_high"
+DROP_EM_INCLUSION = "em_backbone_inclusion_too_low"
 DROP_NO_VALIDATION = "no_validation_report"
+
+
+def effective_resolution_cap(record: CandidateRecord, cfg: Config) -> float:
+    """The resolution cap that applies to ``record``, honoring per-method overrides.
+
+    An entry is kept if it passes the *loosest* cap among its enabled methods (so a
+    dual X-ray/EM deposition qualifies if it is a good structure by either route).
+    With no ``resolution_max_A_by_method`` overrides this is just ``resolution_max_A``.
+    """
+    caps = [cfg.method_resolution_cap(m) for m in record.methods if m in cfg.experimental_methods]
+    return max(caps) if caps else cfg.resolution_max_A
 
 
 def modeled_residue_count(seq: str) -> int:
@@ -87,6 +104,13 @@ def quality_drop(record: CandidateRecord, cfg: Config) -> tuple[str, float] | No
     for cap, value, reason in checks:
         if cap is not None and value is not None and value > cap:
             return (reason, value)
+    # EM map-model agreement is a FLOOR (higher is better), so it drops BELOW the cap.
+    if (
+        cfg.min_em_backbone_inclusion is not None
+        and q.em_backbone_inclusion is not None
+        and q.em_backbone_inclusion < cfg.min_em_backbone_inclusion
+    ):
+        return (DROP_EM_INCLUSION, q.em_backbone_inclusion)
     return None
 
 
@@ -117,6 +141,13 @@ def filter_candidates(
         tr = total_residues(r, cfg)
         if tr is not None and tr > cfg.max_total_residues:
             drops.append({"entry_id": r.entry_id, "reason": DROP_TOO_LARGE, "residues": tr})
+            continue
+        # Re-derive the resolution cut here (Search applied it too) so it is auditable
+        # from candidates.jsonl and can be tightened offline; per-method caps apply.
+        if r.resolution_A is not None and r.resolution_A > effective_resolution_cap(r, cfg):
+            drops.append(
+                {"entry_id": r.entry_id, "reason": DROP_RESOLUTION, "resolution": r.resolution_A}
+            )
             continue
         qd = quality_drop(r, cfg)
         if qd is not None:

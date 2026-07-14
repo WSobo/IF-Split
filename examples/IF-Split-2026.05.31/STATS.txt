@@ -1,4 +1,4 @@
-IF-Split-2026.05.31  (config e776d293618d3d3d83bf8a7773fe1378)
+IF-Split-2026.05.31  (config db8c3014641a53a3cf5507a4dfa4cd5d)
   candidates: 223408  kept: 214765  dropped: 8643
     - no_protein_entity: 3078
     - no_protein_sequence: 15

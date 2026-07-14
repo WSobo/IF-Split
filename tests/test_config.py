@@ -112,6 +112,20 @@ def test_nonstandard_identity_level_allowed_for_mmseqs2_backend():
     assert Config.model_validate(d).identity_level == 40
 
 
+def test_resolution_by_method_normalizes_and_validates():
+    d = _good_dict()
+    d["resolution_max_A_by_method"] = {"electron microscopy": 3.0}
+    cfg = Config.model_validate(d)
+    assert cfg.resolution_max_A_by_method == {"ELECTRON MICROSCOPY": 3.0}  # key upper-cased
+    assert cfg.method_resolution_cap("ELECTRON MICROSCOPY") == 3.0
+    assert cfg.method_resolution_cap("X-RAY DIFFRACTION") == 3.5  # falls back to the global cap
+    assert cfg.search_resolution_cap() == 3.5  # loosest across enabled methods
+    # A non-positive override is rejected.
+    d["resolution_max_A_by_method"] = {"ELECTRON MICROSCOPY": -1.0}
+    with pytest.raises(ValidationError):
+        Config.model_validate(d)
+
+
 def test_clustering_backend_default_is_precomputed():
     d = _good_dict()
     del d["clustering_backend"]

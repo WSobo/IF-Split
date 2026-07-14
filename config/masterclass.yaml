@@ -18,6 +18,7 @@
 snapshot_date: "2026-05-30"        # release_date <= this. The reproducibility anchor.
 experimental_methods: ["X-RAY DIFFRACTION", "ELECTRON MICROSCOPY"]
 resolution_max_A: 3.5
+resolution_max_A_by_method: {"ELECTRON MICROSCOPY": 3.0}  # cryo-EM 3.5A != X-ray 3.5A for sidechains
 max_total_residues: 5999           # max residues KEPT (drop if > this); LigandMPNN kept < 6000
 min_modeled_residues: 20           # drop tiny/poly-UNK chains: the sequence is the training label
 excluded_het: ["HOH", "NA", "CL", "K", "BR"]
@@ -43,6 +44,7 @@ max_rfree: null
 max_ramachandran_outlier_pct: null
 max_rotamer_outlier_pct: null
 max_rsrz_outlier_pct: null
+min_em_backbone_inclusion: 0.7     # drop cryo-EM entries whose backbone is poorly in-density
 require_validation_report: false
 
 ligand_context_radius_A: 8.0

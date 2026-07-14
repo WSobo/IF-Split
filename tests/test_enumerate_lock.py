@@ -58,6 +58,16 @@ def test_lock_roundtrip(tmp_path, fake_client):
     assert back["config_hash"] == _cfg().config_hash()
 
 
+def test_enumerate_warns_on_resolutionless_method(tmp_path, fake_client):
+    # Adding a method RCSB gives no resolution (NMR) under the resolution predicate
+    # silently yields no such entries -> warn loudly instead of failing silently.
+    import pytest
+
+    cfg = _cfg().model_copy(update={"experimental_methods": ["X-RAY DIFFRACTION", "SOLUTION NMR"]})
+    with pytest.warns(UserWarning, match="no resolution"):
+        enumerate_candidates(cfg, tmp_path, client=fake_client)
+
+
 def test_verify_no_drift_returns_zero(tmp_path, fake_client):
     records, _, sha = enumerate_candidates(_cfg(), tmp_path, client=fake_client)
     lock = build_lock(
