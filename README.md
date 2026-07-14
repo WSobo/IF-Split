@@ -206,7 +206,7 @@ A `build` runs eight stages; none touch coordinates.
 | 3 — filter | `parse.py` | Drop no-protein / no-sequence / oversized entries (assembly-1 residue count vs `max_total_residues`), plus optional wwPDB validation-report quality caps (clashscore, R-free, Ramachandran/rotamer/RSRZ) — all from metadata. Every drop is logged with its reason. |
 | 4 — ligands | `ligands.py` | Tier each non-protein component `functional`/`ambiguous`/`artifact`; derive class labels (metal / small-molecule / nucleic-acid). `nucleic_acid` = a protein↔DNA/RNA *complex* (verified assembly interface), **not** a bound mononucleotide. **Annotate, never drop.** |
 | 5 — cluster | `cluster.py` | Group protein entities by RCSB precomputed cluster id at `identity_threshold`; canonical key = smallest member id. Optionally union same-fold entities (CATH/ECOD/SCOP2) for structural-leakage control. |
-| 6 — split | `split.py` | Deterministic hash → train/val/test; assert no cluster spans two splits; audit residual secondary-chain overlap. |
+| 6 — split | `split.py` | Assign components → train/val/test (`hash`, or `balanced` for entry-balanced fold-tail val/test); assert no cluster spans two splits; audit residual secondary-chain overlap. |
 | 7 — manifest | `manifest.py` | Emit lock + manifest + registry (all deterministic, no wall-clock fields). |
 | 8 — loader | `dataset.py` | Read a manifest into train/val/test views with cluster-balanced sampling. |
 | 2 — fetch *(opt-in)* | `download.py`, `hydrate.py` | Download mmCIF for a built manifest into a sharded, indexed, ML-ready tree. |
@@ -314,9 +314,10 @@ rescue here. A genuine lectin/glycosidase ligand is recoverable as an opt-in tar
 
 ### Test-set representation
 
-The split is a pure deterministic hash, so the test set's ligand mix is reported
-but not forced by default: `manifest.json` carries per-split, per-class
-`functional` counts plus `ambiguous` counts, so under-representation is visible.
+The split is deterministic (a per-component hash, or the `balanced` fold-tail
+fill), so the test set's ligand mix is reported but not forced by default:
+`manifest.json` carries per-split, per-class `functional` counts plus `ambiguous`
+counts, so under-representation is visible.
 An opt-in `--enforce-minimums` top-up (recruit `functional`-only ligand clusters
 into test in deterministic order) is scoped for a future release.
 

@@ -10,7 +10,8 @@ usage. This file is the orientation for working in the repo.
 **The split is computed from metadata + sequences only — `build` never downloads
 structure coordinates.** Everything needed (resolution, method, release date,
 residue counts, per-entity sequences, ligand chem-comp + bound-component signals,
-RCSB cluster membership) comes from the RCSB Search + Data APIs. Coordinates
+RCSB sequence-cluster membership, and CATH/ECOD/SCOP2 structural classifications)
+comes from the RCSB Search + Data APIs. Coordinates
 (mmCIF) are large and only needed downstream, so `fetch` (Stage 2) is optional.
 Keep it that way: do not add coordinate access to the build path.
 
@@ -36,6 +37,7 @@ wsl -d ubuntu bash -lc 'cd ~/projects/IF-Split && export PATH="$HOME/.local/bin:
 uv run ruff check .      # lint (must pass)
 uv run ruff format .     # format
 uv run if-split build --limit 50 --out /tmp/ifs   # dev build (small, live RCSB)
+uv run if-split build --config config/masterclass.yaml --out /tmp/mc  # fold-honest split (scop2 + balanced)
 ```
 
 - `uv sync` sets up the env; `uv sync --extra mlops` adds pyarrow for `fetch`'s
@@ -47,7 +49,8 @@ uv run if-split build --limit 50 --out /tmp/ifs   # dev build (small, live RCSB)
 
 `enumerate.py`+`rcsb.py` (Stage 1, Search+Data API → candidates.jsonl) →
 `parse.py` (3, metadata filters) → `ligands.py` (4, confidence tiering) →
-`cluster.py` (5, union-find components) → `split.py` (6, deterministic hash) →
+`cluster.py` (5, union-find components: sequence + optional fold-level structural
+clustering) → `split.py` (6, split assignment: `hash` | `balanced`) →
 `manifest.py` (7, lock + manifest + registry, verify/stats) → `dataset.py` (8,
 loader). `download.py`+`hydrate.py` are the optional Stage 2 `fetch`.
 
@@ -55,9 +58,11 @@ Invariants that must not regress:
 - **Determinism:** same config → byte-identical `manifest.json` (no wall-clock
   fields). `test_manifest_is_deterministic` guards this.
 - **No cross-split leakage:** sequence clusters joined by a shared multi-chain
-  entry are union-find–merged into one component; a component maps to exactly one
-  split, so overlap is impossible by construction. `check_no_leakage` is a real
-  invariant (not a tautology) — keep it that way.
+  entry (and, with `structural_clustering` on, by a shared fold superfamily) are
+  union-find–merged into one component; a component maps to exactly one split, so
+  overlap is impossible by construction. This holds for both split strategies
+  (`hash` and `balanced`, which only chooses *which* split a whole component lands
+  in). `check_no_leakage` is a real invariant (not a tautology) — keep it that way.
 - **Growth stability:** a cluster/component's split is `hash(salt + canonical_key)`
   into cumulative fractions, keyed on the global-min member id (not RCSB's volatile
   integer id). A larger snapshot only *adds* components; `splits.registry.json`
