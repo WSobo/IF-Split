@@ -123,3 +123,85 @@ def test_verify_detects_added_entry(tmp_path, fake_client, sample_entries):
     )
     lock_path = write_lock(lock, tmp_path)
     assert verify_lock(lock_path, client=fake_client) == 1
+
+
+# --------------------------------------------------------------------------- #
+# Split-output certification (@2 locks, issue #5)
+# --------------------------------------------------------------------------- #
+def _lock_with_split(cfg, records, sha, *, registry_sha256=None):
+    """Build a lock that pins the split output, by running Stages 3-6 offline."""
+    from ifsplit.cluster import build_clusters
+    from ifsplit.ligands import classify_components
+    from ifsplit.parse import filter_candidates
+    from ifsplit.split import assign_splits, split_fingerprint
+
+    kept, _ = filter_candidates(records, cfg)
+    class_map = {r.entry_id: classify_components(r, cfg) for r in kept}
+    clusters = build_clusters(kept, cfg)
+    splits = assign_splits(
+        clusters, cfg, entry_classes={e: i["classes"] for e, i in class_map.items()}
+    )
+    return build_lock(
+        cfg,
+        entry_ids=[r.entry_id for r in records],
+        candidates_sha256=sha,
+        limit=None,
+        split_sha256=split_fingerprint(splits.entry_split),
+        registry_sha256=registry_sha256,
+        split_strategy=cfg.split_strategy,
+    )
+
+
+def test_verify_certifies_reproduced_split(tmp_path, fake_client, capsys):
+    # Candidates AND split reproduce -> verify certifies the split output.
+    records, _, sha = enumerate_candidates(_cfg(), tmp_path, client=fake_client)
+    lock_path = write_lock(_lock_with_split(_cfg(), records, sha), tmp_path)
+    assert verify_lock(lock_path, client=fake_client) == 0
+    assert "split verified" in capsys.readouterr().out
+
+
+def test_verify_detects_split_output_drift(tmp_path, fake_client, capsys):
+    # Same candidates, but the locked split hash doesn't match what the code now
+    # produces (simulates a curation/split-logic change). Must be hard DRIFT.
+    records, _, sha = enumerate_candidates(_cfg(), tmp_path, client=fake_client)
+    lock = _lock_with_split(_cfg(), records, sha)
+    lock["split"]["sha256"] = "0" * 64  # a partition the current code won't produce
+    lock_path = write_lock(lock, tmp_path)
+    assert verify_lock(lock_path, client=fake_client) == 1
+    assert "split output differs" in capsys.readouterr().out
+
+
+def test_verify_split_certification_overrides_version_warning(tmp_path, fake_client, capsys):
+    # A version bump no longer just warns: if the split is proven byte-identical,
+    # verify certifies it (no scary "may differ" WARNING).
+    records, _, sha = enumerate_candidates(_cfg(), tmp_path, client=fake_client)
+    lock = _lock_with_split(_cfg(), records, sha)
+    lock["if_split_version"] = "0.0.1-ancient"
+    lock_path = write_lock(lock, tmp_path)
+    assert verify_lock(lock_path, client=fake_client) == 0
+    out = capsys.readouterr().out
+    assert "byte-identical" in out
+    assert "WARNING" not in out
+
+
+def test_verify_skips_split_when_registry_used(tmp_path, fake_client, capsys):
+    # A --registry build can't be certified registry-blind -> report, don't false-drift.
+    records, _, sha = enumerate_candidates(_cfg(), tmp_path, client=fake_client)
+    lock = _lock_with_split(_cfg(), records, sha, registry_sha256="deadbeef")
+    lock_path = write_lock(lock, tmp_path)
+    assert verify_lock(lock_path, client=fake_client) == 0
+    assert "registry" in capsys.readouterr().out.lower()
+
+
+def test_verify_candidate_drift_skips_split_check(tmp_path, fake_client, sample_entries, capsys):
+    # When candidates drift (a grown/shrunk snapshot legitimately changes the
+    # split), verify reports candidate drift and does NOT report split drift.
+    records, _, sha = enumerate_candidates(_cfg(), tmp_path, client=fake_client)
+    lock_path = write_lock(_lock_with_split(_cfg(), records, sha), tmp_path)
+    from conftest import FakeRcsbClient
+
+    shrunk = FakeRcsbClient({"1A1F": sample_entries["1A1F"]})
+    assert verify_lock(lock_path, client=shrunk) == 1
+    out = capsys.readouterr().out
+    assert "DRIFT detected" in out
+    assert "split output differs" not in out

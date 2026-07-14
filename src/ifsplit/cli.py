@@ -43,7 +43,12 @@ def cmd_build(args: argparse.Namespace) -> int:
         write_tiers,
     )
     from .parse import drop_summary, filter_candidates
-    from .split import assign_splits, check_no_leakage
+    from .split import (
+        assign_splits,
+        check_no_leakage,
+        registry_fingerprint,
+        split_fingerprint,
+    )
 
     cfg = load_config(args.config)
     sf = cfg.split_fractions
@@ -69,16 +74,6 @@ def cmd_build(args: argparse.Namespace) -> int:
     records, _candidates_path, sha = enumerate_candidates(
         cfg, args.out, limit=args.limit, progress=say
     )
-    lock_path = write_lock(
-        build_lock(
-            cfg,
-            entry_ids=[r.entry_id for r in records],
-            candidates_sha256=sha,
-            limit=args.limit,
-        ),
-        args.out,
-    )
-    print(f"  wrote {lock_path}")
 
     print("Stage 3 - filter (metadata only):")
     kept, drops = filter_candidates(records, cfg)
@@ -129,6 +124,22 @@ def cmd_build(args: argparse.Namespace) -> int:
         class_map=class_map,
     )
     mpath = write_manifest(manifest, args.out)
+    # The lock is written here (after Stage 6), not at Stage 1, so it can pin the
+    # split OUTPUT (split_sha256) alongside the candidate inputs — verify then
+    # certifies the split reproduced, not just the candidates.
+    lock_path = write_lock(
+        build_lock(
+            cfg,
+            entry_ids=[r.entry_id for r in records],
+            candidates_sha256=sha,
+            limit=args.limit,
+            split_sha256=split_fingerprint(splits.entry_split),
+            registry_sha256=registry_fingerprint(registry),
+            split_strategy=cfg.split_strategy,
+        ),
+        args.out,
+    )
+    print(f"  wrote {lock_path}")
     split_paths = write_split_files(splits, class_map, args.out)
     write_clusters(clusters.entry_to_cluster, args.out)
     write_classes(class_map, args.out)
