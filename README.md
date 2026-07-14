@@ -326,9 +326,39 @@ any_site = ds.train.conditioning_targets(include_ambiguous=True)
 
 The full corpus is also written to `targets.jsonl` (one row per target: entry, split,
 cluster, class, comp_id, tier, reason) and mirrored into `index.parquet`'s
-`conditioning_targets` column after `fetch`, so a featurizer extracts context atoms for
-exactly those ligands. Which *instance* of a multi-copy metal to featurize is a
-coordinate-level choice left to the featurizer (see the per-instance note above).
+`conditioning_targets` column after `fetch`.
+
+#### From a target to its pocket (your featurizer owns this)
+
+IF-Split stops at the **labels** — it never parses coordinates. The last mile is
+yours: join a target's `comp_id` to a fetched structure with your own parser and
+pull the ligand atoms + pocket. This is deliberate — featurization is
+model-specific (ligand atoms? SMILES? a pocket mask? all-atom context?), and every
+inverse-folding model already has its own pipeline. `comp_id` is the join key:
+
+```python
+from pathlib import Path
+
+import gemmi  # or biotite / Biopython — same pattern
+from ifsplit.dataset import load_dataset
+from ifsplit.download import rel_path_for
+
+ds = load_dataset("data/out/manifest.json")
+for entry_id, targets in ds.test.targets_by_entry().items():
+    path = Path("data/structures") / rel_path_for(entry_id, "test", assembly=True)
+    model = gemmi.read_structure(str(path))[0]
+    for t in targets:
+        # A structure may hold several copies of one ligand (plus adventitious ions).
+        # Surface ALL copies; pick the instance to condition on per your model.
+        copies = [r for ch in model for r in ch if r.name == t.comp_id]
+        # ... extract residues within config.ligand_context_radius_A of each copy ...
+```
+
+When an entry has several functional ligands (e.g. a cofactor *and* an inhibitor,
+or a catalytic metal alongside an adventitious one), that shows up as **multiple
+target rows** — condition on all (group by `entry_id`) or one per example, your
+call. A runnable, copy-and-adapt version with pocket extraction is
+[`scripts/consume_split.py`](scripts/consume_split.py).
 
 ## Sharing a split spec
 
