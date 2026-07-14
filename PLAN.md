@@ -106,8 +106,8 @@ IF-Split/
     download.py                # Stage 2: OPTIONAL on-demand mmCIF fetch (featurization)
     parse.py                   # Stage 3: metadata filters + drop log
     ligands.py                 # Stage 4: classify non-protein entities from metadata
-    cluster.py                 # Stage 5: precomputed RCSB clusters (default) | mmseqs2
-    split.py                   # Stage 6: deterministic hash assignment + stratification
+    cluster.py                 # Stage 5: seq clusters (precomputed|mmseqs2) + opt. fold-level structural union
+    split.py                   # Stage 6: split assignment (hash | balanced) + stratification
     manifest.py                # Stage 7: emit manifest + lock file
     dataset.py                 # Stage 8: loader / torch Dataset consuming a manifest
     cli.py                     # `if-split build`, `if-split verify`, `if-split stats`
@@ -311,12 +311,34 @@ entry may touch multiple clusters via different chains; assign the entry to the
 cluster of its longest protein chain (record all) so split assignment is
 unambiguous.
 
+**Fold-level structural clustering (`structural_clustering`, opt-in ← *implemented***).
+Sequence clustering misses *structural* redundancy: chains below the identity
+threshold can still share a fold, which a structure→sequence model leaks across
+splits. When set (`cath` | `ecod` | `scop2`), protein entities sharing an RCSB
+structural (super)family are union-merged into the same component **in addition
+to** shared sequence clusters — so a fold cannot straddle train/test. The
+classifications ride in the snapshot as metadata (`rcsb_polymer_instance_annotation`,
+Stage 1; **no coordinates**). CATH keys on the superfamily code (`1.10.490.10`),
+ECOD/SCOP2 on the family name. Purely additive (only merges, never splits);
+coverage is partial (CATH ~55%, ECOD ~81%, SCOP2 ~52% of chains) so unclassified
+chains fall back to sequence-only. See README "Fold-level leakage control".
+
 **Stage 6 — Split assignment (`split.py`) — the reproducibility core**
 
 - Assign each cluster (not each entry) to a split by deterministic hash:
   `bucket = int(blake2b(cluster_repr_id + split_salt)) ...` mapped to cumulative
   `split_fractions`. Same salt + same cluster IDs → same assignment, forever.
   (See the Stage 6 note in §1 on making `cluster_repr_id` input-independent.)
+- **Balance-aware strategy (`split_strategy: "balanced"` ← *implemented***).
+  Per-component hashing balances *components*, not *entries*; a dominant fold
+  (under structural clustering) or the antibody mega-cluster (even sequence-only)
+  balloons one split. `balanced` caps dominant folds (> 0.2% of entries) to train
+  and fills val/test to their *entry* targets from the tail of smaller folds in
+  hash order — leakage-safe (whole components), growth-stable via the registry,
+  and it reports a gap rather than forcing a target it can't reach. The
+  "masterclass" recipe `structural_clustering: scop2` + `split_strategy: balanced`
+  (`config/masterclass.yaml`) yields ~80/10/10 by entries with thousands of folds
+  held entirely out of train.
 - Stratify the test set by ligand class so SM/metal/nucleotide are all
   represented (LigandMPNN's test sets are deliberately ligand-containing).
   Implement as: within the test-bucketed clusters, label structures by ligand
