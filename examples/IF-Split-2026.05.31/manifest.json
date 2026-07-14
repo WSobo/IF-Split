@@ -53,11 +53,12 @@
       "val": 0.1
     },
     "split_salt": "snapsplit-v1",
+    "split_strategy": "hash",
     "structural_clustering": "off",
     "test_min_per_class": {},
     "use_biological_assembly": true
   },
-  "config_hash": "15e55bfc5e068f74c2f9b9fd3d45b1d4",
+  "config_hash": "9adf255823076dda9c19a4986ec53135",
   "dataset_version": "IF-Split-2026.05.31",
   "files": {
     "clusters": "clusters.json",
@@ -89,6 +90,8 @@
   },
   "manifest_schema": "if-split/manifest@2",
   "splits": {
+    "balance_gaps": {},
+    "capped_folds": 0,
     "cluster_counts": {
       "test": 1979,
       "train": 15619,
@@ -132,6 +135,7 @@
         "small_molecule": 6209
       }
     },
+    "strategy": "hash",
     "test_minimum_shortfalls": {}
   },
   "training": {

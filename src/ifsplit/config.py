@@ -111,11 +111,22 @@ class Config(BaseModel):
     # the dominant superfamilies (antibodies, TIM barrels) collapses them into
     # mega-components that land wholesale in one split, skewing the ENTRY-level
     # train/val/test balance (~95/3/2 at superfamily grain) even though the
-    # COMPONENT-level split stays ~80/10/10. It is an opt-in rigor knob until the
-    # split is made balance-aware (issue #9); enabling it yields a smaller but
-    # fold-honest test set (folds held out of train entirely).
+    # COMPONENT-level split stays ~80/10/10. Off by default; pair it with
+    # split_strategy="balanced" (below) to restore entry balance — that is the
+    # "masterclass" recipe (structural_clustering="scop2" + balanced).
     structural_clustering: Literal["off", "cath", "ecod", "scop2"] = "off"
     split_fractions: SplitFractions
+    # Component -> split assignment strategy.
+    #   "hash": each component hashed onto the cumulative fractions (balances
+    #     COMPONENTS). Simple and registry-free-stable, but heavy-tailed component
+    #     sizes skew ENTRY balance (one dominant fold => that split balloons).
+    #   "balanced": cap the dominant folds to train and fill val/test to their
+    #     ENTRY targets from the tail of smaller folds (hash-ordered). Restores
+    #     ~80/10/10 by entries and yields diverse, fold-honest val/test sets. Best
+    #     paired with structural_clustering (esp. "scop2"); also fixes the plain
+    #     sequence-only skew from the antibody mega-cluster. Growth stability comes
+    #     from splits.registry.json pinning prior assignments (like test minimums).
+    split_strategy: Literal["hash", "balanced"] = "hash"
     split_salt: str = Field(min_length=1)
     seed: int = Field(ge=0)
 

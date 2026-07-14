@@ -12,6 +12,15 @@ key is already in the registry its recorded split wins over the hash, so growth
 is stable even if a component's canonical key shifts (e.g. a smaller-id member
 joins later).
 
+The ``balanced`` strategy (``split_strategy="balanced"``) exists because
+per-component hashing balances *components*, not *entries*: with heavy-tailed
+component sizes (a dominant fold under structural clustering, or the antibody
+mega-cluster even in sequence-only mode) one component balloons a split. Balanced
+caps dominant folds to train and fills val/test to their *entry* targets from the
+tail of smaller folds in hash order — restoring ~80/10/10 by entries with diverse,
+fold-honest val/test sets. It stays leakage-safe (whole components) and
+growth-stable via the registry, and reports a gap if the tail was too thin.
+
 **No-leakage is structural, not heuristic.** Because every entity an entry
 touches lives in the same component (union-find merged them), and a component
 maps to exactly one split, two splits can never share a sequence cluster. The
@@ -28,6 +37,12 @@ from .cluster import ClusterResult
 from .config import Config
 
 SPLITS = ("train", "val", "test")
+
+# A component holding more than this fraction of all entries is a "dominant fold"
+# (antibodies, TIM barrels): in the "balanced" strategy it is sent to train rather
+# than allowed to balloon a val/test split. Small enough that no single component
+# can overshoot a 10% val/test target by much; large enough to leave a rich tail.
+BALANCE_MAX_COMPONENT_FRAC = 0.002
 
 
 def bucket(key: str, salt: str) -> float:
@@ -56,6 +71,13 @@ class SplitResult:
     # Per-class test floors that could not be fully met (class -> shortfall). Empty
     # when no minimums were requested or all were satisfied. Reported, never forced.
     minimum_shortfalls: dict[str, int] = field(default_factory=dict)
+    # "balanced" strategy diagnostics. strategy echoes cfg.split_strategy;
+    # capped_folds is how many dominant folds were pinned to train; balance_gaps is
+    # {split: entries below target} when the fold tail was too thin to fill val/test
+    # (a signal the structural method is too aggressive — reported, never forced).
+    strategy: str = "hash"
+    capped_folds: int = 0
+    balance_gaps: dict[str, int] = field(default_factory=dict)
 
 
 def _enforce_test_minimums(
@@ -115,6 +137,54 @@ def _enforce_test_minimums(
     return cluster_split, shortfalls
 
 
+def _balanced_assign(
+    clusters: ClusterResult, cfg: Config, registry: dict[str, str]
+) -> tuple[dict[str, str], int, dict[str, int]]:
+    """Cap dominant folds to train; fill val/test to ENTRY targets from the tail.
+
+    Leakage-safe (whole components move, never entries), deterministic (hash-ordered
+    fill), and growth-stable via ``registry`` (pinned components keep their split;
+    only new components fill the remaining budget). Returns
+    ``(cluster_split, n_capped, gaps)`` where ``gaps`` records any val/test entry
+    target the fold tail was too thin to reach.
+    """
+    sizes = {k: len(v) for k, v in clusters.cluster_members.items()}
+    n_entries = sum(sizes.values())
+    sf = cfg.split_fractions
+    targets = {"val": sf.val * n_entries, "test": sf.test * n_entries}
+    cap = BALANCE_MAX_COMPONENT_FRAC * n_entries
+
+    cluster_split: dict[str, str] = {}
+    totals = {"val": 0, "test": 0}
+    n_capped = 0
+    for key in clusters.cluster_members:
+        if key in registry:  # pinned by a prior build (growth stability)
+            s = registry[key]
+            cluster_split[key] = s
+            if s in totals:
+                totals[s] += sizes[key]
+        elif sizes[key] > cap:
+            cluster_split[key] = "train"  # dominant fold -> train by design
+            n_capped += 1
+
+    eligible = sorted(
+        (k for k in clusters.cluster_members if k not in cluster_split),
+        key=lambda k: (bucket(k, cfg.split_salt), k),
+    )
+    for key in eligible:
+        if totals["test"] < targets["test"]:
+            cluster_split[key] = "test"
+            totals["test"] += sizes[key]
+        elif totals["val"] < targets["val"]:
+            cluster_split[key] = "val"
+            totals["val"] += sizes[key]
+        else:
+            cluster_split[key] = "train"
+
+    gaps = {s: int(targets[s] - totals[s]) for s in ("val", "test") if totals[s] + 0.5 < targets[s]}
+    return cluster_split, n_capped, gaps
+
+
 def assign_splits(
     clusters: ClusterResult,
     cfg: Config,
@@ -123,15 +193,22 @@ def assign_splits(
 ) -> SplitResult:
     """Assign every component (and thus every entry) to a split.
 
-    With ``cfg.test_min_per_class`` set and ``entry_classes`` provided, a
-    deterministic top-up recruits whole components into test to meet per-class
-    floors (see :func:`_enforce_test_minimums`).
+    ``cfg.split_strategy`` selects "hash" (per-component hash onto the fractions) or
+    "balanced" (cap dominant folds to train, fill val/test to entry targets from the
+    fold tail; see :func:`_balanced_assign`). With ``cfg.test_min_per_class`` set and
+    ``entry_classes`` provided, a deterministic top-up then recruits whole components
+    into test to meet per-class floors (see :func:`_enforce_test_minimums`).
     """
     registry = registry or {}
 
-    cluster_split: dict[str, str] = {
-        key: registry.get(key, split_for_key(key, cfg)) for key in clusters.cluster_members
-    }
+    n_capped = 0
+    balance_gaps: dict[str, int] = {}
+    if cfg.split_strategy == "balanced":
+        cluster_split, n_capped, balance_gaps = _balanced_assign(clusters, cfg, registry)
+    else:
+        cluster_split = {
+            key: registry.get(key, split_for_key(key, cfg)) for key in clusters.cluster_members
+        }
 
     shortfalls: dict[str, int] = {}
     if cfg.test_min_per_class and entry_classes is not None:
@@ -156,6 +233,9 @@ def assign_splits(
         counts=counts,
         cluster_counts=cluster_counts,
         minimum_shortfalls=dict(sorted(shortfalls.items())),
+        strategy=cfg.split_strategy,
+        capped_folds=n_capped,
+        balance_gaps=dict(sorted(balance_gaps.items())),
     )
 
 

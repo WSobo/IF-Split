@@ -105,6 +105,11 @@ def cmd_build(args: argparse.Namespace) -> int:
     check_no_leakage(splits, clusters)  # structural guarantee; raises on violation
     c = splits.counts
     print(f"  train={c['train']} val={c['val']} test={c['test']}  (no cross-split leakage)")
+    if splits.strategy != "hash":
+        note = f"  strategy={splits.strategy}: {splits.capped_folds} dominant folds -> train"
+        if splits.balance_gaps:
+            note += f"; WARNING fold tail too thin, val/test short by {splits.balance_gaps}"
+        print(note)
     if cfg.test_min_per_class:
         if splits.minimum_shortfalls:
             short = ", ".join(f"{k}:{v}" for k, v in splits.minimum_shortfalls.items())
