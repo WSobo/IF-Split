@@ -3,8 +3,13 @@
 Operates on the records in ``candidates.jsonl``. Drops entries that:
 
 - have no protein polymer entity (``no_protein_entity``),
-- have a protein entity but no usable sequence (``no_protein_sequence``),
-- exceed the residue cap (``too_large``): ``total_residues >= max_total_residues``,
+- have a protein entity but no usable sequence (``no_protein_sequence``): the
+  canonical sequence is empty, or every protein chain is all-``X`` (poly-UNK, no
+  known residue identities), so there is no learnable inverse-folding label,
+- (opt-in ``min_modeled_residues``) have no protein chain with at least that many
+  modeled (non-``X``) residues (``sequence_too_short``): tiny peptide fragments and
+  mostly-unknown chains,
+- exceed the residue cap (``too_large``): ``total_residues > max_total_residues``,
 - violate an (optional) wwPDB validation-report quality cap — clashscore, R-free,
   Ramachandran/rotamer/RSRZ outliers — or lack a report when one is required.
 
@@ -22,6 +27,7 @@ from .schema import CandidateRecord
 
 DROP_NO_PROTEIN = "no_protein_entity"
 DROP_NO_SEQUENCE = "no_protein_sequence"
+DROP_SEQUENCE_TOO_SHORT = "sequence_too_short"
 DROP_TOO_LARGE = "too_large"
 DROP_CLASHSCORE = "clashscore_too_high"
 DROP_RFREE = "rfree_too_high"
@@ -29,6 +35,16 @@ DROP_RAMACHANDRAN = "ramachandran_outliers_too_high"
 DROP_ROTAMER = "rotamer_outliers_too_high"
 DROP_RSRZ = "rsrz_outliers_too_high"
 DROP_NO_VALIDATION = "no_validation_report"
+
+
+def modeled_residue_count(seq: str) -> int:
+    """Number of residues with a known identity (non-``X``) in a canonical sequence.
+
+    ``pdbx_seq_one_letter_code_can`` maps modified residues to their standard parent
+    and leaves only genuine unknowns as ``X``, so an all-``X`` chain (poly-UNK) has
+    zero modeled residues and no learnable inverse-folding label.
+    """
+    return sum(1 for ch in seq if ch not in ("X", "x"))
 
 
 def assembly1_residue_count(record: CandidateRecord) -> int | None:
@@ -85,11 +101,21 @@ def filter_candidates(
         if not proteins:
             drops.append({"entry_id": r.entry_id, "reason": DROP_NO_PROTEIN})
             continue
-        if not any(e.seq for e in proteins):
+        # Usable sequence = at least one protein chain with >=1 modeled residue. An
+        # empty string OR an all-X (poly-UNK) chain has none, so the label is
+        # unlearnable — always dropped (categorically, like an absent sequence).
+        best_modeled = max((modeled_residue_count(e.seq) for e in proteins), default=0)
+        if best_modeled == 0:
             drops.append({"entry_id": r.entry_id, "reason": DROP_NO_SEQUENCE})
             continue
+        # Opt-in floor on modeled length: drop tiny fragments / mostly-unknown chains.
+        if cfg.min_modeled_residues > 0 and best_modeled < cfg.min_modeled_residues:
+            drops.append(
+                {"entry_id": r.entry_id, "reason": DROP_SEQUENCE_TOO_SHORT, "modeled": best_modeled}
+            )
+            continue
         tr = total_residues(r, cfg)
-        if tr is not None and tr >= cfg.max_total_residues:
+        if tr is not None and tr > cfg.max_total_residues:
             drops.append({"entry_id": r.entry_id, "reason": DROP_TOO_LARGE, "residues": tr})
             continue
         qd = quality_drop(r, cfg)

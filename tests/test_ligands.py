@@ -13,6 +13,7 @@ from ifsplit.ligands import (
     elements_in_formula,
     has_histag,
     is_metal_ion,
+    is_metal_site,
     is_purification_artifact,
     longest_residue_run,
 )
@@ -99,6 +100,28 @@ def test_elements_in_formula():
 def test_is_metal_ion_distinguishes_ion_from_cofactor():
     assert is_metal_ion(NonpolymerComp(comp_id="ZN", formula="Zn")) is True
     assert is_metal_ion(NonpolymerComp(comp_id="HEM", formula="C34 H32 Fe N4 O4")) is False
+
+
+def test_is_metal_ion_is_strict_mononuclear():
+    # is_metal_ion matches a bare mononuclear ion only (used by the purification logic).
+    assert is_metal_ion(NonpolymerComp(comp_id="ZN", formula="Zn")) is True
+    # Clusters, metal-oxoanions, and organics are NOT bare metal ions.
+    assert is_metal_ion(NonpolymerComp(comp_id="SF4", formula="Fe4 S4")) is False
+    assert is_metal_ion(NonpolymerComp(comp_id="VO4", formula="V O4")) is False
+    assert is_metal_ion(NonpolymerComp(comp_id="HEM", formula="C34 H32 Fe N4 O4")) is False
+
+
+def test_is_metal_site_adds_curated_clusters_only():
+    # The ligand-class gate adds curated inorganic clusters (Fe-S, oxo, FeMo-co) but
+    # NOT mononuclear metal-oxoanion inhibitors or heavy-atom oxo phasing reagents whose
+    # comp id is not the bare element symbol.
+    assert is_metal_site(NonpolymerComp(comp_id="ZN", formula="Zn")) is True  # bare ion
+    assert is_metal_site(NonpolymerComp(comp_id="SF4", formula="Fe4 S4")) is True
+    assert is_metal_site(NonpolymerComp(comp_id="FES", formula="Fe2 S2")) is True
+    assert is_metal_site(NonpolymerComp(comp_id="OEX", formula="Ca Mn4 O5")) is True
+    assert is_metal_site(NonpolymerComp(comp_id="VO4", formula="V O4")) is False  # oxoanion
+    assert is_metal_site(NonpolymerComp(comp_id="OS4", formula="O4 Os")) is False  # phasing oxo
+    assert is_metal_site(NonpolymerComp(comp_id="HEM", formula="C34 H32 Fe N4 O4")) is False
 
 
 def test_longest_residue_run_and_histag():
@@ -337,6 +360,176 @@ def test_nickel_with_real_metal_stays_functional():
     assert res["tiers"]["NI"]["tier"] == TIER_FUNCTIONAL
     assert res["tiers"]["ZN"]["tier"] == TIER_FUNCTIONAL
     assert set(res["metals"]) == {"NI", "ZN"}
+
+
+# ---------------------- heavy-atom phasing derivatives --------------------- #
+def test_phasing_metal_bound_is_ambiguous():
+    # A mercury MIR derivative bound to the protein, with no affinity/SOI/annotation,
+    # is demoted to ambiguous (reported, recoverable) -- not a functional metal site,
+    # not destroyed (metadata can't rule out a rare native Hg site).
+    rec = _record([("HG", "Hg 2+")], bound=["HG"])
+    res = classify_components(rec, _cfg())
+    assert res["tiers"]["HG"]["tier"] == TIER_AMBIGUOUS
+    assert res["tiers"]["HG"]["reason"] == "phasing_metal"
+    assert res["metals"] == []
+    assert "metal" not in res["classes"]
+    assert "metal" in res["ambiguous_classes"]
+
+
+def test_phasing_lanthanide_bound_is_ambiguous():
+    rec = _record([("GD", "Gd 3+")], bound=["GD"])
+    res = classify_components(rec, _cfg())
+    assert res["tiers"]["GD"]["tier"] == TIER_AMBIGUOUS
+    assert res["tiers"]["GD"]["reason"] == "phasing_metal"
+    assert res["metals"] == []
+
+
+def test_phasing_metal_with_affinity_is_functional():
+    # A measured affinity (e.g. a Pt drug adduct with a Kd) vouches for real biology
+    # and overrides the phasing demotion (the positives are checked first).
+    rec = _record([("PT", "Pt 2+")], bound=["PT"], affinity=["PT"])
+    res = classify_components(rec, _cfg())
+    assert res["tiers"]["PT"]["tier"] == TIER_FUNCTIONAL
+    assert res["tiers"]["PT"]["reason"] == "metal_affinity"
+    assert res["metals"] == ["PT"]
+
+
+def test_phasing_metal_investigated_is_functional():
+    # RCSB curating it a subject-of-investigation likewise overrides the demotion.
+    rec = _record([("HG", "Hg 2+")], bound=["HG"], investigated=["HG"])
+    res = classify_components(rec, _cfg())
+    assert res["tiers"]["HG"]["tier"] == TIER_FUNCTIONAL
+    assert res["tiers"]["HG"]["reason"] == "metal_investigated"
+
+
+def test_native_mercury_with_annotation_is_functional():
+    # A native mercuric-resistance protein (annotated "mercuric reductase") keeps its Hg:
+    # the annotation vocabulary now covers heavy/lanthanide metals, so the rescue fires.
+    rec = _record([("HG", "Hg 2+")], bound=["HG"], annotations=["mercuric reductase activity"])
+    res = classify_components(rec, _cfg())
+    assert res["tiers"]["HG"]["tier"] == TIER_FUNCTIONAL
+    assert res["tiers"]["HG"]["reason"] == "metal_annotated"
+    assert res["metals"] == ["HG"]
+
+
+def test_native_lanthanide_with_annotation_is_functional():
+    # A lanthanide-dependent methanol dehydrogenase (annotated) keeps its catalytic Ce.
+    rec = _record([("CE", "Ce 3+")], bound=["CE"], annotations=["cerium ion binding"])
+    res = classify_components(rec, _cfg())
+    assert res["tiers"]["CE"]["tier"] == TIER_FUNCTIONAL
+    assert res["tiers"]["CE"]["reason"] == "metal_annotated"
+    assert res["metals"] == ["CE"]
+
+
+# ------------------------- inorganic metal clusters ------------------------ #
+def test_iron_sulfur_cluster_is_functional_metal():
+    # A [4Fe-4S] cluster (SF4) bound to the protein is a metal site, not a small mol.
+    rec = _record([("SF4", "Fe4 S4")], bound=["SF4"])
+    res = classify_components(rec, _cfg())
+    assert res["tiers"]["SF4"]["tier"] == TIER_FUNCTIONAL
+    assert res["tiers"]["SF4"]["reason"] == "metal_bound"
+    assert res["metals"] == ["SF4"]
+    assert "metal" in res["classes"]
+    assert res["small_molecules"] == []
+
+
+def test_metal_oxo_cluster_is_functional_metal():
+    rec = _record([("OEX", "Ca Mn4 O5")], bound=["OEX"])
+    res = classify_components(rec, _cfg())
+    assert res["tiers"]["OEX"]["tier"] == TIER_FUNCTIONAL
+    assert res["metals"] == ["OEX"]
+
+
+def test_metal_oxoanion_inhibitor_is_small_molecule_not_metal():
+    # Vanadate (VO4) is a mononuclear metal-oxoanion phosphate-mimic INHIBITOR, not a
+    # metal cofactor: it stays a functional small molecule, never gets the metal class.
+    rec = _record([("VO4", "V O4")], bound=["VO4"])
+    res = classify_components(rec, _cfg())
+    assert res["tiers"]["VO4"]["tier"] == TIER_FUNCTIONAL
+    assert res["tiers"]["VO4"]["reason"] == "ligand_bound"
+    assert res["small_molecules"] == ["VO4"]
+    assert res["metals"] == []
+
+
+def test_histag_nickel_with_fe_s_cluster_still_demotes_nickel():
+    # Regression: adding clusters to the metal CLASS must NOT disable the Ni/Co
+    # purification curation. A His-tagged Fe-S enzyme with an adventitious IMAC Ni: the
+    # Ni is still a histag artifact (purification reasons about bare ions via is_metal_ion),
+    # while the SF4 cluster is a functional metal.
+    tagged = "MGHHHHHHSSG" + "ACDEFGIKLMNPQRSTVWY" * 2
+    rec = _record([("NI", "Ni"), ("SF4", "Fe4 S4")], bound=["NI", "SF4"], seq=tagged)
+    res = classify_components(rec, _cfg())
+    assert res["purification_artifact"] is True
+    assert res["tiers"]["NI"]["tier"] == TIER_ARTIFACT
+    assert res["tiers"]["NI"]["reason"] == "histag_metal"
+    assert res["tiers"]["SF4"]["tier"] == TIER_FUNCTIONAL
+    assert res["metals"] == ["SF4"]  # Ni excluded, cluster kept
+
+
+# ------------- affinity beats the additive blacklist (gate order) ---------- #
+def test_blacklisted_additive_with_measured_affinity_is_functional():
+    # Malonate (MLI) is a blacklisted additive, but if it is the MEASURED-affinity
+    # ligand (a succinate-dehydrogenase inhibitor with a Ki) it is the real ligand:
+    # affinity overrides the blacklist, mirroring the metal branch.
+    rec = _record([("MLI", "C3 H2 O4")], bound=["MLI"], affinity=["MLI"])
+    res = classify_components(rec, _cfg())
+    assert res["tiers"]["MLI"]["tier"] == TIER_FUNCTIONAL
+    assert res["tiers"]["MLI"]["reason"] == "ligand_affinity"
+    assert res["small_molecules"] == ["MLI"]
+
+
+def test_blacklisted_additive_without_affinity_still_artifact():
+    # Regression: without a measured affinity the blacklist still demotes it.
+    rec = _record([("MLI", "C3 H2 O4")], bound=["MLI"])
+    res = classify_components(rec, _cfg())
+    assert res["tiers"]["MLI"]["tier"] == TIER_ARTIFACT
+    assert res["tiers"]["MLI"]["reason"] == "additive"
+
+
+# --------------------------- NA-hybrid nucleic class ----------------------- #
+def test_na_hybrid_entity_gets_nucleic_acid_class():
+    # A protein bound to a single DNA/RNA-hybrid strand (rcsb_entity_polymer_type
+    # "NA-hybrid") must still be detected as a nucleic-acid complex.
+    rec = CandidateRecord.from_data_api(
+        {
+            "rcsb_id": "THY",
+            "exptl": [{"method": "X-RAY DIFFRACTION"}],
+            "rcsb_entry_info": {
+                "resolution_combined": [2.0],
+                "deposited_polymer_monomer_count": 30,
+            },
+            "rcsb_accession_info": {"initial_release_date": "2020-01-01T00:00:00Z"},
+            "polymer_entities": [
+                {
+                    "rcsb_id": "THY_1",
+                    "entity_poly": {
+                        "rcsb_entity_polymer_type": "Protein",
+                        "pdbx_seq_one_letter_code_can": "ACDEFGHIKLMNPQRSTVWY",
+                    },
+                },
+                {
+                    "rcsb_id": "THY_2",
+                    "entity_poly": {
+                        "rcsb_entity_polymer_type": "NA-hybrid",
+                        "pdbx_seq_one_letter_code_can": "AUGCATGC",
+                    },
+                },
+            ],
+            "nonpolymer_entities": [],
+            "assemblies": [
+                {
+                    "rcsb_id": "THY-1",
+                    "rcsb_assembly_info": {
+                        "polymer_monomer_count": 30,
+                        "num_prot_na_interface_entities": 1,
+                    },
+                }
+            ],
+        }
+    )
+    res = classify_components(rec, _cfg())
+    assert res["has_nucleic_acid"] is True
+    assert "nucleic_acid" in res["classes"]
 
 
 # --------------------- purification-artifact curation ---------------------- #

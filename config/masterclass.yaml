@@ -18,7 +18,8 @@
 snapshot_date: "2026-05-30"        # release_date <= this. The reproducibility anchor.
 experimental_methods: ["X-RAY DIFFRACTION", "ELECTRON MICROSCOPY"]
 resolution_max_A: 3.5
-max_total_residues: 5999
+max_total_residues: 5999           # max residues KEPT (drop if > this); LigandMPNN kept < 6000
+min_modeled_residues: 20           # drop tiny/poly-UNK chains: the sequence is the training label
 excluded_het: ["HOH", "NA", "CL", "K", "BR"]
 use_biological_assembly: true
 

@@ -6,12 +6,30 @@ from copy import deepcopy
 
 from ifsplit.schema import (
     CandidateRecord,
+    PolymerEntity,
     canonical_jsonl_bytes,
     metal_symbols_in_annotation,
     read_candidates_jsonl,
     sha256_hex,
     structural_families_from_instances,
 )
+
+
+def _pe(polymer_type: str) -> PolymerEntity:
+    return PolymerEntity(entity_id="X_1", polymer_type=polymer_type, seq_len=4, seq="ACGU")
+
+
+def test_is_nucleic_covers_dna_rna_and_hybrid():
+    assert _pe("DNA").is_nucleic is True
+    assert _pe("RNA").is_nucleic is True
+    # rcsb_entity_polymer_type "NA-hybrid" (a single mixed DNA/RNA strand) contains
+    # neither "DNA" nor "RNA" — it must still count as nucleic, or a protein/hybrid
+    # complex silently loses its nucleic_acid class.
+    assert _pe("NA-hybrid").is_nucleic is True
+    assert _pe("Protein").is_nucleic is False
+    assert _pe("Other").is_nucleic is False
+    assert _pe("Protein").is_protein is True
+    assert _pe("NA-hybrid").is_protein is False
 
 
 def test_structural_families_from_instances():
@@ -87,6 +105,16 @@ def test_metal_symbols_in_annotation():
     assert metal_symbols_in_annotation("Urease nickel binding site") == {"NI"}
     assert metal_symbols_in_annotation("cobalt ion binding") == {"CO"}
     assert metal_symbols_in_annotation("zinc ion binding") == {"ZN"}
+    # Heavy / lanthanide metals now covered so a native site is rescued, not demoted.
+    assert metal_symbols_in_annotation("mercuric reductase activity") == {"HG"}
+    assert metal_symbols_in_annotation("lanthanum-dependent methanol dehydrogenase") == {"LA"}
+    assert metal_symbols_in_annotation("cerium ion binding") == {"CE"}
+    # Whole-word match: "ytterbium"/"terbium" must NOT also fire the substrings
+    # "terbium"/"erbium" (they are substrings of one another).
+    assert metal_symbols_in_annotation("ytterbium binding protein") == {"YB"}
+    assert metal_symbols_in_annotation("terbium luminescence site") == {"TB"}
+    # Generic sentinel still uses a substring test (so "metallopeptidase" counts).
+    assert metal_symbols_in_annotation("metallopeptidase activity") == {"METAL"}
     # A generic metal term with no named element -> the METAL sentinel.
     assert metal_symbols_in_annotation("transition metal ion binding") == {"METAL"}
     # No metal mentioned at all.

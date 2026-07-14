@@ -151,7 +151,8 @@ guaranteed to have used identical settings.
 snapshot_date: "2026-05-30"        # release_date <= this. The reproducibility anchor.
 experimental_methods: ["X-RAY DIFFRACTION", "ELECTRON MICROSCOPY"]
 resolution_max_A: 3.5
-max_total_residues: 5999           # LigandMPNN used "< 6000"
+max_total_residues: 5999           # max residues KEPT (drop if > this); LigandMPNN kept < 6000
+min_modeled_residues: 0            # opt-in floor on modeled (non-X) residues; 0 = off
 excluded_het: ["HOH", "NA", "CL", "K", "BR"]   # waters + common crystallization ions
 use_biological_assembly: true      # biounits, as in LigandMPNN (assembly 1)
 # purification-artifact curation (Stage 4): His-tag + Ni/Co only -> not a metal site
@@ -215,7 +216,7 @@ re-featurize from the cleaned structures.
 **Stage 3 — Filter (`parse.py`)**
 
 - Operate on the metadata in `candidates.jsonl` (no coordinate parsing). Apply
-  filters: drop entries with `total_residues >= max_total_residues` (use the
+  filters: drop entries with `total_residues > max_total_residues` (use the
   assembly residue count when `use_biological_assembly`), drop entries whose only
   non-protein components are in `excluded_het`, drop entries with no protein
   polymer entity. Record drop reasons + counts.

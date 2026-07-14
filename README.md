@@ -204,7 +204,7 @@ A `build` runs eight stages; none touch coordinates.
 | Stage | Module | What it does |
 |---|---|---|
 | 1 — enumerate | `enumerate.py`, `rcsb.py` | RCSB Search → entry IDs; Data API (GraphQL, batched) → sequences, ligands, residue counts, cluster membership → `candidates.jsonl`. |
-| 3 — filter | `parse.py` | Drop no-protein / no-sequence / oversized entries (assembly-1 residue count vs `max_total_residues`), plus optional wwPDB validation-report quality caps (clashscore, R-free, Ramachandran/rotamer/RSRZ) — all from metadata. Every drop is logged with its reason. |
+| 3 — filter | `parse.py` | Drop no-protein / no-usable-sequence (empty **or** all-`X` poly-UNK) / too-short (opt-in `min_modeled_residues`) / oversized entries (assembly-1 residue count `> max_total_residues`), plus optional wwPDB validation-report quality caps (clashscore, R-free, Ramachandran/rotamer/RSRZ) — all from metadata. Every drop is logged with its reason. |
 | 4 — ligands | `ligands.py` | Tier each non-protein component `functional`/`ambiguous`/`artifact`; derive class labels (metal / small-molecule / nucleic-acid). `nucleic_acid` = a protein↔DNA/RNA *complex* (verified assembly interface), **not** a bound mononucleotide. **Annotate, never drop.** |
 | 5 — cluster | `cluster.py` | Group protein entities by RCSB precomputed cluster id at `identity_threshold`; canonical key = smallest member id. Optionally union same-fold entities (CATH/ECOD/SCOP2) for structural-leakage control. |
 | 6 — split | `split.py` | Assign components → train/val/test (`hash`, or `balanced` for entry-balanced fold-tail val/test); assert no cluster spans two splits; audit residual secondary-chain overlap. |
@@ -462,7 +462,8 @@ doubles as a shareable **split spec** — see [Sharing a split spec](#sharing-a-
 | `snapshot_date` | `2026-05-30` | `release_date <= this` — the reproducibility anchor. |
 | `experimental_methods` | X-ray, EM | Allowed `exptl.method` values. |
 | `resolution_max_A` | `3.5` | Resolution cutoff. |
-| `max_total_residues` | `5999` | Size cap (LigandMPNN used `< 6000`). |
+| `max_total_residues` | `5999` | Max residues **kept** (drop if `> this`) — LigandMPNN kept `< 6000`, i.e. `<= 5999`. |
+| `min_modeled_residues` | `0` | Opt-in floor on modeled (non-`X`) residues in a protein chain. `0` = off; only the always-on empty/all-`X` (poly-UNK) drop applies. `~20` also drops tiny/mostly-unknown chains. |
 | `excluded_het` | waters + common ions | Extra components forced to `artifact`. |
 | `use_biological_assembly` | `true` | Count residues from assembly 1, not the deposited asymmetric unit. |
 | `purification_metals` | `[NI, CO]` | Metals treated as IMAC tags; `[]` disables the heuristic. |

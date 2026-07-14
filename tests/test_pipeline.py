@@ -12,8 +12,10 @@ from ifsplit.manifest import build_manifest, write_manifest
 from ifsplit.parse import (
     DROP_CLASHSCORE,
     DROP_NO_PROTEIN,
+    DROP_NO_SEQUENCE,
     DROP_NO_VALIDATION,
     DROP_RFREE,
+    DROP_SEQUENCE_TOO_SHORT,
     DROP_TOO_LARGE,
     drop_summary,
     filter_candidates,
@@ -34,6 +36,30 @@ def _records(sample_entries, artifact_entry) -> list[CandidateRecord]:
     recs = [CandidateRecord.from_data_api(e) for e in sample_entries.values()]
     recs.append(CandidateRecord.from_data_api(artifact_entry))
     return recs
+
+
+def _seq_record(entry_id: str, seq: str) -> CandidateRecord:
+    """A single-protein-chain record carrying the given canonical sequence."""
+    return CandidateRecord(
+        entry_id=entry_id,
+        methods=["X-RAY DIFFRACTION"],
+        resolution_A=2.0,
+        release_date="2020-01-01",
+        deposited_residues=len(seq),
+        assemblies={f"{entry_id}-1": len(seq)},
+        polymer_entities=[
+            PolymerEntity(
+                entity_id=f"{entry_id}_1",
+                polymer_type="Protein",
+                seq_len=len(seq),
+                seq=seq,
+                cluster_ids={30: 1},
+            )
+        ],
+        nonpolymer_comps=[],
+        bound_components=[],
+        affinity_comp_ids=[],
+    )
 
 
 # ----------------------------- Stage 3: filter ----------------------------- #
@@ -63,6 +89,43 @@ def test_filter_drops_too_large(sample_entries):
     assert kept == []
     assert drops[0]["reason"] == DROP_TOO_LARGE
     assert drops[0]["residues"] == 574
+
+
+def test_size_cap_boundary_keeps_exactly_max_residues():
+    # max_total_residues is the max KEPT (drop if > it), so an entry with exactly
+    # that many residues is kept — LigandMPNN's "< 6000" is keep <= 5999, not <= 5998.
+    rec = _seq_record("BND1", "A" * 100)  # assembly-1 count == 100
+    kept, _ = filter_candidates([rec], _cfg(max_total_residues=100))
+    assert [r.entry_id for r in kept] == ["BND1"]
+    # One residue over the cap is dropped.
+    kept2, drops = filter_candidates([rec], _cfg(max_total_residues=99))
+    assert kept2 == []
+    assert drops[0]["reason"] == DROP_TOO_LARGE
+
+
+def test_filter_drops_poly_unk_sequence():
+    # Every protein chain is all-X (poly-UNK): no known residue identities, so no
+    # learnable inverse-folding label -> always dropped (even at the default min=0).
+    kept, drops = filter_candidates([_seq_record("UNK1", "X" * 80)], _cfg())
+    assert kept == []
+    assert drops[0]["reason"] == DROP_NO_SEQUENCE
+
+
+def test_filter_keeps_partially_modeled_sequence():
+    # A chain with even a few modeled residues is usable at the default (min=0).
+    kept, _ = filter_candidates([_seq_record("OK1", "X" * 70 + "ACDEFGHIKL")], _cfg())
+    assert [r.entry_id for r in kept] == ["OK1"]
+
+
+def test_min_modeled_residues_drops_short_chain():
+    rec = _seq_record("SHRT", "ACDEFGHIKLMNPQR")  # 15 modeled residues
+    kept, drops = filter_candidates([rec], _cfg(min_modeled_residues=20))
+    assert kept == []
+    assert drops[0]["reason"] == DROP_SEQUENCE_TOO_SHORT
+    assert drops[0]["modeled"] == 15
+    # Off by default (min=0): the same record is kept.
+    kept2, _ = filter_candidates([rec], _cfg())
+    assert [r.entry_id for r in kept2] == ["SHRT"]
 
 
 def test_filter_drops_high_clashscore(sample_entries):

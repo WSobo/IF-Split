@@ -30,6 +30,14 @@ Signals used (all from the Data API, no coordinates):
                             glycans, so it does not rescue; a real lectin ligand is an
                             opt-in target via the glycan tier)
   - His-tag + Ni/Co       : the IMAC purification-artifact pattern (existing rule)
+  - phasing metals        : monatomic HG/AU/PT/PB/TL/lanthanide heavy-atom derivative
+                            soaks (SAD/MAD/MIR) are demoted to *ambiguous* (reported,
+                            recoverable) unless a biological positive (measured affinity,
+                            curated SOI, or a matching metal annotation) vouches for them
+  - metal clusters        : inorganic Fe-S cores (FES/SF4/F3S), the Mn4CaO5 OEC, and the
+                            nitrogenase FeMo/P-cluster cofactors are metal sites, not
+                            organic ligands -> classed metal via a curated comp-id set
+                            (METAL_CLUSTER_COMPS; see is_metal_site)
   - metal_annotations     : RCSB GO/InterPro/Pfam terms naming the metal the protein
                             binds ("nickel cation binding"). A native Ni/Co
                             metalloenzyme is rescued from the His-tag demotion; a
@@ -80,6 +88,21 @@ COUNTERION_COMPS: frozenset[str] = frozenset(
     {"NA", "CL", "K", "BR", "I", "IOD", "CS", "RB", "F", "LI"}
 )
 
+# Heavy atoms and lanthanides soaked in for experimental phasing (SAD/MAD/isomorphous
+# replacement derivatives), keyed by comp id. A bound one with no measured affinity,
+# curated SOI, or matching metal annotation (all checked *before* this demotion, so a
+# genuine mercuric-resistance protein, lanthanide-dependent dehydrogenase, or Pt drug
+# adduct annotated/measured as such is rescued to functional) is demoted to AMBIGUOUS —
+# excluded from the functional metal set but reported and recoverable, not destroyed.
+# (Native tungsten/molybdenum enzymes are annotated, so W/MO are left out here.)
+PHASING_METALS: frozenset[str] = frozenset(
+    {
+        "HG", "AU", "PT", "PB", "TL", "OS", "IR",  # classic heavy-atom derivatives
+        "LA", "CE", "PR", "ND", "SM", "EU", "GD",  # lanthanide MAD phasing
+        "TB", "DY", "HO", "ER", "TM", "YB", "LU",
+    }
+)  # fmt: skip
+
 # Common crystallization additives / buffer junk. Config-extensible via
 # excluded_het; this is the always-on baseline.
 DEFAULT_ADDITIVE_BLACKLIST: frozenset[str] = frozenset(
@@ -113,12 +136,40 @@ def elements_in_formula(formula: str | None) -> set[str]:
     return {m.group(0).upper() for m in _ELEMENT_RE.finditer(cleaned)}
 
 
+# Curated inorganic metal-cofactor clusters, keyed by CCD comp id: iron-sulfur cores
+# (FES [2Fe-2S], SF4 [4Fe-4S], F3S [3Fe-4S]), the photosystem-II Mn4CaO5 oxygen-evolving
+# complex (OEC/OEX), and the nitrogenase FeMo/P-cluster cofactors (CFM/CFN/CLF/ICS).
+# These are polyatomic — so is_metal_ion (which matches a bare single-element ion) misses
+# them — and carry bridging non-metals (S, O, even C/N in FeMo-co), yet they are metal
+# SITES, among the most information-rich for inverse folding. Comp-id keyed, NOT a formula
+# rule: a "metal + only S/O" formula rule would also wrongly grab mononuclear metal-
+# oxoanion INHIBITORS (VO4/WO4/MoO4/CrO4 — phosphate/sulfate mimics, not metal sites) and
+# heavy-atom oxo phasing reagents (OS4). Extend as needed.
+METAL_CLUSTER_COMPS: frozenset[str] = frozenset(
+    {"FES", "SF4", "F3S", "CFM", "CFN", "CLF", "ICS", "OEC", "OEX"}
+)
+
+
 def is_metal_ion(comp: NonpolymerComp) -> bool:
-    """True if the component's formula is composed only of metal element(s)."""
+    """True if the component's formula is composed only of metal element(s).
+
+    A bare mononuclear metal ion (``Zn``, ``Ni 2+``). ``HEM`` (``C34 H32 Fe N4 O4``)
+    is NOT a metal ion — its formula has C/H/N/O — nor is a metal-oxoanion like
+    ``VO4``. Polynuclear inorganic *clusters* (Fe-S, metal-oxo) are matched separately
+    by :func:`is_metal_site`. Used as-is by the purification logic, which reasons about
+    bare Ni/Co ions (a His-tag binds an ion, never an Fe-S cluster).
+    """
     elems = elements_in_formula(comp.formula)
     if not elems:
         elems = {comp.comp_id} if comp.comp_id in METAL_ELEMENTS else set()
     return bool(elems) and elems <= METAL_ELEMENTS
+
+
+def is_metal_site(comp: NonpolymerComp) -> bool:
+    """True if the comp is a bare metal ion (:func:`is_metal_ion`) or a curated
+    inorganic metal cluster (:data:`METAL_CLUSTER_COMPS`) — the ligand-*class* gate.
+    """
+    return is_metal_ion(comp) or comp.comp_id in METAL_CLUSTER_COMPS
 
 
 def is_glycan(comp: NonpolymerComp) -> bool:
@@ -262,7 +313,7 @@ def tier_component(
     if cid in COUNTERION_COMPS:
         return TIER_ARTIFACT, "counterion", None
 
-    if is_metal_ion(comp):
+    if is_metal_site(comp):
         # Strong positive biological evidence overrides the purification heuristic: a
         # measured affinity, a curated SOI, or the protein annotated to bind THIS
         # metal all mean the entry contains real metal biology (even if a His-tag is
@@ -273,6 +324,13 @@ def tier_component(
             return TIER_FUNCTIONAL, "metal_annotated", CLASS_METAL
         if investigated:
             return TIER_FUNCTIONAL, "metal_investigated", CLASS_METAL
+        # Heavy-atom / lanthanide phasing derivative (a SAD/MAD/MIR soak) that none of
+        # the positives above vouched for -> demote to AMBIGUOUS (reported, recoverable),
+        # not functional: metadata can't fully rule out a rare native site (a MerR mercury
+        # protein, a lanthanide-dependent dehydrogenase), so exclude it from the functional
+        # metal set without destroying it -- exactly as with lone, uncorroborated Ni/Co.
+        if cid in PHASING_METALS:
+            return TIER_AMBIGUOUS, "phasing_metal", None
         # His-tag/Ni(Co) IMAC purification artifact (nothing above vouched for it).
         if is_artifact_entry and cfg.exclude_purification_artifacts and cid in purification:
             return TIER_ARTIFACT, "histag_metal", None
@@ -289,12 +347,15 @@ def tier_component(
         return TIER_AMBIGUOUS, "metal_unbound", None
 
     # Non-metal small molecule.
-    if cid in blacklist:
-        return TIER_ARTIFACT, "additive", None
-    # A measured binding affinity is the one signal that definitively marks a real
-    # carbohydrate ligand, so it rescues even a sugar.
+    # A measured binding affinity is the strongest positive: it marks a real ligand
+    # even when the comp is also a common additive (a malonate/citrate/sulfate/nitrate
+    # that is the actual measured substrate or inhibitor), so it overrides the
+    # blacklist — mirroring how affinity overrides the His-tag heuristic in the metal
+    # branch. It likewise rescues a genuine carbohydrate ligand (a measured sugar).
     if has_affinity:
         return TIER_FUNCTIONAL, "ligand_affinity", CLASS_SMALL_MOLECULE
+    if cid in blacklist:
+        return TIER_ARTIFACT, "additive", None
     # A carbohydrate (RCSB CCD type "*saccharide*") with no measured affinity is
     # decorative glycosylation or a sugar-detergent, not a ligand pocket. RCSB's SOI
     # flag is noisy for glycans -- it flags glycosylation and detergents (verified:
@@ -379,7 +440,7 @@ def classify_components(record: CandidateRecord, cfg: Config) -> dict:
             functional_sms.append(comp.comp_id)
         elif tier == TIER_AMBIGUOUS:
             # Record the would-be class for reporting (metal vs small molecule).
-            ambiguous_classes.add(CLASS_METAL if is_metal_ion(comp) else CLASS_SMALL_MOLECULE)
+            ambiguous_classes.add(CLASS_METAL if is_metal_site(comp) else CLASS_SMALL_MOLECULE)
 
     # nucleic_acid class = the entry has DNA/RNA *polymer chains*. Functional only
     # if the protein actually *interfaces* the nucleic acid (RCSB assembly-interface
