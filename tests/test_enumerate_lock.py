@@ -70,6 +70,30 @@ def test_verify_no_drift_returns_zero(tmp_path, fake_client):
     assert verify_lock(lock_path, client=fake_client) == 0
 
 
+def test_verify_warns_on_version_mismatch(tmp_path, fake_client, capsys):
+    # Same candidates, but the lock was written by a different tool version. The
+    # lock pins the candidate set (Stage 1), not the split labels, so a version
+    # bump is a WARNING (the split may differ), not data drift: verify still
+    # succeeds because the thing the lock actually pins reproduced exactly.
+    records, _, sha = enumerate_candidates(_cfg(), tmp_path, client=fake_client)
+    lock = build_lock(
+        _cfg(),
+        entry_ids=[r.entry_id for r in records],
+        candidates_sha256=sha,
+        limit=None,
+    )
+    lock["if_split_version"] = "0.0.1-ancient"  # simulate an older build
+    lock_path = write_lock(lock, tmp_path)
+
+    assert verify_lock(lock_path, client=fake_client) == 0
+    out = capsys.readouterr().out
+    assert "WARNING" in out
+    assert "version differs" in out
+    # The candidate set still reproduced exactly — only the version drifted.
+    assert "candidate set reproduced exactly" in out
+    assert "DRIFT detected" not in out
+
+
 def test_verify_detects_removed_entry(tmp_path, fake_client, sample_entries):
     records, _, sha = enumerate_candidates(_cfg(), tmp_path, client=fake_client)
     lock = build_lock(
