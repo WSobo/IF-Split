@@ -7,6 +7,11 @@
 snapshot_date: "2026-05-30"        # release_date <= this. The reproducibility anchor.
 experimental_methods: ["X-RAY DIFFRACTION", "ELECTRON MICROSCOPY"]
 resolution_max_A: 3.5
+# Optional per-method resolution overrides (a method here uses its own cap instead of
+# resolution_max_A). Cryo-EM 3.5 A has far less sidechain signal than X-ray 3.5 A, so a
+# tighter EM cap is common. Enforced in Stage 3 (auditable); empty = one cap for all.
+# Example: {"ELECTRON MICROSCOPY": 3.0}
+resolution_max_A_by_method: {}
 max_total_residues: 5999           # max residues KEPT (drop if > this); LigandMPNN kept < 6000
 # Opt-in sequence-usability floor: keep an entry only if some protein chain has at
 # least this many modeled (non-X) residues. 0 = off (only the always-on empty/all-X
@@ -69,6 +74,7 @@ max_rfree: null                      # e.g. 0.30  (X-ray DCC R-free)
 max_ramachandran_outlier_pct: null   # e.g. 1.0   (% backbone Ramachandran outliers)
 max_rotamer_outlier_pct: null        # e.g. 5.0   (% sidechain rotamer outliers)
 max_rsrz_outlier_pct: null           # e.g. 20    (% real-space-R Z-score outliers, X-ray)
+min_em_backbone_inclusion: null      # e.g. 0.7   (cryo-EM map-fit FLOOR, higher=better; EM-only)
 require_validation_report: false     # drop entries lacking a validation report entirely
 
 # Ligand context (downstream-optional; featurization, not split definition).

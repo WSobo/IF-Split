@@ -10,6 +10,7 @@ from __future__ import annotations
 
 import sys
 import time
+import warnings
 from collections.abc import Callable
 from pathlib import Path
 
@@ -21,6 +22,17 @@ ProgressFn = Callable[[str], None]
 
 # How often (in enriched records) to emit a progress line.
 _REPORT_EVERY = 1000
+
+# Methods RCSB assigns no resolution to. The Search query always carries a resolution
+# predicate, so an entry of one of these methods can never match — requesting one alone
+# silently yields an empty snapshot. We WARN (excluding NMR is a defensible inverse-
+# folding choice, per PLAN.md) rather than fail, so the footgun is at least visible.
+RESOLUTIONLESS_METHODS: frozenset[str] = frozenset(
+    {
+        "SOLUTION NMR", "SOLID-STATE NMR", "SOLUTION SCATTERING", "EPR",
+        "FLUORESCENCE TRANSFER", "INFRARED SPECTROSCOPY", "THEORETICAL MODEL",
+    }
+)  # fmt: skip
 
 
 def fmt_duration(seconds: float) -> str:
@@ -81,6 +93,16 @@ def enumerate_candidates(
     def say(msg: str) -> None:
         if progress:
             progress(msg)
+
+    resless = sorted(set(cfg.experimental_methods) & RESOLUTIONLESS_METHODS)
+    if resless:
+        warnings.warn(
+            f"experimental_methods includes {resless}, which RCSB assigns no resolution; "
+            f"the resolution filter (<= {cfg.search_resolution_cap()} A) excludes them, so "
+            f"they contribute no entries. Remove them, or expect them to be absent.",
+            stacklevel=2,
+        )
+        say(f"WARNING: {resless} have no RCSB resolution and will contribute no entries")
 
     owns_client = client is None
     client = client or RcsbClient()

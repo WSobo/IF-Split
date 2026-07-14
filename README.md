@@ -204,7 +204,7 @@ A `build` runs eight stages; none touch coordinates.
 | Stage | Module | What it does |
 |---|---|---|
 | 1 — enumerate | `enumerate.py`, `rcsb.py` | RCSB Search → entry IDs; Data API (GraphQL, batched) → sequences, ligands, residue counts, cluster membership → `candidates.jsonl`. |
-| 3 — filter | `parse.py` | Drop no-protein / no-usable-sequence (empty **or** all-`X` poly-UNK) / too-short (opt-in `min_modeled_residues`) / oversized entries (assembly-1 residue count `> max_total_residues`), plus optional wwPDB validation-report quality caps (clashscore, R-free, Ramachandran/rotamer/RSRZ) — all from metadata. Every drop is logged with its reason. |
+| 3 — filter | `parse.py` | Drop no-protein / no-usable-sequence (empty **or** all-`X` poly-UNK) / too-short (opt-in `min_modeled_residues`) / oversized entries (assembly-1 residue count `> max_total_residues`) / over-resolution (re-derived here so it is auditable; per-method caps via `resolution_max_A_by_method`), plus optional wwPDB validation-report quality caps (clashscore, R-free, Ramachandran/rotamer/RSRZ, cryo-EM map-fit floor) — all from metadata. Every drop is logged with its reason. |
 | 4 — ligands | `ligands.py` | Tier each non-protein component `functional`/`ambiguous`/`artifact`; derive class labels (metal / small-molecule / nucleic-acid). `nucleic_acid` = a protein↔DNA/RNA *complex* (verified assembly interface), **not** a bound mononucleotide. **Annotate, never drop.** |
 | 5 — cluster | `cluster.py` | Group protein entities by RCSB precomputed cluster id at `identity_threshold`; canonical key = smallest member id. Optionally union same-fold entities (CATH/ECOD/SCOP2) for structural-leakage control. |
 | 6 — split | `split.py` | Assign components → train/val/test (`hash`, or `balanced` for entry-balanced fold-tail val/test); assert no cluster spans two splits; audit residual secondary-chain overlap. |
@@ -229,6 +229,7 @@ metrics come straight from the deposited report:
 | `max_rotamer_outlier_pct` | % sidechain rotamer outliers | X-ray + cryo-EM |
 | `max_rfree` | R-free (DCC) | X-ray |
 | `max_rsrz_outlier_pct` | % real-space-R Z-score outliers | X-ray |
+| `min_em_backbone_inclusion` | backbone atom-in-density (a **floor** — higher is better) | cryo-EM |
 
 Two rules keep it honest: a cap fires **only when the metric is present**, so a
 cryo-EM entry is never dropped for a missing R-free; and every cap is **off by
@@ -461,7 +462,8 @@ doubles as a shareable **split spec** — see [Sharing a split spec](#sharing-a-
 |---|---|---|
 | `snapshot_date` | `2026-05-30` | `release_date <= this` — the reproducibility anchor. |
 | `experimental_methods` | X-ray, EM | Allowed `exptl.method` values. |
-| `resolution_max_A` | `3.5` | Resolution cutoff. |
+| `resolution_max_A` | `3.5` | Resolution cutoff (re-derived in Stage 3, so it is auditable from `candidates.jsonl`). |
+| `resolution_max_A_by_method` | `{}` | Optional per-method resolution overrides, e.g. `{ELECTRON MICROSCOPY: 3.0}` — cryo-EM 3.5 Å ≠ X-ray 3.5 Å. Empty = one cap for all. |
 | `max_total_residues` | `5999` | Max residues **kept** (drop if `> this`) — LigandMPNN kept `< 6000`, i.e. `<= 5999`. |
 | `min_modeled_residues` | `0` | Opt-in floor on modeled (non-`X`) residues in a protein chain. `0` = off; only the always-on empty/all-`X` (poly-UNK) drop applies. `~20` also drops tiny/mostly-unknown chains. |
 | `excluded_het` | waters + common ions | Extra components forced to `artifact`. |
@@ -474,7 +476,7 @@ doubles as a shareable **split spec** — see [Sharing a split spec](#sharing-a-
 | `clustering_backend` | `precomputed` | `precomputed` (RCSB clusters) or `mmseqs2` (run your own). |
 | `split_fractions` | 0.80 / 0.10 / 0.10 | train / val / test. |
 | `split_salt` | `snapsplit-v1` | Bump to intentionally reshuffle the split. |
-| `max_clashscore`, `max_rfree`, `max_ramachandran_outlier_pct`, `max_rotamer_outlier_pct`, `max_rsrz_outlier_pct`, `require_validation_report` | off | Optional validation-report quality caps — see [Structure quality](#structure-quality-validation-report). |
+| `max_clashscore`, `max_rfree`, `max_ramachandran_outlier_pct`, `max_rotamer_outlier_pct`, `max_rsrz_outlier_pct`, `min_em_backbone_inclusion`, `require_validation_report` | off | Optional validation-report quality caps — see [Structure quality](#structure-quality-validation-report). |
 | `ligand_context_radius_A`, `max_ligand_atoms` | `8.0`, `25` | Featurization only (not part of the split). |
 
 ## Develop

@@ -73,6 +73,13 @@ class Config(BaseModel):
     snapshot_date: date
     experimental_methods: list[str] = Field(min_length=1)
     resolution_max_A: float = Field(gt=0)
+    # Optional per-method resolution overrides, e.g. {"ELECTRON MICROSCOPY": 3.0}. A
+    # method listed here uses its own cap instead of resolution_max_A — a cryo-EM 3.5 A
+    # map carries far less sidechain signal than an X-ray 3.5 A structure, so a tighter
+    # EM cap is common. Enforced in Stage 3 (auditable from candidates.jsonl); the Search
+    # query pulls the loosest applicable cap so nothing a Stage-3 cap keeps is missed.
+    # Empty (default) = the single resolution_max_A applies to every method.
+    resolution_max_A_by_method: dict[str, float] = Field(default_factory=dict)
     max_total_residues: int = Field(gt=0)
     # Opt-in sequence-usability floor (Stage 3). Keep an entry only if some protein
     # chain has at least this many modeled (non-'X') residues. 0 (default) = off, so
@@ -158,6 +165,11 @@ class Config(BaseModel):
     max_ramachandran_outlier_pct: float | None = Field(default=None, ge=0)
     max_rotamer_outlier_pct: float | None = Field(default=None, ge=0)
     max_rsrz_outlier_pct: float | None = Field(default=None, ge=0)
+    # Cryo-EM map-model agreement FLOOR (higher is better, unlike the caps above).
+    # Drop an EM entry whose wwPDB backbone atom-inclusion is below this — modeled
+    # backbone atoms unsupported by density are unreliable structure->sequence labels.
+    # None (default) = off. X-ray entries lack this metric, so it never affects them.
+    min_em_backbone_inclusion: float | None = Field(default=None, gt=0)
     require_validation_report: bool = False
 
     # --- featurization (downstream-optional; not part of the split definition) ---
@@ -186,6 +198,16 @@ class Config(BaseModel):
             if n < 0:
                 raise ValueError(f"test_min_per_class[{k!r}] must be >= 0, got {n}")
         return v
+
+    @field_validator("resolution_max_A_by_method")
+    @classmethod
+    def _normalize_res_by_method(cls, v: dict[str, float]) -> dict[str, float]:
+        out: dict[str, float] = {}
+        for k, val in v.items():
+            if val <= 0:
+                raise ValueError(f"resolution_max_A_by_method[{k!r}] must be > 0, got {val}")
+            out[k.strip().upper()] = float(val)
+        return out
 
     @model_validator(mode="after")
     def _identity_level_supported(self) -> Config:
@@ -219,6 +241,18 @@ class Config(BaseModel):
     def identity_level(self) -> int:
         """``identity_threshold`` as an integer percent (e.g. 0.30 -> 30)."""
         return round(self.identity_threshold * 100)
+
+    def method_resolution_cap(self, method: str) -> float:
+        """Resolution cap for one experimental ``method`` (override, else the global)."""
+        return self.resolution_max_A_by_method.get(method, self.resolution_max_A)
+
+    def search_resolution_cap(self) -> float:
+        """Loosest resolution cap across the enabled methods.
+
+        The Search query filters with this so it pulls a *superset*: no entry a
+        (possibly tighter) per-method Stage-3 cap would keep is ever missed at Stage 1.
+        """
+        return max(self.method_resolution_cap(m) for m in self.experimental_methods)
 
     def canonical_dict(self) -> dict[str, Any]:
         """JSON-mode dump of the output-affecting settings (for hashing/manifests).
