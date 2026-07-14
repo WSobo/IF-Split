@@ -201,6 +201,9 @@ def build_manifest(
             "n_raw_clusters": clusters.n_raw_clusters,
             "multichain_entries": len(clusters.multichain_entries),
             "unclustered_entries": len(clusters.unclustered_entries),
+            "structural_method": clusters.structural_method,
+            "n_seq_only_components": clusters.n_seq_only_components,
+            "structural_bridging_families": clusters.n_structural_families,
         },
         "splits": {
             "entry_counts": dict(sorted(splits.counts.items())),
@@ -522,6 +525,15 @@ def summarize_manifest(manifest_path: str | Path) -> int:
         f"components={cl['n_clusters']} (from {cl.get('n_raw_clusters', '?')} raw)  "
         f"multichain={cl['multichain_entries']}"
     )
+    smethod = cl.get("structural_method", "off")
+    if smethod != "off":
+        seq_only = cl.get("n_seq_only_components", cl["n_clusters"])
+        merged = seq_only - cl["n_clusters"]
+        print(
+            f"    fold-leakage control: {smethod}  "
+            f"seq-only components={seq_only} -> {cl['n_clusters']} "
+            f"({merged} folded by {cl.get('structural_bridging_families', 0)} shared superfamilies)"
+        )
     sp = m["splits"]
     print("  splits (entries / components):")
     for s in ("train", "val", "test"):

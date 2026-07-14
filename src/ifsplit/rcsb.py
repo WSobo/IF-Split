@@ -52,6 +52,10 @@ _RETRY_STATUS = {429, 500, 502, 503, 504}
 #     says the PROTEIN is a native Ni/Co metalloenzyme — a positive gate that rescues
 #     a lone Ni/Co the His-tag heuristic would otherwise demote (Stage 4). All from
 #     RCSB, so no separate UniProt dependency and it rides in the locked snapshot.
+#   - rcsb_polymer_instance_annotation (CATH/ECOD/SCOP2, per chain): RCSB's
+#     precomputed structural classification. The homologous-superfamily key it
+#     carries lets Stage 5 union same-fold entities across sequence clusters for
+#     fold-level leakage control — still metadata, no coordinates.
 _ENTRY_QUERY = """
 query($ids: [String!]!) {
   entries(entry_ids: $ids) {
@@ -84,6 +88,9 @@ query($ids: [String!]!) {
       }
       rcsb_cluster_membership { cluster_id identity }
       rcsb_polymer_entity_annotation { type name }
+      polymer_entity_instances {
+        rcsb_polymer_instance_annotation { type annotation_id name }
+      }
     }
     nonpolymer_entities {
       nonpolymer_comp { chem_comp { id name formula type } }

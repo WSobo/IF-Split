@@ -47,6 +47,32 @@ def metal_symbols_in_annotation(name: str | None) -> set[str]:
     return {GENERIC_METAL} if "metal" in n else set()
 
 
+# Structural-classification methods for fold-level leakage control (Stage 5).
+# CATH's annotation_id IS the homologous-superfamily code (e.g. "1.10.490.10"), a
+# ready-made grouping key. ECOD/SCOP2 expose a per-domain annotation_id, so we key
+# on the (super)family *name* they carry ("Bcl-2", "Globin-like") instead.
+STRUCTURAL_METHODS = ("cath", "ecod", "scop2")
+
+
+def structural_families_from_instances(instances) -> dict[str, list[str]]:
+    """Per-method structural (super)family keys across an entity's chain instances.
+
+    Returns e.g. ``{"cath": ["1.10.490.10"], "scop2": ["Globin-like"]}``; only
+    non-empty methods are included. A multi-domain chain contributes several keys.
+    """
+    fams: dict[str, set[str]] = {m: set() for m in STRUCTURAL_METHODS}
+    for inst in instances or []:
+        for ann in inst.get("rcsb_polymer_instance_annotation") or []:
+            atype = ann.get("type")
+            if atype == "CATH" and ann.get("annotation_id"):
+                fams["cath"].add(ann["annotation_id"])
+            elif atype == "ECOD" and ann.get("name"):
+                fams["ecod"].add(ann["name"])
+            elif atype == "SCOP2" and ann.get("name"):
+                fams["scop2"].add(ann["name"])
+    return {m: sorted(v) for m, v in fams.items() if v}
+
+
 class PolymerEntity(BaseModel):
     model_config = ConfigDict(extra="forbid")
 
@@ -62,6 +88,13 @@ class PolymerEntity(BaseModel):
     # "metal ion binding" term. Empty when no metal annotation exists. Stage 4 uses
     # it to rescue native Ni/Co metalloenzymes from the purification-artifact demotion.
     metal_annotations: list[str] = []
+    # Structural (super)family keys per classification method, e.g.
+    # {"cath": ["1.10.490.10"], "ecod": ["Bcl-2"], "scop2": ["Globin-like"]}.
+    # Captured from RCSB's per-instance structural annotations (metadata, no
+    # coordinates). Stage 5 uses the config-selected method to union entities that
+    # share a fold. A multi-domain chain carries several families (one per domain).
+    # Only non-empty methods are stored; empty for non-protein / unclassified chains.
+    structural_families: dict[str, list[str]] = {}
 
     @property
     def is_protein(self) -> bool:
@@ -198,6 +231,7 @@ class CandidateRecord(BaseModel):
             metal_annots: set[str] = set()
             for ann in p.get("rcsb_polymer_entity_annotation") or []:
                 metal_annots |= metal_symbols_in_annotation(ann.get("name"))
+            structural = structural_families_from_instances(p.get("polymer_entity_instances"))
             polymers.append(
                 PolymerEntity(
                     entity_id=p["rcsb_id"],  # verbatim
@@ -206,6 +240,7 @@ class CandidateRecord(BaseModel):
                     seq=seq,
                     cluster_ids=cluster_ids,
                     metal_annotations=sorted(metal_annots),
+                    structural_families=structural,
                 )
             )
         polymers.sort(key=lambda e: e.entity_id)
