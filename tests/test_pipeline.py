@@ -442,3 +442,35 @@ def test_structural_clustering_keeps_split_leakage_safe():
     res = assign_splits(cr, cfg)
     check_no_leakage(res, cr)
     assert len(set(res.entry_split.values())) == 1  # same fold -> same split
+
+
+def test_balanced_strategy_caps_dominant_fold_and_balances_entries():
+    # 400 entries share one dominant cluster (a mega-fold); 200 are singletons.
+    # Per-component hashing would let the 400-entry fold balloon a split; balanced
+    # caps it to train and fills val/test to their ENTRY targets from the tail.
+    cfg = _cfg(split_strategy="balanced")
+    recs = [_protein_record(f"D{i:04d}", [1]) for i in range(400)]
+    recs += [_protein_record(f"S{i:04d}", [1000 + i]) for i in range(200)]
+    kept, _ = filter_candidates(recs, cfg)
+    cr = build_clusters(kept, cfg)
+    res = assign_splits(cr, cfg)
+    check_no_leakage(res, cr)
+    assert res.strategy == "balanced"
+    assert res.capped_folds == 1  # the 400-entry fold -> train
+    c = res.counts
+    assert (c["train"], c["val"], c["test"]) == (480, 60, 60)  # 80/10/10 by entries
+    assert not res.balance_gaps
+
+
+def test_balanced_strategy_reports_thin_tail_gap():
+    # Almost everything in one fold: the tail can't fill val+test to 10% each.
+    # The gap is reported, not forced (never breaks leakage safety to hit a target).
+    cfg = _cfg(split_strategy="balanced")
+    recs = [_protein_record(f"D{i:04d}", [1]) for i in range(580)]
+    recs += [_protein_record(f"S{i:04d}", [1000 + i]) for i in range(20)]
+    kept, _ = filter_candidates(recs, cfg)
+    cr = build_clusters(kept, cfg)
+    res = assign_splits(cr, cfg)
+    check_no_leakage(res, cr)
+    assert res.balance_gaps  # tail too thin -> reported
+    assert "val" in res.balance_gaps

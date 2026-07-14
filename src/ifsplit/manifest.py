@@ -206,6 +206,9 @@ def build_manifest(
             "structural_bridging_families": clusters.n_structural_families,
         },
         "splits": {
+            "strategy": splits.strategy,
+            "capped_folds": splits.capped_folds,
+            "balance_gaps": dict(sorted(splits.balance_gaps.items())),
             "entry_counts": dict(sorted(splits.counts.items())),
             "cluster_counts": dict(sorted(splits.cluster_counts.items())),
             "per_split_class_counts": per_split_class_counts,
@@ -535,6 +538,13 @@ def summarize_manifest(manifest_path: str | Path) -> int:
             f"({merged} folded by {cl.get('structural_bridging_families', 0)} shared superfamilies)"
         )
     sp = m["splits"]
+    strat = sp.get("strategy", "hash")
+    if strat != "hash":
+        extra = f", {sp.get('capped_folds', 0)} dominant folds -> train"
+        gaps = sp.get("balance_gaps") or {}
+        if gaps:
+            extra += f"; TAIL TOO THIN, val/test short by {gaps}"
+        print(f"  split strategy: {strat}{extra}")
     print("  splits (entries / components):")
     for s in ("train", "val", "test"):
         ec = sp["entry_counts"].get(s, 0)

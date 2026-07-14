@@ -59,16 +59,33 @@ with no classification simply contributes no structural edge. `if-split stats`
 reports how many components the structural pass folded together, so the effect is
 always measurable (`scripts/eval_structural_clustering.py` compares the methods).
 
-**Opt-in (`off` by default), for now.** At full-PDB scale the dominant
-superfamilies (antibodies, TIM barrels) fold into mega-components that land
-wholesale in one split, skewing the *entry*-level balance to ~95/3/2 (the
-*component*-level split stays ~80/10/10). Enabling it yields a **smaller but
-fold-honest** test set — folds held out of train entirely, a truer generalization
-measure — but the lopsided entry counts make it a deliberate choice rather than a
-silent default until the split is made balance-aware (drawing val/test from the
-fold *tail* — [issue #9](https://github.com/WSobo/IF-Split/issues/9)). Coverage is
-partial by nature: CATH ≈ 55%, ECOD ≈ 81%, SCOP2 ≈ 52% of protein chains are
-classified; the rest fall back to sequence-only.
+Coverage is partial by nature: CATH ≈ 55%, ECOD ≈ 81%, SCOP2 ≈ 52% of protein
+chains are classified (measured on the full 2026-05-31 snapshot); the rest fall
+back to sequence-only.
+
+**Why it needs a balance-aware split.** On its own, fold-merging collapses the
+dominant superfamilies (antibodies, TIM barrels) into mega-components that land
+wholesale in one split, skewing the *entry* balance to ~95/3/2 (the *component*
+split stays ~80/10/10). `split_strategy: "balanced"` fixes this: it **caps the
+dominant folds to train and fills val/test to their entry targets from the tail of
+smaller folds** — restoring ~80/10/10 by entries with thousands of distinct,
+held-out folds per split. It stays leakage-safe (whole components) and
+growth-stable (via the registry), and reports a gap if a method's tail is too thin
+(`cath`/`ecod` starve val; **`scop2` is the sweet spot**). `balanced` also fixes
+the plain sequence-only skew (88/6/6 → 80/10/10) from the antibody mega-cluster.
+
+### The masterclass split
+
+```bash
+uv run if-split build --config config/masterclass.yaml --out data/mc
+```
+
+`config/masterclass.yaml` = default **+ `structural_clustering: scop2` + `split_strategy: balanced`**: a fold-honest ~80/10/10 split whose val/test are thousands of folds held entirely out of train — the truest generalization measure the tool can produce, still from metadata alone.
+
+| split | strategy | structural | entry balance | val/test |
+|---|---|---|--:|---|
+| default | hash | off | 88 / 6 / 6 | sequence-clustered |
+| masterclass | balanced | scop2 | 80 / 10 / 10 | thousands of held-out folds |
 
 ---
 

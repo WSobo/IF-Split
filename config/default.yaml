@@ -36,6 +36,9 @@ identity_threshold: 0.30           # clustering cutoff (Data API levels: 30/50/7
 clustering_backend: "precomputed"  # "precomputed" (reuse RCSB clusters) | "mmseqs2" (run our own)
 structural_clustering: "off"       # fold-leakage control: off | cath | ecod | scop2 (opt-in; see README)
 split_fractions: {train: 0.80, val: 0.10, test: 0.10}
+split_strategy: "hash"             # "hash" (balance components) | "balanced" (balance entries: cap
+                                   # dominant folds to train, fill val/test from the fold tail).
+                                   # For the fold-honest "masterclass" split see config/masterclass.yaml.
 split_salt: "snapsplit-v1"         # bump to reshuffle intentionally
 seed: 0
 

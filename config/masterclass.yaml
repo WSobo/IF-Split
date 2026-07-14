@@ -1,0 +1,48 @@
+# IF-Split "masterclass" config — a fold-honest split for inverse-folding training.
+#
+# Same as config/default.yaml, but two settings turn on the strongest leakage
+# control the tool offers:
+#   structural_clustering: "scop2"  — merge same-fold chains (CATH/ECOD/SCOP2
+#     classifications, metadata only) so a fold cannot straddle train/test, not
+#     just a sequence cluster. scop2 is chosen for coverage + balance: on the full
+#     PDB it leaves a rich enough fold tail to still balance val/test (cath/ecod
+#     collapse into one dominant mega-fold and starve val — see the README).
+#   split_strategy: "balanced"      — cap the dominant folds (antibodies, TIM
+#     barrels) to train and fill val/test to their ENTRY targets from the tail of
+#     smaller folds. Restores ~80/10/10 by entries with thousands of distinct,
+#     held-out folds in val/test — a truer generalization measure.
+#
+# Build it:  uv run if-split build --config config/masterclass.yaml --out data/mc
+# `if-split stats` reports the fold-merge effect, the capped folds, and any gap.
+
+snapshot_date: "2026-05-30"        # release_date <= this. The reproducibility anchor.
+experimental_methods: ["X-RAY DIFFRACTION", "ELECTRON MICROSCOPY"]
+resolution_max_A: 3.5
+max_total_residues: 5999
+excluded_het: ["HOH", "NA", "CL", "K", "BR"]
+use_biological_assembly: true
+
+purification_metals: ["NI", "CO"]
+histag_min_run: 6
+histag_terminal_min_run: 3
+exclude_purification_artifacts: true
+
+identity_threshold: 0.30
+clustering_backend: "precomputed"
+structural_clustering: "scop2"     # fold-level leakage control (the masterclass lever)
+split_fractions: {train: 0.80, val: 0.10, test: 0.10}
+split_strategy: "balanced"         # entry-balanced, fold-tail val/test
+split_salt: "snapsplit-v1"
+seed: 0
+
+test_min_per_class: {}
+
+max_clashscore: null
+max_rfree: null
+max_ramachandran_outlier_pct: null
+max_rotamer_outlier_pct: null
+max_rsrz_outlier_pct: null
+require_validation_report: false
+
+ligand_context_radius_A: 8.0
+max_ligand_atoms: 25
