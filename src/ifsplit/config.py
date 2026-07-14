@@ -97,6 +97,24 @@ class Config(BaseModel):
     # "precomputed": reuse RCSB's entity clusters (default, no external binary).
     # "mmseqs2": run our own over the snapshot's sequences.
     clustering_backend: Literal["precomputed", "mmseqs2"] = "precomputed"
+    # Fold-level leakage control (Stage 5). Sequence clustering alone misses
+    # structural redundancy: two chains under the identity threshold can still be
+    # the same fold, which an inverse-folding model (structure -> sequence) would
+    # leak across splits. When set, protein entities sharing a structural
+    # (super)family are union-merged into the same component in ADDITION to shared
+    # sequence clusters — so the same fold cannot straddle train/test. Metadata
+    # only (RCSB's precomputed classifications; no coordinates). "cath" keys on the
+    # homologous-superfamily code (e.g. 1.10.490.10); "ecod"/"scop2" key on the
+    # (super)family name. "off" = sequence-only (prior behavior). Purely additive:
+    # it can only merge components, never split them, and chains lacking the chosen
+    # classification simply add no structural edge. Off by default: fold-merging
+    # the dominant superfamilies (antibodies, TIM barrels) collapses them into
+    # mega-components that land wholesale in one split, skewing the ENTRY-level
+    # train/val/test balance (~95/3/2 at superfamily grain) even though the
+    # COMPONENT-level split stays ~80/10/10. It is an opt-in rigor knob until the
+    # split is made balance-aware (issue #9); enabling it yields a smaller but
+    # fold-honest test set (folds held out of train entirely).
+    structural_clustering: Literal["off", "cath", "ecod", "scop2"] = "off"
     split_fractions: SplitFractions
     split_salt: str = Field(min_length=1)
     seed: int = Field(ge=0)

@@ -369,3 +369,76 @@ def test_independent_clusters_can_differ_and_check_passes():
     assert cr.n_clusters == 2
     res = assign_splits(cr, cfg)
     check_no_leakage(res, cr)  # passes regardless of which splits they land in
+
+
+def _fold_record(entry_id: str, cluster30: int, families: dict[str, list[str]]) -> CandidateRecord:
+    """Single-chain record in raw cluster ``cluster30`` carrying structural ``families``."""
+    pe = PolymerEntity(
+        entity_id=f"{entry_id}_1",
+        polymer_type="Protein",
+        seq_len=100,
+        seq="A" * 100,
+        cluster_ids={30: cluster30},
+        structural_families=families,
+    )
+    return CandidateRecord(
+        entry_id=entry_id,
+        methods=["X-RAY DIFFRACTION"],
+        resolution_A=2.0,
+        release_date="2020-01-01",
+        deposited_residues=100,
+        assemblies={f"{entry_id}-1": 100},
+        polymer_entities=[pe],
+        nonpolymer_comps=[],
+        bound_components=[],
+        affinity_comp_ids=[],
+    )
+
+
+def test_structural_clustering_merges_same_fold():
+    # Two entries in DIFFERENT sequence clusters (10, 20) but the same CATH
+    # superfamily. Sequence-only leaves them separable (a fold-leakage risk);
+    # cath clustering folds them into one leakage-safe component.
+    recs = [
+        _fold_record("AAA1", 10, {"cath": ["1.10.490.10"]}),
+        _fold_record("BBB2", 20, {"cath": ["1.10.490.10"]}),
+    ]
+    cfg = _cfg(structural_clustering="cath")
+    kept, _ = filter_candidates(recs, cfg)
+    cr = build_clusters(kept, cfg)
+    assert cr.n_raw_clusters == 2
+    assert cr.n_seq_only_components == 2  # sequence edges alone: two components
+    assert cr.n_clusters == 1  # ... folded into one by the shared superfamily
+    assert cr.structural_method == "cath"
+    assert cr.n_structural_families == 1
+
+    # Off -> prior behavior, two separate components.
+    cr_off = build_clusters(kept, _cfg(structural_clustering="off"))
+    assert cr_off.n_clusters == 2
+    assert cr_off.structural_method == "off"
+
+
+def test_structural_method_is_selectable():
+    # Same ECOD family name but different CATH codes: 'cath' keeps them apart,
+    # 'ecod' merges them. The classification method is the config's to choose.
+    recs = [
+        _fold_record("AAA1", 10, {"cath": ["1.10.1.1"], "ecod": ["Globin-like"]}),
+        _fold_record("BBB2", 20, {"cath": ["2.20.2.2"], "ecod": ["Globin-like"]}),
+    ]
+    kept, _ = filter_candidates(recs, _cfg())
+    assert build_clusters(kept, _cfg(structural_clustering="cath")).n_clusters == 2
+    assert build_clusters(kept, _cfg(structural_clustering="ecod")).n_clusters == 1
+
+
+def test_structural_clustering_keeps_split_leakage_safe():
+    # A fold shared across two entries must land in ONE split, never straddle.
+    recs = [
+        _fold_record("AAA1", 10, {"cath": ["1.10.490.10"]}),
+        _fold_record("BBB2", 20, {"cath": ["1.10.490.10"]}),
+    ]
+    cfg = _cfg(structural_clustering="cath")
+    kept, _ = filter_candidates(recs, cfg)
+    cr = build_clusters(kept, cfg)
+    res = assign_splits(cr, cfg)
+    check_no_leakage(res, cr)
+    assert len(set(res.entry_split.values())) == 1  # same fold -> same split

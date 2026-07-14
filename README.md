@@ -27,6 +27,7 @@ records and sequences. Coordinates are an optional, downstream concern.
 | **Reproducible** | A `dataset.lock` pins the snapshot; `verify` re-derives it and reports any drift. |
 | **Cheap** | Metadata-only — a split is megabytes of JSON, not a terabyte of mmCIF. |
 | **Honest about quality** | Every ligand is tiered (`functional` / `ambiguous` / `artifact`) with a reason; nothing is silently dropped. |
+| **Fold-aware** | Controls *structural* leakage, not just sequence: same-fold chains can't straddle train/test — the leak that matters most for structure→sequence models. |
 
 ### Two reproducibility guarantees
 
@@ -40,6 +41,34 @@ records and sequences. Coordinates are an optional, downstream concern.
    grows, which is what prevents train/test leakage on regeneration. A
    `splits.registry.json` pins prior assignments to make this exact even across
    re-clustering.
+
+### Fold-level leakage control
+
+Sequence clustering alone is not enough for inverse folding. A model learns
+**structure → sequence**, so two chains below the 30% identity threshold that
+nonetheless share a **fold** (TIM barrels, Rossmann folds, globins…) leak
+structural information across the split — the model has effectively seen the test
+backbone during training. `structural_clustering` closes this: protein entities
+sharing a structural **(super)family** are union-merged into the same component in
+addition to shared sequence clusters, so a fold cannot straddle train/test.
+
+It uses RCSB's precomputed **CATH / ECOD / SCOP2** classifications — still metadata
+only, no coordinates — selectable per build (`off | cath | ecod | scop2`). It is
+**purely additive**: it can only merge components, never split them, and a chain
+with no classification simply contributes no structural edge. `if-split stats`
+reports how many components the structural pass folded together, so the effect is
+always measurable (`scripts/eval_structural_clustering.py` compares the methods).
+
+**Opt-in (`off` by default), for now.** At full-PDB scale the dominant
+superfamilies (antibodies, TIM barrels) fold into mega-components that land
+wholesale in one split, skewing the *entry*-level balance to ~95/3/2 (the
+*component*-level split stays ~80/10/10). Enabling it yields a **smaller but
+fold-honest** test set — folds held out of train entirely, a truer generalization
+measure — but the lopsided entry counts make it a deliberate choice rather than a
+silent default until the split is made balance-aware (drawing val/test from the
+fold *tail* — [issue #9](https://github.com/WSobo/IF-Split/issues/9)). Coverage is
+partial by nature: CATH ≈ 55%, ECOD ≈ 81%, SCOP2 ≈ 52% of protein chains are
+classified; the rest fall back to sequence-only.
 
 ---
 
@@ -159,7 +188,7 @@ A `build` runs eight stages; none touch coordinates.
 | 1 — enumerate | `enumerate.py`, `rcsb.py` | RCSB Search → entry IDs; Data API (GraphQL, batched) → sequences, ligands, residue counts, cluster membership → `candidates.jsonl`. |
 | 3 — filter | `parse.py` | Drop no-protein / no-sequence / oversized entries (assembly-1 residue count vs `max_total_residues`), plus optional wwPDB validation-report quality caps (clashscore, R-free, Ramachandran/rotamer/RSRZ) — all from metadata. Every drop is logged with its reason. |
 | 4 — ligands | `ligands.py` | Tier each non-protein component `functional`/`ambiguous`/`artifact`; derive class labels (metal / small-molecule / nucleic-acid). `nucleic_acid` = a protein↔DNA/RNA *complex* (verified assembly interface), **not** a bound mononucleotide. **Annotate, never drop.** |
-| 5 — cluster | `cluster.py` | Group protein entities by RCSB precomputed cluster id at `identity_threshold`; canonical key = smallest member id. |
+| 5 — cluster | `cluster.py` | Group protein entities by RCSB precomputed cluster id at `identity_threshold`; canonical key = smallest member id. Optionally union same-fold entities (CATH/ECOD/SCOP2) for structural-leakage control. |
 | 6 — split | `split.py` | Deterministic hash → train/val/test; assert no cluster spans two splits; audit residual secondary-chain overlap. |
 | 7 — manifest | `manifest.py` | Emit lock + manifest + registry (all deterministic, no wall-clock fields). |
 | 8 — loader | `dataset.py` | Read a manifest into train/val/test views with cluster-balanced sampling. |

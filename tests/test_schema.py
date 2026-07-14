@@ -2,13 +2,49 @@
 
 from __future__ import annotations
 
+from copy import deepcopy
+
 from ifsplit.schema import (
     CandidateRecord,
     canonical_jsonl_bytes,
     metal_symbols_in_annotation,
     read_candidates_jsonl,
     sha256_hex,
+    structural_families_from_instances,
 )
+
+
+def test_structural_families_from_instances():
+    instances = [
+        {
+            "rcsb_polymer_instance_annotation": [
+                {"type": "CATH", "annotation_id": "1.10.490.10", "name": "Globins"},
+                {"type": "ECOD", "annotation_id": "e101mA1", "name": "Bcl-2"},
+                {"type": "SCOP2", "annotation_id": "8035604", "name": "Globin-like"},
+                {"type": "Pfam", "annotation_id": "PF00042", "name": "Globin"},  # ignored
+            ]
+        }
+    ]
+    fams = structural_families_from_instances(instances)
+    assert fams["cath"] == ["1.10.490.10"]  # CATH keyed on the superfamily code
+    assert fams["ecod"] == ["Bcl-2"]  # ECOD keyed on the family name
+    assert fams["scop2"] == ["Globin-like"]  # SCOP2 keyed on the family name
+    assert "pfam" not in fams  # non-structural annotations are not grouped on
+    assert structural_families_from_instances(None) == {}
+    assert structural_families_from_instances([]) == {}
+
+
+def test_structural_families_roundtrip_through_data_api(sample_entries):
+    # A parsed record carries per-method structural families when instances have them.
+    entry = deepcopy(sample_entries["4HHB"])
+    for pe in entry["polymer_entities"]:
+        pe["polymer_entity_instances"] = [
+            {"rcsb_polymer_instance_annotation": [{"type": "CATH", "annotation_id": "1.10.490.10"}]}
+        ]
+    rec = CandidateRecord.from_data_api(entry)
+    assert rec.polymer_entities[0].structural_families.get("cath") == ["1.10.490.10"]
+    # Deterministic serialization includes the new field.
+    assert "structural_families" in rec.to_canonical_json()
 
 
 def test_from_data_api_core_fields(sample_entries):

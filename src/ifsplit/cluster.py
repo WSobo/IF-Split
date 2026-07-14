@@ -20,6 +20,16 @@ itself a min-entity-id - so min-of-mins = global min.) Keying the split hash on 
 stable member id, not RCSB's volatile integer cluster id, keeps assignments
 stable as the dataset grows (PLAN.md §6). Sub-10-aa peptides that RCSB does not
 cluster become their own singleton components.
+
+**Fold-level leakage control (opt-in via ``structural_clustering``).** Sequence
+clustering alone misses structural redundancy: two chains below the identity
+threshold can be the same fold, which an inverse-folding model (structure ->
+sequence) would leak across splits. When enabled, raw clusters whose entities
+share a structural (super)family - from RCSB's precomputed CATH/ECOD/SCOP2
+annotations, metadata only - are union-merged too, so the same fold cannot
+straddle train/test. It is purely additive (only merges, never splits) and
+degrades gracefully: a chain with no classification simply adds no structural
+edge.
 """
 
 from __future__ import annotations
@@ -43,6 +53,14 @@ class ClusterResult:
     multichain_entries: list[str] = field(default_factory=list)
     unclustered_entries: list[str] = field(default_factory=list)
     n_raw_clusters: int = 0
+    # Fold-level leakage control (Stage 5). "off" when disabled; otherwise the
+    # classification method used. n_seq_only_components is the component count from
+    # sequence edges alone, so (n_seq_only_components - n_clusters) is how many
+    # components structural merging folded together. n_structural_families counts
+    # the distinct (super)families that actually bridged >=2 sequence clusters.
+    structural_method: str = "off"
+    n_seq_only_components: int = 0
+    n_structural_families: int = 0
 
     @property
     def n_clusters(self) -> int:
@@ -69,11 +87,15 @@ def build_clusters(records: list[CandidateRecord], cfg: Config) -> ClusterResult
     raw_key = {cid: min(ents) for cid, ents in raw_entities.items()}
 
     # 2. Each entry -> the raw cluster keys it touches (a singleton key if no
-    #    protein chain is clustered at this level).
+    #    protein chain is clustered at this level). Also record each protein
+    #    entity's raw key, so structural families (step 3b) can be attached to the
+    #    same union-find nodes the sequence clusters use.
+    method = cfg.structural_clustering
     entry_raw: dict[str, list[str]] = {}
     multichain: list[str] = []
     unclustered: list[str] = []
     all_keys: set[str] = set(raw_key.values())
+    family_raw: dict[str, set[str]] = {}  # structural family -> raw keys sharing it
     for r in records:
         proteins = [e for e in r.polymer_entities if e.is_protein]
         if not proteins:
@@ -87,6 +109,14 @@ def build_clusters(records: list[CandidateRecord], cfg: Config) -> ClusterResult
         elif len(keys) > 1:
             multichain.append(r.entry_id)
         entry_raw[r.entry_id] = keys
+        if method != "off":
+            for e in proteins:
+                fams = e.structural_families.get(method)
+                if not fams:
+                    continue
+                rk = raw_key[e.cluster_ids[level]] if level in e.cluster_ids else keys[0]
+                for fam in fams:
+                    family_raw.setdefault(fam, set()).add(rk)
 
     # 3. Union-find: merge raw clusters joined by a shared entry into components.
     #    The smaller key is always made the root, so a component's root is its
@@ -111,6 +141,18 @@ def build_clusters(records: list[CandidateRecord], cfg: Config) -> ClusterResult
         for k in keys[1:]:
             union(keys[0], k)
 
+    # 3b. Structural edges: union raw clusters that share a fold (homologous
+    #     superfamily). Sequence-only components are counted first so the manifest
+    #     can report how many the structural pass folded together. Purely additive.
+    n_seq_only = len({find(k) for k in all_keys})
+    n_bridging_families = 0
+    for fam in sorted(family_raw):
+        rks = sorted(family_raw[fam])
+        if len({find(k) for k in rks}) > 1:
+            n_bridging_families += 1
+        for k in rks[1:]:
+            union(rks[0], k)
+
     # 4. Materialize components: component key -> entries; entry -> component.
     entry_to_cluster: dict[str, str] = {}
     members: dict[str, set[str]] = {}
@@ -127,4 +169,7 @@ def build_clusters(records: list[CandidateRecord], cfg: Config) -> ClusterResult
         multichain_entries=sorted(multichain),
         unclustered_entries=sorted(unclustered),
         n_raw_clusters=len(raw_key),
+        structural_method=method,
+        n_seq_only_components=n_seq_only,
+        n_structural_families=n_bridging_families,
     )

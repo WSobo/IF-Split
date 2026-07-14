@@ -1,7 +1,7 @@
 {
   "candidates": {
     "count": 223408,
-    "sha256": "dbab8c50105ca6176c4bac65d3c376a970d50cf06b2367625f15ca0c6f2d5e0e"
+    "sha256": "4ef11ffeb88ad9dcf4fc18ba85c42571655798e2146c282abb3e2ffe3e17051a"
   },
   "clustering": {
     "backend": "precomputed",
@@ -9,6 +9,9 @@
     "multichain_entries": 38840,
     "n_clusters": 19589,
     "n_raw_clusters": 34224,
+    "n_seq_only_components": 19589,
+    "structural_bridging_families": 0,
+    "structural_method": "off",
     "unclustered_entries": 316
   },
   "config": {
@@ -50,10 +53,11 @@
       "val": 0.1
     },
     "split_salt": "snapsplit-v1",
+    "structural_clustering": "off",
     "test_min_per_class": {},
     "use_biological_assembly": true
   },
-  "config_hash": "3b63318286fd2ac4994f34d10936be05",
+  "config_hash": "15e55bfc5e068f74c2f9b9fd3d45b1d4",
   "dataset_version": "IF-Split-2026.05.31",
   "files": {
     "clusters": "clusters.json",
