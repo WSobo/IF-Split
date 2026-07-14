@@ -450,9 +450,12 @@ def verify_lock(lock_path: str | Path, *, client=None) -> int:
     locked = lock["candidates"]
     locked_ids = set(locked["entry_ids"])
     locked_sha = locked["sha256"]
+    locked_version = lock.get("if_split_version")
+    version_match = locked_version == __version__
 
     print(f"verifying {lock['dataset_version']} (config {cfg.config_hash()})")
     print(f"  locked: {locked['count']} entries, candidates sha256={locked_sha[:12]}...")
+    print(f"  if-split version: locked {locked_version}, running {__version__}")
 
     with tempfile.TemporaryDirectory() as tmp:
         records, _, sha = enumerate_candidates(
@@ -462,12 +465,34 @@ def verify_lock(lock_path: str | Path, *, client=None) -> int:
     now_ids = {r.entry_id for r in records}
     added = sorted(now_ids - locked_ids)
     removed = sorted(locked_ids - now_ids)  # obsoleted / withdrawn
+    candidates_match = sha == locked_sha and not added and not removed
 
-    if sha == locked_sha and not added and not removed:
-        print(f"OK: reproduced exactly ({len(records)} entries, hashes match).")
+    if candidates_match:
+        if version_match:
+            print(f"OK: reproduced exactly ({len(records)} entries, hashes + version match).")
+            return 0
+        # The candidate set (Stage 1) reproduced byte-for-byte, but the tool
+        # version moved. The lock pins the candidate set, NOT the split labels,
+        # which come from later curation code (Stages 4-6) and are version-
+        # specific. That is a caveat worth shouting about, but it is not data
+        # drift -- the thing the lock actually pins reproduced exactly -- so
+        # verify still succeeds. Issue #5 tracks closing this gap properly by
+        # hashing the split output into the lock (split_sha256).
+        print(f"OK: candidate set reproduced exactly ({len(records)} entries, hashes match).")
+        print(
+            f"  WARNING: if-split version differs (locked {locked_version}, running "
+            f"{__version__}). The lock pins the candidate set, not the split labels; "
+            "curation/split logic is version-specific, so the rebuilt SPLIT may differ. "
+            "Install the locked version to reproduce the split exactly."
+        )
         return 0
 
     print("DRIFT detected:")
+    if not version_match:
+        print(
+            f"  if-split version differs: locked {locked_version}, running {__version__} — "
+            "curation/split logic may differ; install the locked version to reproduce exactly."
+        )
     if sha != locked_sha:
         print(f"  candidates sha256 differs: now {sha[:12]}... vs locked {locked_sha[:12]}...")
     if removed:
