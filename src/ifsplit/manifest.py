@@ -3,8 +3,12 @@
 Artifacts written to the output dir:
 
 - ``dataset.lock``   - reproduction anchor: embedded config + canonical
-  ``candidates.jsonl`` hash + entry-id list. ``verify`` re-enumerates from it and
-  reports drift (added/removed entries, hash match), warning not failing.
+  ``candidates.jsonl`` hash + entry-id list, plus a ``split`` block hashing the
+  entry->split partition (``@2`` locks). ``verify`` re-enumerates from it and reports
+  candidate drift (added/removed entries, hash), and — when the candidate set
+  reproduced byte-for-byte — recomputes the split and certifies the split *output*
+  matches (registry-free builds), so a curation/split-logic change is caught even
+  when the inputs are identical.
 - ``manifest.json``  - small (~KB) provenance record: config, drop log, per-split
   + per-class counts, cluster/component stats, and a ``files`` index pointing at
   the data files below. No per-entry arrays, so it stays tiny at any scale. Built
@@ -36,7 +40,8 @@ from typing import Any
 from . import __version__
 from .config import Config
 
-LOCK_SCHEMA = "if-split/lock@1"
+LOCK_SCHEMA = "if-split/lock@2"  # @2 adds the optional `split` block (split_sha256)
+KNOWN_LOCK_SCHEMAS = frozenset({"if-split/lock@1", "if-split/lock@2"})
 MANIFEST_SCHEMA = "if-split/manifest@2"
 REGISTRY_SCHEMA = "if-split/registry@1"
 TIERS_SCHEMA = "if-split/tiers@1"
@@ -59,9 +64,18 @@ def build_lock(
     entry_ids: list[str],
     candidates_sha256: str,
     limit: int | None,
+    split_sha256: str | None = None,
+    registry_sha256: str | None = None,
+    split_strategy: str | None = None,
 ) -> dict[str, Any]:
-    """Assemble the lock document (pure; does not touch disk)."""
-    return {
+    """Assemble the lock document (pure; does not touch disk).
+
+    When ``split_sha256`` is given, a ``split`` block is added so ``verify`` can
+    certify the split *output* reproduced, not just the Stage-1 candidate inputs
+    (see :func:`ifsplit.split.split_fingerprint`). Omitted for candidate-only locks
+    (older ``@1`` locks and callers that build before the split exists).
+    """
+    lock: dict[str, Any] = {
         "lock_schema": LOCK_SCHEMA,
         "dataset_version": cfg.dataset_version,
         "if_split_version": __version__,
@@ -74,6 +88,13 @@ def build_lock(
             "entry_ids": sorted(entry_ids),
         },
     }
+    if split_sha256 is not None:
+        lock["split"] = {
+            "sha256": split_sha256,
+            "registry_sha256": registry_sha256,  # None for a registry-free build
+            "strategy": split_strategy,
+        }
+    return lock
 
 
 def _write_json(obj: dict[str, Any], path: Path, *, compact: bool = False) -> Path:
@@ -440,15 +461,20 @@ def read_tiers(path: str | Path) -> dict[str, dict]:
 # verify / stats commands
 # --------------------------------------------------------------------------- #
 def verify_lock(lock_path: str | Path, *, client=None) -> int:
-    """Re-enumerate from a lock's embedded config and report drift.
+    """Re-derive from a lock's embedded config and report drift.
 
-    Returns a process exit code: 0 = reproduced exactly, 1 = drift detected.
-    ``client`` is injectable for offline testing; production passes None.
+    Re-enumerates Stage 1 and compares the candidate set; if the candidate set
+    reproduces byte-for-byte AND the lock records a ``split`` hash (``@2`` locks),
+    it also recomputes Stages 3-6 and compares the split *output* — so a curation/
+    split-logic change is caught even when the inputs are identical. Returns a
+    process exit code: 0 = reproduced exactly (split certified when possible),
+    1 = drift (candidate set differs, or the split output changed). ``client`` is
+    injectable for offline testing; production passes None.
     """
     from .enumerate import enumerate_candidates
 
     lock = read_lock(lock_path)
-    if lock.get("lock_schema") != LOCK_SCHEMA:
+    if lock.get("lock_schema") not in KNOWN_LOCK_SCHEMAS:
         print(f"warning: unexpected lock_schema {lock.get('lock_schema')!r}")
 
     cfg = Config.model_validate(lock["config"])
@@ -458,6 +484,7 @@ def verify_lock(lock_path: str | Path, *, client=None) -> int:
     locked_sha = locked["sha256"]
     locked_version = lock.get("if_split_version")
     version_match = locked_version == __version__
+    locked_split = lock.get("split")  # None for @1 (candidate-only) locks
 
     print(f"verifying {lock['dataset_version']} (config {cfg.config_hash()})")
     print(f"  locked: {locked['count']} entries, candidates sha256={locked_sha[:12]}...")
@@ -473,42 +500,102 @@ def verify_lock(lock_path: str | Path, *, client=None) -> int:
     removed = sorted(locked_ids - now_ids)  # obsoleted / withdrawn
     candidates_match = sha == locked_sha and not added and not removed
 
-    if candidates_match:
-        if version_match:
-            print(f"OK: reproduced exactly ({len(records)} entries, hashes + version match).")
-            return 0
-        # The candidate set (Stage 1) reproduced byte-for-byte, but the tool
-        # version moved. The lock pins the candidate set, NOT the split labels,
-        # which come from later curation code (Stages 4-6) and are version-
-        # specific. That is a caveat worth shouting about, but it is not data
-        # drift -- the thing the lock actually pins reproduced exactly -- so
-        # verify still succeeds. Issue #5 tracks closing this gap properly by
-        # hashing the split output into the lock (split_sha256).
-        print(f"OK: candidate set reproduced exactly ({len(records)} entries, hashes match).")
+    # Candidate drift: report and fail. The split is NOT compared here — a
+    # grown/shrunk snapshot legitimately changes the split, so a split-hash check
+    # only makes sense once the candidate set reproduced byte-for-byte.
+    if not candidates_match:
+        print("DRIFT detected:")
+        if not version_match:
+            print(
+                f"  if-split version differs: locked {locked_version}, running {__version__} — "
+                "curation/split logic may differ; install the locked version to reproduce exactly."
+            )
+        if sha != locked_sha:
+            print(f"  candidates sha256 differs: now {sha[:12]}... vs locked {locked_sha[:12]}...")
+        if removed:
+            print(f"  {len(removed)} entries no longer present (obsoleted/withdrawn):")
+            print(f"    {', '.join(removed[:20])}{' ...' if len(removed) > 20 else ''}")
+        if added:
+            print(f"  {len(added)} new entries match the snapshot filters:")
+            print(f"    {', '.join(added[:20])}{' ...' if len(added) > 20 else ''}")
+        if not added and not removed:
+            print("  entry set unchanged, but per-entry metadata changed (see hash).")
+        return 1
+
+    # Candidate set reproduced byte-for-byte. If the lock records a split hash,
+    # certify the split OUTPUT directly by recomputing Stages 3-6 and comparing.
+    if locked_split and locked_split.get("sha256"):
+        return _verify_split(cfg, records, locked_split, version_match, locked_version)
+
+    # Legacy @1 lock (no split hash): fall back to the version-string caveat.
+    if version_match:
+        print(f"OK: reproduced exactly ({len(records)} entries, hashes + version match).")
+        return 0
+    print(f"OK: candidate set reproduced exactly ({len(records)} entries, hashes match).")
+    print(
+        f"  WARNING: if-split version differs (locked {locked_version}, running "
+        f"{__version__}). This lock predates split_sha256, so the split output is not "
+        "certified; curation/split logic is version-specific and the rebuilt split may "
+        "differ. Rebuild the lock with this version to certify the split, or install the "
+        "locked version."
+    )
+    return 0
+
+
+def _verify_split(cfg, records, locked_split, version_match, locked_version) -> int:
+    """Recompute the split from reproduced candidates and compare its fingerprint.
+
+    Called only when the candidate set already reproduced byte-for-byte, so any
+    difference here is a genuine split-output change (curation/split logic drift),
+    not snapshot growth. Recomputes registry-free — the build's conditions for a
+    registry-free lock; a lock whose split used a registry is reported as not
+    certifiable rather than compared against a registry-blind rebuild.
+    """
+    from .cluster import build_clusters
+    from .ligands import classify_components
+    from .parse import filter_candidates
+    from .split import assign_splits, split_fingerprint
+
+    if locked_split.get("registry_sha256") is not None:
+        print(f"OK: candidate set reproduced exactly ({len(records)} entries).")
         print(
-            f"  WARNING: if-split version differs (locked {locked_version}, running "
-            f"{__version__}). The lock pins the candidate set, not the split labels; "
-            "curation/split logic is version-specific, so the rebuilt SPLIT may differ. "
-            "Install the locked version to reproduce the split exactly."
+            "  NOTE: the build used a split registry, so the split output cannot be "
+            "certified without it (candidate set verified). Re-run against a "
+            "registry-free lock to certify the split."
         )
         return 0
 
+    kept, _ = filter_candidates(records, cfg)
+    class_map = {r.entry_id: classify_components(r, cfg) for r in kept}
+    clusters = build_clusters(kept, cfg)
+    splits = assign_splits(
+        clusters, cfg, entry_classes={e: i["classes"] for e, i in class_map.items()}
+    )
+    now_split = split_fingerprint(splits.entry_split)
+    locked_hash = locked_split["sha256"]
+
+    if now_split == locked_hash:
+        print(f"OK: reproduced exactly ({len(records)} entries; candidates + split verified).")
+        if not version_match:
+            print(
+                f"  (if-split version differs: locked {locked_version}, running {__version__}; "
+                "the split output is nonetheless byte-identical.)"
+            )
+        return 0
+
     print("DRIFT detected:")
+    print(
+        f"  split output differs: candidates are identical but the split hash changed "
+        f"(now {now_split[:12]}... vs locked {locked_hash[:12]}...)."
+    )
     if not version_match:
         print(
-            f"  if-split version differs: locked {locked_version}, running {__version__} — "
-            "curation/split logic may differ; install the locked version to reproduce exactly."
+            f"  if-split version differs (locked {locked_version}, running {__version__}); "
+            "the curation/split logic changed the assignment. Install the locked version "
+            "to reproduce the split exactly."
         )
-    if sha != locked_sha:
-        print(f"  candidates sha256 differs: now {sha[:12]}... vs locked {locked_sha[:12]}...")
-    if removed:
-        print(f"  {len(removed)} entries no longer present (obsoleted/withdrawn):")
-        print(f"    {', '.join(removed[:20])}{' ...' if len(removed) > 20 else ''}")
-    if added:
-        print(f"  {len(added)} new entries match the snapshot filters:")
-        print(f"    {', '.join(added[:20])}{' ...' if len(added) > 20 else ''}")
-    if not added and not removed:
-        print("  entry set unchanged, but per-entry metadata changed (see hash).")
+    else:
+        print("  same tool version — an uncommitted or local change altered the split logic.")
     return 1
 
 

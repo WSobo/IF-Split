@@ -355,13 +355,17 @@ Emit two artifacts in `data/out/`:
 - `manifest.json` — human-facing: snapshot_date, config hash, tool versions
   (mmseqs2, gemmi), per-split entry lists, per-structure metadata, ligand-class
   tags, per-class test counts, drop log.
-- `dataset.lock` — reproduction-facing: the two snapshot anchors. (1) every
-  entry ID + obsolescence status (the candidate set is reproduced from the Data
-  API by id + `release_date <= snapshot_date`); (2) the **cluster file**: its
-  SHA-256, RCSB `Last-Modified`, and a stored copy (≈17 MB, the only sizeable
-  artifact). `if-split verify dataset.lock` re-fetches metadata + cluster file
-  and confirms the cluster-file hash matches and the entry set is unchanged.
-  (mmCIF SHA-256s belong to the *optional* featurization fetch, not this lock.)
+- `dataset.lock` — reproduction-facing anchors: (1) the embedded config + the
+  **candidate set** — every entry ID and the canonical `candidates.jsonl` SHA-256
+  (the candidate set is reproduced from the Data API by id + `release_date <=
+  snapshot_date`; clustering rides along as per-entity `cluster_ids`, so there is
+  no separate cluster file); (2) a **`split` block** hashing the entry→split
+  partition (`@2` locks). `if-split verify dataset.lock` re-enumerates and reports
+  candidate drift (added/removed/hash); when the candidate set reproduced
+  byte-for-byte it recomputes Stages 3-6 and certifies the split-output hash
+  matches (registry-free builds), so a curation/split-logic change is caught even
+  with identical inputs. (mmCIF SHA-256s belong to the *optional* featurization
+  fetch, not this lock.)
 - Version the dataset as `IF-Split-<snapshot_date>` (e.g. `IF-Split-2026.05.30`).
 
 **Stage 8 — Loader (`dataset.py`)**

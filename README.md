@@ -24,7 +24,7 @@ records and sequences. Coordinates are an optional, downstream concern.
 | | |
 |---|---|
 | **Fresh** | Builds from the current PDB, not a years-old frozen copy. |
-| **Reproducible** | A `dataset.lock` pins the snapshot; `verify` re-derives it and reports any drift. |
+| **Reproducible** | A `dataset.lock` pins the snapshot **and the split output**; `verify` re-derives both and certifies they reproduced byte-for-byte (or reports exactly what drifted). |
 | **Cheap** | Metadata-only — a split is megabytes of JSON, not a terabyte of mmCIF. |
 | **Honest about quality** | Every ligand is tiered (`functional` / `ambiguous` / `artifact`) with a reason; nothing is silently dropped. |
 | **Fold-aware** | Controls *structural* leakage, not just sequence: same-fold chains can't straddle train/test — the leak that matters most for structure→sequence models. |
@@ -121,7 +121,8 @@ uv run if-split build --limit 50 --out /tmp/ifs
 # Summarize a build: split sizes, per-class test counts, curation tiers.
 uv run if-split stats data/out/manifest.json
 
-# Reproduce-check: re-derive from a lock and report drift vs the live PDB.
+# Reproduce-check: re-derive from a lock, report candidate drift vs the live PDB,
+# and (when candidates reproduce) certify the split output matches its hash.
 uv run if-split verify data/out/dataset.lock
 
 # Growth-stable regeneration: pin prior cluster→split assignments.
@@ -139,7 +140,7 @@ uv run if-split spec data/out/manifest.json --name my-split --out my-split.ifspl
 | File | Purpose |
 |---|---|
 | `candidates.jsonl` | The snapshot definition — one canonical JSON record per entry. Hashed into the lock. |
-| `dataset.lock` | Reproduction anchor: embedded config + candidates SHA-256 + entry list. |
+| `dataset.lock` | Reproduction anchor: embedded config + candidates SHA-256 + entry list + a `split` hash of the entry→split partition (so `verify` certifies the split output, not just the inputs). |
 | `manifest.json` | Human-facing run record: per-split entry lists, ligand classes + tiers, per-class (and ambiguous) counts, drop log, cluster/leakage stats, entry→cluster map. |
 | `splits.registry.json` | `cluster key → split`, for growth-stable regeneration. |
 
@@ -447,7 +448,7 @@ differ only in their labels produce byte-identical outputs.
 |---|---|--:|
 | `*.ifsplit.yaml` (or `config.yaml`) | *"How did you make this split?"* — the recipe | ~KB |
 | `manifest.json` | *"What's in it?"* — counts, provenance, file index | ~KB |
-| `dataset.lock` | *"Reproduce the exact bytes"* — pins entry set + candidates SHA | ~MB |
+| `dataset.lock` | *"Reproduce the exact bytes"* — pins entry set + candidates SHA + split-output hash | ~MB |
 
 ## Configuration
 

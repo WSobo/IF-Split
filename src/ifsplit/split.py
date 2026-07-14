@@ -51,6 +51,36 @@ def bucket(key: str, salt: str) -> float:
     return int.from_bytes(digest, "big") / 2**64
 
 
+def split_fingerprint(entry_split: dict[str, str]) -> str:
+    """Content hash of the ``entry_id -> split`` partition — the split *output*.
+
+    ``sha256`` over sorted ``"<entry_id>\\t<split>\\n"`` lines. This is the actual
+    deliverable (train/val/test membership), and it is pure ASCII: no float
+    formatting, JSON key ordering, or dict-insertion order to drift across
+    platforms — so the same partition always hashes identically. ``verify``
+    compares this to prove the split reproduced, not just its Stage-1 inputs.
+    Deliberately NOT the manifest (which stores only counts — two different
+    partitions can share counts).
+    """
+    body = "".join(f"{eid}\t{s}\n" for eid, s in sorted(entry_split.items()))
+    return hashlib.sha256(body.encode("utf-8")).hexdigest()
+
+
+def registry_fingerprint(registry: dict[str, str]) -> str | None:
+    """Hash of the split registry used at build time, or ``None`` if none was used.
+
+    The split is a function of (candidates, config, code, **registry**); the lock
+    pins the first three. Recording this lets ``verify`` distinguish a registry-free
+    build — which it can reproduce and certify — from a ``--registry`` build, which
+    it cannot without the same registry, so it reports *"not certified"* instead of
+    a false split drift.
+    """
+    if not registry:
+        return None
+    body = "".join(f"{k}\t{v}\n" for k, v in sorted(registry.items()))
+    return hashlib.sha256(body.encode("utf-8")).hexdigest()
+
+
 def split_for_key(key: str, cfg: Config) -> str:
     """Map a component key to a split via the cumulative fractions."""
     b = bucket(key, cfg.split_salt)
