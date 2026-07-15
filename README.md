@@ -59,8 +59,8 @@ with no classification simply contributes no structural edge. `if-split stats`
 reports how many components the structural pass folded together, so the effect is
 always measurable (`scripts/eval_structural_clustering.py` compares the methods).
 
-Coverage is partial by nature: CATH ≈ 55%, ECOD ≈ 81%, SCOP2 ≈ 52% of protein
-chains are classified (measured on the full 2026-05-31 snapshot); the rest fall
+Coverage is partial by nature: CATH ≈ 55%, ECOD ≈ 80%, SCOP2 ≈ 52% of protein
+chains are classified (measured on the full 2026-07-14 snapshot); the rest fall
 back to sequence-only.
 
 **Why it needs a balance-aware split.** On its own, fold-merging collapses the
@@ -444,7 +444,7 @@ spec:
   author: you
   created_with: if-split 0.3.0
   expected_config_hash: 3b63318286fd2ac4994f34d10936be05
-snapshot_date: '2026-05-31'
+snapshot_date: '2026-07-14'
 resolution_max_A: 3.5
 # ... all output-affecting settings ...
 ```

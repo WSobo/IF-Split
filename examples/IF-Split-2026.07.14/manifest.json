@@ -1,18 +1,18 @@
 {
   "candidates": {
-    "count": 223408,
-    "sha256": "4ef11ffeb88ad9dcf4fc18ba85c42571655798e2146c282abb3e2ffe3e17051a"
+    "count": 225106,
+    "sha256": "a6a2cb3298bc0247b55d9d828eff178f2a2b36ebc1808c69cf0dac7caa78d3e3"
   },
   "clustering": {
     "backend": "precomputed",
     "identity": 30,
-    "multichain_entries": 38840,
-    "n_clusters": 19574,
-    "n_raw_clusters": 34224,
-    "n_seq_only_components": 19574,
+    "multichain_entries": 39359,
+    "n_clusters": 19661,
+    "n_raw_clusters": 34419,
+    "n_seq_only_components": 19661,
     "structural_bridging_families": 0,
     "structural_method": "off",
-    "unclustered_entries": 301
+    "unclustered_entries": 303
   },
   "config": {
     "clustering_backend": "precomputed",
@@ -49,7 +49,7 @@
     "resolution_max_A": 3.5,
     "resolution_max_A_by_method": {},
     "seed": 0,
-    "snapshot_date": "2026-05-31",
+    "snapshot_date": "2026-07-14",
     "split_fractions": {
       "test": 0.1,
       "train": 0.8,
@@ -61,8 +61,8 @@
     "test_min_per_class": {},
     "use_biological_assembly": true
   },
-  "config_hash": "db8c3014641a53a3cf5507a4dfa4cd5d",
-  "dataset_version": "IF-Split-2026.05.31",
+  "config_hash": "9de0a1bfbe92249eadf01d263ac075f5",
+  "dataset_version": "IF-Split-2026.07.14",
   "files": {
     "clusters": "clusters.json",
     "ligand_classes": "ligands.classes.json",
@@ -81,12 +81,12 @@
   },
   "filter": {
     "drop_counts": {
-      "no_protein_entity": 3078,
+      "no_protein_entity": 3096,
       "no_protein_sequence": 15,
-      "too_large": 5550
+      "too_large": 5672
     },
-    "dropped": 8643,
-    "kept": 214765
+    "dropped": 8783,
+    "kept": 216323
   },
   "if_split_version": "0.3.0",
   "ligands": {
@@ -97,70 +97,70 @@
     "balance_gaps": {},
     "capped_folds": 0,
     "cluster_counts": {
-      "test": 1978,
-      "train": 15605,
-      "val": 1991
+      "test": 1992,
+      "train": 15676,
+      "val": 1993
     },
     "entry_counts": {
-      "test": 12392,
-      "train": 188650,
-      "val": 13723
+      "test": 12559,
+      "train": 189933,
+      "val": 13831
     },
     "per_split_ambiguous_counts": {
       "test": {
-        "metal": 184,
-        "nucleic_acid": 1,
-        "small_molecule": 728
+        "metal": 186,
+        "nucleic_acid": 2,
+        "small_molecule": 735
       },
       "train": {
-        "metal": 2276,
+        "metal": 2271,
         "nucleic_acid": 10,
-        "small_molecule": 14105
+        "small_molecule": 14220
       },
       "val": {
-        "metal": 582,
-        "small_molecule": 874
+        "metal": 585,
+        "small_molecule": 870
       }
     },
     "per_split_class_counts": {
       "test": {
-        "metal": 4110,
-        "nucleic_acid": 587,
-        "small_molecule": 6244
+        "metal": 4135,
+        "nucleic_acid": 593,
+        "small_molecule": 6356
       },
       "train": {
-        "metal": 56187,
-        "nucleic_acid": 9991,
-        "small_molecule": 92769
+        "metal": 56597,
+        "nucleic_acid": 10117,
+        "small_molecule": 93357
       },
       "val": {
-        "metal": 4064,
-        "nucleic_acid": 540,
-        "small_molecule": 6198
+        "metal": 4148,
+        "nucleic_acid": 556,
+        "small_molecule": 6302
       }
     },
     "strategy": "hash",
     "test_minimum_shortfalls": {}
   },
   "training": {
-    "n_backbones": 214765,
-    "n_conditioning_targets": 222279,
-    "n_optional_nonnative_targets": 18363,
+    "n_backbones": 216323,
+    "n_conditioning_targets": 224071,
+    "n_optional_nonnative_targets": 18504,
     "targets_per_split_class": {
       "test": {
-        "metal": 4624,
-        "nucleic_acid": 587,
-        "small_molecule": 9064
+        "metal": 4650,
+        "nucleic_acid": 593,
+        "small_molecule": 9174
       },
       "train": {
-        "metal": 66611,
-        "nucleic_acid": 9991,
-        "small_molecule": 118059
+        "metal": 67143,
+        "nucleic_acid": 10117,
+        "small_molecule": 118808
       },
       "val": {
-        "metal": 4990,
-        "nucleic_acid": 540,
-        "small_molecule": 7813
+        "metal": 5078,
+        "nucleic_acid": 556,
+        "small_molecule": 7952
       }
     }
   }

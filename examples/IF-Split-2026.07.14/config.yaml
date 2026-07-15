@@ -1,9 +1,9 @@
-# Config that produced the IF-Split-2026.05.31 example (full PDB, today's cutoff).
-# Identical to config/default.yaml except snapshot_date is pinned to 2026-05-31.
+# Config that produced the IF-Split-2026.07.14 example (full PDB, today's cutoff).
+# Identical to config/default.yaml except snapshot_date is pinned to 2026-07-14.
 # Quality caps left OFF here to show the baseline split; enable them to filter on
 # the wwPDB validation report (see README).
 
-snapshot_date: "2026-05-31"        # release_date <= this. The reproducibility anchor.
+snapshot_date: "2026-07-14"        # release_date <= this. The reproducibility anchor.
 experimental_methods: ["X-RAY DIFFRACTION", "ELECTRON MICROSCOPY"]
 resolution_max_A: 3.5
 resolution_max_A_by_method: {}     # baseline; one resolution cap for all methods
