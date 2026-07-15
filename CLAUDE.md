@@ -38,6 +38,7 @@ uv run ruff check .      # lint (must pass)
 uv run ruff format .     # format
 uv run if-split build --limit 50 --out /tmp/ifs   # dev build (small, live RCSB)
 uv run if-split build --config config/masterclass.yaml --out /tmp/mc  # fold-honest split (scop2 + balanced)
+uv run if-split resplit --candidates data/out/candidates.jsonl --config X.yaml --out /tmp/rs  # re-derive Stages 3-7 offline (no RCSB)
 ```
 
 - `uv sync` sets up the env; `uv sync --extra mlops` adds pyarrow for `fetch`'s
@@ -52,7 +53,9 @@ uv run if-split build --config config/masterclass.yaml --out /tmp/mc  # fold-hon
 `cluster.py` (5, union-find components: sequence + optional fold-level structural
 clustering) → `split.py` (6, split assignment: `hash` | `balanced`) →
 `manifest.py` (7, lock + manifest + registry, verify/stats) → `dataset.py` (8,
-loader). `download.py`+`hydrate.py` are the optional Stage 2 `fetch`.
+loader). `download.py`+`hydrate.py` are the optional Stage 2 `fetch`. `cli.py`'s
+`resplit` re-runs Stages 3-7 from a cached `candidates.jsonl` (no Stage 1) via the
+shared `_run_pipeline`; `verify --candidates` does the same for offline checking.
 
 Invariants that must not regress:
 - **Determinism:** same config → byte-identical `manifest.json` (no wall-clock

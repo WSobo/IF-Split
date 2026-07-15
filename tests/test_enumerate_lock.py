@@ -170,6 +170,87 @@ def test_verify_certifies_reproduced_split(tmp_path, fake_client, capsys):
     assert "split verified" in capsys.readouterr().out
 
 
+# --------------- offline verify + resplit (no RCSB) ------------------------ #
+def test_verify_offline_against_local_candidates(tmp_path, fake_client, capsys):
+    # A distributed candidates.jsonl + lock can be verified with NO network.
+    records, cand_path, sha = enumerate_candidates(_cfg(), tmp_path, client=fake_client)
+    lock_path = write_lock(_lock_with_split(_cfg(), records, sha), tmp_path)
+    assert verify_lock(lock_path, candidates_path=cand_path) == 0
+    out = capsys.readouterr().out
+    assert "offline" in out
+    assert "split verified" in out
+
+
+def test_verify_offline_detects_wrong_candidates(tmp_path, fake_client):
+    # A local candidates.jsonl that isn't the locked one -> drift (offline).
+    records, _, sha = enumerate_candidates(_cfg(), tmp_path, client=fake_client)
+    lock_path = write_lock(_lock_with_split(_cfg(), records, sha), tmp_path)
+    _, shrunk_path, _ = enumerate_candidates(_cfg(), tmp_path / "one", limit=1, client=fake_client)
+    assert verify_lock(lock_path, candidates_path=shrunk_path) == 1
+
+
+def test_resplit_warns_when_config_widens(tmp_path, fake_client, capsys):
+    # resplit re-derives a FIXED snapshot; a config that would enumerate more must warn.
+    from datetime import date
+
+    from ifsplit.cli import _warn_if_config_would_reenumerate
+
+    records, cand_path, sha = enumerate_candidates(_cfg(), tmp_path, client=fake_client)
+    write_lock(_lock_with_split(_cfg(), records, sha), tmp_path)  # lock beside candidates
+    wider = _cfg().model_copy(update={"snapshot_date": date(2099, 1, 1)})
+    _warn_if_config_would_reenumerate(wider, cand_path, sha)
+    assert "WARNING" in capsys.readouterr().out
+
+
+def test_resplit_notes_fixed_snapshot_without_lock(tmp_path, fake_client, capsys):
+    from ifsplit.cli import _warn_if_config_would_reenumerate
+
+    _records, cand_path, sha = enumerate_candidates(_cfg(), tmp_path, client=fake_client)
+    _warn_if_config_would_reenumerate(_cfg(), cand_path, sha)  # no lock beside candidates
+    assert "note:" in capsys.readouterr().out
+
+
+def test_resplit_guard_survives_malformed_lock(tmp_path, fake_client, capsys):
+    # A dataset.lock of valid JSON but the wrong shape (a bare list) must degrade to
+    # the generic caveat, never crash the purely-informational guard.
+    from ifsplit.cli import _warn_if_config_would_reenumerate
+
+    _records, cand_path, sha = enumerate_candidates(_cfg(), tmp_path, client=fake_client)
+    (tmp_path / "dataset.lock").write_text("[]", encoding="utf-8")
+    _warn_if_config_would_reenumerate(_cfg(), cand_path, sha)  # must not raise
+    assert "note:" in capsys.readouterr().out
+
+
+def test_verify_resplit_lock_online_is_refused(tmp_path, fake_client, capsys):
+    # A resplit-sourced lock can't be verified online (its config may not reproduce the
+    # cached snapshot) -> verify steers to offline and returns 2, never a false drift.
+    records, _, sha = enumerate_candidates(_cfg(), tmp_path, client=fake_client)
+    lock = _lock_with_split(_cfg(), records, sha)
+    lock["source"] = "resplit"
+    lock_path = write_lock(lock, tmp_path)
+    assert verify_lock(lock_path, client=fake_client) == 2
+    assert "--candidates" in capsys.readouterr().out
+
+
+def test_verify_resplit_lock_offline_ok(tmp_path, fake_client):
+    # ...but WITH --candidates the resplit lock verifies fine offline.
+    records, cand_path, sha = enumerate_candidates(_cfg(), tmp_path, client=fake_client)
+    lock = _lock_with_split(_cfg(), records, sha)
+    lock["source"] = "resplit"
+    lock_path = write_lock(lock, tmp_path)
+    assert verify_lock(lock_path, candidates_path=cand_path) == 0
+
+
+def test_verify_offline_corrupt_candidates_is_integrity_failure(tmp_path, fake_client, capsys):
+    # Offline verify is pitched as an integrity check: a corrupt candidates.jsonl must
+    # be reported as an integrity FAILURE (exit 1), not an unrelated "invalid config".
+    records, cand_path, sha = enumerate_candidates(_cfg(), tmp_path, client=fake_client)
+    lock_path = write_lock(_lock_with_split(_cfg(), records, sha), tmp_path)
+    Path(cand_path).write_text('{"not a valid": "candidate record"}\n', encoding="utf-8")
+    assert verify_lock(lock_path, candidates_path=cand_path) == 1
+    assert "INTEGRITY CHECK FAILED" in capsys.readouterr().out
+
+
 def test_verify_detects_split_output_drift(tmp_path, fake_client, capsys):
     # Same candidates, but the locked split hash doesn't match what the code now
     # produces (simulates a curation/split-logic change). Must be hard DRIFT.

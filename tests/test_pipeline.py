@@ -434,6 +434,38 @@ def test_loader_roundtrip(tmp_path, sample_entries, artifact_entry):
     assert ds.config_hash == _cfg().config_hash()
 
 
+# ------------------------- resplit (offline, no RCSB) ---------------------- #
+def test_resplit_reproduces_build_offline(tmp_path, fake_client):
+    import argparse
+
+    from ifsplit.cli import _run_pipeline, cmd_resplit
+    from ifsplit.enumerate import enumerate_candidates
+    from ifsplit.manifest import read_lock, read_manifest
+
+    cfg = _cfg()
+    # Reference: enumerate to `ref` (writes candidates.jsonl) + run Stages 3-7 there.
+    ref = tmp_path / "ref"
+    records, cand_path, sha = enumerate_candidates(cfg, ref, client=fake_client)
+    _run_pipeline(cfg, records, sha, ref, limit=None, registry_path=None)
+    man_ref = read_manifest(ref / "manifest.json")
+
+    # Resplit re-derives from the SAME candidates.jsonl offline (no client).
+    out = tmp_path / "out"
+    args = argparse.Namespace(
+        config=str(DEFAULT_CONFIG), candidates=str(cand_path), out=str(out), registry=None
+    )
+    assert cmd_resplit(args) == 0
+    man_out = read_manifest(out / "manifest.json")
+    # Same snapshot + config -> identical split output; the offline sha matches the
+    # sha enumerate computed (the file bytes hash identically).
+    assert man_out["splits"]["entry_counts"] == man_ref["splits"]["entry_counts"]
+    out_lock = read_lock(out / "dataset.lock")
+    assert out_lock["candidates"]["sha256"] == sha
+    # The lock records how it was produced: resplit vs a live build.
+    assert out_lock["source"] == "resplit"
+    assert read_lock(ref / "dataset.lock")["source"] == "build"
+
+
 # ----------------------------- Phase 7: growth ----------------------------- #
 def test_existing_cluster_does_not_move_when_dataset_grows(sample_entries, artifact_entry):
     cfg = _cfg()
