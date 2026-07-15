@@ -88,7 +88,7 @@
     "dropped": 8643,
     "kept": 214765
   },
-  "if_split_version": "0.2.0",
+  "if_split_version": "0.3.0",
   "ligands": {
     "n_purification_artifacts": 415
   },

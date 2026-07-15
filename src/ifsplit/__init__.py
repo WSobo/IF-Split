@@ -5,4 +5,4 @@ Replicates the LigandMPNN split methodology (Dauparas et al., Nature Methods
 byte-for-byte reproduction. See PLAN.md for the full spec.
 """
 
-__version__ = "0.2.0"
+__version__ = "0.3.0"

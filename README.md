@@ -442,7 +442,7 @@ spec:
   ifsplit_spec: ifsplit/config@1          # schema id — the file says what it is
   name: my-split
   author: you
-  created_with: if-split 0.1.0
+  created_with: if-split 0.3.0
   expected_config_hash: 3b63318286fd2ac4994f34d10936be05
 snapshot_date: '2026-05-31'
 resolution_max_A: 3.5
@@ -515,6 +515,12 @@ data/cache/              # downloaded mmCIF, if ever used (gitignored)
 data/out/                # generated manifests + lock files
 tests/
 ```
+
+## Changelog
+
+Release history is in [CHANGELOG.md](CHANGELOG.md). The current release is **0.3.0**
+(fold-honest splitting, split-output certification, the two-corpus training model, a
+metadata-only curation overhaul, and offline `resplit` / `verify`).
 
 ## License
 
