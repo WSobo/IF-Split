@@ -125,6 +125,15 @@ uv run if-split stats data/out/manifest.json
 # and (when candidates reproduce) certify the split output matches its hash.
 uv run if-split verify data/out/dataset.lock
 
+# Offline verify: integrity-check a distributed candidates.jsonl + lock, no network.
+uv run if-split verify data/out/dataset.lock --candidates data/out/candidates.jsonl
+
+# Re-derive the split from a CACHED candidates.jsonl — no RCSB. Ablate curation,
+# clustering, split strategy, or TIGHTEN a filter (e.g. resolution) on a fixed
+# snapshot in ~seconds instead of re-enumerating the whole PDB.
+uv run if-split resplit --candidates data/out/candidates.jsonl \
+    --config config/masterclass.yaml --out data/mc
+
 # Growth-stable regeneration: pin prior cluster→split assignments.
 uv run if-split build --registry data/out/splits.registry.json --out data/out2
 

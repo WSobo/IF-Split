@@ -67,6 +67,7 @@ def build_lock(
     split_sha256: str | None = None,
     registry_sha256: str | None = None,
     split_strategy: str | None = None,
+    source: str = "build",
 ) -> dict[str, Any]:
     """Assemble the lock document (pure; does not touch disk).
 
@@ -74,6 +75,12 @@ def build_lock(
     certify the split *output* reproduced, not just the Stage-1 candidate inputs
     (see :func:`ifsplit.split.split_fingerprint`). Omitted for candidate-only locks
     (older ``@1`` locks and callers that build before the split exists).
+
+    ``source`` records how the candidate set was produced: ``"build"`` (a live Stage-1
+    enumeration — verifiable online) or ``"resplit"`` (re-derived from a cached
+    ``candidates.jsonl`` whose config may differ in Stage-1 filters — so online
+    re-enumeration would misreport drift; ``verify`` steers such locks to offline
+    ``--candidates`` verification).
     """
     lock: dict[str, Any] = {
         "lock_schema": LOCK_SCHEMA,
@@ -81,6 +88,7 @@ def build_lock(
         "if_split_version": __version__,
         "config_hash": cfg.config_hash(),
         "config": cfg.canonical_dict(),
+        "source": source,
         "selection": {"limit": limit},
         "candidates": {
             "count": len(entry_ids),
@@ -460,19 +468,19 @@ def read_tiers(path: str | Path) -> dict[str, dict]:
 # --------------------------------------------------------------------------- #
 # verify / stats commands
 # --------------------------------------------------------------------------- #
-def verify_lock(lock_path: str | Path, *, client=None) -> int:
+def verify_lock(lock_path: str | Path, *, client=None, candidates_path=None) -> int:
     """Re-derive from a lock's embedded config and report drift.
 
-    Re-enumerates Stage 1 and compares the candidate set; if the candidate set
-    reproduces byte-for-byte AND the lock records a ``split`` hash (``@2`` locks),
-    it also recomputes Stages 3-6 and compares the split *output* — so a curation/
-    split-logic change is caught even when the inputs are identical. Returns a
-    process exit code: 0 = reproduced exactly (split certified when possible),
-    1 = drift (candidate set differs, or the split output changed). ``client`` is
-    injectable for offline testing; production passes None.
+    Sources the candidate set one of two ways and compares it to the lock: by
+    re-enumerating Stage 1 from the live PDB (default), or — when ``candidates_path``
+    is given — OFFLINE by hashing a local ``candidates.jsonl`` (a distributed dataset
+    can then be integrity-checked with no network). If the candidate set reproduces
+    byte-for-byte AND the lock records a ``split`` hash (``@2`` locks), it also
+    recomputes Stages 3-6 and compares the split *output* — so a curation/split-logic
+    change is caught even when the inputs are identical. Returns a process exit code:
+    0 = reproduced exactly (split certified when possible), 1 = drift (candidate set
+    differs, or the split output changed). ``client`` is injectable for offline testing.
     """
-    from .enumerate import enumerate_candidates
-
     lock = read_lock(lock_path)
     if lock.get("lock_schema") not in KNOWN_LOCK_SCHEMAS:
         print(f"warning: unexpected lock_schema {lock.get('lock_schema')!r}")
@@ -490,10 +498,39 @@ def verify_lock(lock_path: str | Path, *, client=None) -> int:
     print(f"  locked: {locked['count']} entries, candidates sha256={locked_sha[:12]}...")
     print(f"  if-split version: locked {locked_version}, running {__version__}")
 
-    with tempfile.TemporaryDirectory() as tmp:
-        records, _, sha = enumerate_candidates(
-            cfg, tmp, limit=limit, client=client, progress=lambda m: print(f"  {m}")
+    # A resplit lock pins a cached candidate set whose Stage-1 filters may differ from
+    # this lock's config, so a live re-enumeration would misreport drift. Steer it to
+    # offline verification (the candidate set it was built from) instead of misleading.
+    if lock.get("source") == "resplit" and candidates_path is None:
+        print(
+            "  this lock was produced by `resplit` from a cached snapshot; its config's "
+            "Stage-1 filters may not reproduce that snapshot, so an online re-enumerate would "
+            "misreport drift. Verify it OFFLINE against the candidates.jsonl it was built from:\n"
+            "    if-split verify <lock> --candidates <candidates.jsonl>"
         )
+        return 2
+
+    if candidates_path is not None:
+        from .schema import read_candidates_jsonl, sha256_hex
+
+        print(f"  offline: hashing local candidates {candidates_path}")
+        sha = sha256_hex(Path(candidates_path).read_bytes())
+        try:
+            records = read_candidates_jsonl(candidates_path)
+        except (ValueError, OSError) as exc:
+            # A corrupt / truncated / non-canonical candidates.jsonl is exactly what an
+            # offline integrity check should CATCH -> report as an integrity failure,
+            # not let it surface as an unrelated "invalid config" error.
+            print(f"  candidates file is corrupt or unparseable ({exc.__class__.__name__}): {exc}")
+            print("INTEGRITY CHECK FAILED: candidates.jsonl could not be parsed.")
+            return 1
+    else:
+        from .enumerate import enumerate_candidates
+
+        with tempfile.TemporaryDirectory() as tmp:
+            records, _, sha = enumerate_candidates(
+                cfg, tmp, limit=limit, client=client, progress=lambda m: print(f"  {m}")
+            )
 
     now_ids = {r.entry_id for r in records}
     added = sorted(now_ids - locked_ids)
