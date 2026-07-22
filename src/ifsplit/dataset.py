@@ -28,6 +28,7 @@ from dataclasses import dataclass, field
 from pathlib import Path
 
 from .manifest import (
+    SPLIT_FILES,
     TARGETS_FILENAME,
     read_classes,
     read_clusters,
@@ -174,7 +175,16 @@ class IFSplitDataset:
         if name not in SPLITS:
             raise KeyError(f"unknown split {name!r}; expected one of {SPLITS}")
         fname = self._split_files.get(name, f"{name}.json")
-        ids = read_id_list(self._dir / fname)
+        path = self._dir / fname
+        if not path.exists():
+            # Fail loudly: a missing split file means the manifest and its sidecars
+            # were moved apart. Silently returning an empty split would look like a
+            # (wrong) zero-size partition and mask the real problem.
+            raise FileNotFoundError(
+                f"split file for {name!r} not found: {path} — the manifest and its "
+                f"split files ({', '.join(SPLIT_FILES.values())}) must stay together."
+            )
+        ids = read_id_list(path)
         return SplitView(
             name=name,
             entry_ids=ids,

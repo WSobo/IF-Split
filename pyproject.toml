@@ -1,11 +1,11 @@
 [project]
 name = "if-split"
-version = "0.3.0"
+version = "0.4.0"
 description = "Reproducible, date-pinned, ligand-aware train/val/test splitter for the PDB (LigandMPNN-style)."
 readme = "README.md"
 requires-python = ">=3.11"
 license = { text = "MIT" }
-authors = [{ name = "WSobo" }]
+authors = [{ name = "William Sobolewski", email = "wcsobo7@gmail.com" }]
 keywords = ["protein", "pdb", "ligandmpnn", "dataset", "mmseqs2", "reproducibility"]
 
 # Runtime deps. mmseqs2 is an EXTERNAL binary (not a pip package) and is

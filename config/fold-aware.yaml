@@ -1,4 +1,4 @@
-# IF-Split "masterclass" config — a fold-honest split for inverse-folding training.
+# IF-Split "fold-aware" config — a fold-honest split for inverse-folding training.
 #
 # Same as config/default.yaml, but two settings turn on the strongest leakage
 # control the tool offers:
@@ -12,7 +12,7 @@
 #     smaller folds. Restores ~80/10/10 by entries with thousands of distinct,
 #     held-out folds in val/test — a truer generalization measure.
 #
-# Build it:  uv run if-split build --config config/masterclass.yaml --out data/mc
+# Build it:  uv run if-split build --config config/fold-aware.yaml --out data/mc
 # `if-split stats` reports the fold-merge effect, the capped folds, and any gap.
 
 snapshot_date: "2026-05-30"        # release_date <= this. The reproducibility anchor.
@@ -31,7 +31,7 @@ exclude_purification_artifacts: true
 
 identity_threshold: 0.30
 clustering_backend: "precomputed"
-structural_clustering: "scop2"     # fold-level leakage control (the masterclass lever)
+structural_clustering: "scop2"     # fold-level leakage control (the fold-aware lever)
 split_fractions: {train: 0.80, val: 0.10, test: 0.10}
 split_strategy: "balanced"         # entry-balanced, fold-tail val/test
 split_salt: "snapsplit-v1"

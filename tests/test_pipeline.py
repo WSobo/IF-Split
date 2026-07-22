@@ -4,11 +4,13 @@ from __future__ import annotations
 
 from pathlib import Path
 
+import pytest
+
 from ifsplit.cluster import build_clusters
 from ifsplit.config import Config, load_config
 from ifsplit.dataset import load_dataset
 from ifsplit.ligands import classify_components
-from ifsplit.manifest import build_manifest, write_manifest
+from ifsplit.manifest import build_manifest, summarize_manifest, write_manifest
 from ifsplit.parse import (
     DROP_CLASHSCORE,
     DROP_EM_INCLUSION,
@@ -646,3 +648,157 @@ def test_balanced_strategy_reports_thin_tail_gap():
     check_no_leakage(res, cr)
     assert res.balance_gaps  # tail too thin -> reported
     assert "val" in res.balance_gaps
+
+
+# ---------- negative leakage: the guard MUST fire on a corrupted partition ------- #
+# These prove check_no_leakage is a real invariant, not a happy-path pass — it
+# actually raises when a sequence cluster or a fold (super)family spans two splits.
+
+
+def test_check_no_leakage_fires_on_shared_sequence_cluster():
+    # X bridges raw clusters 1 & 2; Y is in 1. A partition that puts X and Y in
+    # different splits leaks X's sequence via raw cluster 1 — the guard must catch it.
+    cfg = _cfg()
+    recs = [
+        _protein_record("X1AA", [1, 2]),
+        _protein_record("Y2BB", [1]),
+        _protein_record("Z3CC", [2]),
+    ]
+    kept, _ = filter_candidates(recs, cfg)
+    cr = build_clusters(kept, cfg)
+    res = assign_splits(cr, cfg)
+    check_no_leakage(res, cr)  # the real (valid) partition passes
+    # Corrupt it: move Y to a different split from X (they share raw cluster 1).
+    res.entry_split = dict(res.entry_split)
+    res.entry_split["Y2BB"] = "test" if res.entry_split["X1AA"] != "test" else "train"
+    with pytest.raises(AssertionError, match="raw cluster"):
+        check_no_leakage(res, cr)
+
+
+def test_check_no_leakage_fires_on_fold_span_when_structural_on():
+    # Two entries with DIFFERENT sequence clusters but the SAME CATH superfamily are
+    # one component under structural clustering. Splitting them apart shares no
+    # sequence cluster (sequence check passes) — only the fold-level guard catches
+    # it, proving structural_clustering's guarantee is actually enforced.
+    cfg = _cfg(structural_clustering="cath")
+    recs = [
+        _fold_record("AAA1", 10, {"cath": ["1.10.490.10"]}),
+        _fold_record("BBB2", 20, {"cath": ["1.10.490.10"]}),
+    ]
+    kept, _ = filter_candidates(recs, cfg)
+    cr = build_clusters(kept, cfg)
+    assert cr.n_clusters == 1  # merged into one component by shared fold
+    res = assign_splits(cr, cfg)
+    check_no_leakage(res, cr)
+    res.entry_split = {"AAA1": "train", "BBB2": "test"}  # force same fold across splits
+    with pytest.raises(AssertionError, match="fold leakage"):
+        check_no_leakage(res, cr)
+
+
+def test_fold_leakage_guard_is_a_noop_when_structural_off():
+    # Same two same-fold entries, structural OFF: distinct sequence clusters, so
+    # they may legitimately land in different splits. entry_families is empty, so
+    # the fold guard must NOT fire (no over-merging beyond what the user asked for).
+    cfg = _cfg(structural_clustering="off")
+    recs = [
+        _fold_record("AAA1", 10, {"cath": ["1.10.490.10"]}),
+        _fold_record("BBB2", 20, {"cath": ["1.10.490.10"]}),
+    ]
+    kept, _ = filter_candidates(recs, cfg)
+    cr = build_clusters(kept, cfg)
+    assert cr.entry_families == {}  # off -> no fold edges recorded
+    res = assign_splits(cr, cfg)
+    res.entry_split = {"AAA1": "train", "BBB2": "test"}
+    check_no_leakage(res, cr)  # must NOT raise — distinct folds may differ when off
+
+
+def test_single_chain_only_filter(sample_entries):
+    # 1A1F is a protein+DNA complex (multiple polymer entities); 4HHB has two protein
+    # entities (alpha/beta). single_chain_only keeps only single-protein-entity records.
+    recs = [CandidateRecord.from_data_api(e) for e in sample_entries.values()]
+    kept, drops = filter_candidates(recs, _cfg(single_chain_only=True))
+    assert all(len(r.polymer_entities) == 1 for r in kept)
+    reasons = {d["entry_id"]: d["reason"] for d in drops}
+    assert reasons.get("1A1F") == "not_single_chain"  # protein+DNA -> dropped
+    # A genuine single-chain record passes.
+    kept2, _ = filter_candidates([_seq_record("ONE1", "A" * 80)], _cfg(single_chain_only=True))
+    assert [r.entry_id for r in kept2] == ["ONE1"]
+    # Off by default: the complex is kept.
+    kept3, _ = filter_candidates(recs, _cfg())
+    assert "1A1F" in {r.entry_id for r in kept3}
+
+
+def test_manifest_tier_reason_histogram(sample_entries, artifact_entry):
+    # The tier-reason histogram summarizes every curation call (a "tier:reason" key
+    # per component) so the distribution is auditable without the per-component file.
+    m = _full_manifest(sample_entries, artifact_entry, _cfg())
+    trc = m["ligands"]["tier_reason_counts"]
+    assert isinstance(trc, dict) and trc and all(isinstance(v, int) for v in trc.values())
+    assert all(":" in k for k in trc)  # keys are "tier:reason"
+
+
+def test_manifest_fold_coverage_counts_distinct_folds():
+    # per_split_fold_coverage counts the distinct structural families held in each
+    # split, plus the unclassified count — the residual-leakage ceiling: entries no
+    # fold taxonomy classifies are held out by sequence only, not by fold.
+    cfg = _cfg(structural_clustering="cath")
+    recs = [
+        _fold_record("AAA1", 10, {"cath": ["1.10.1.1"]}),
+        _fold_record("BBB2", 20, {"cath": ["2.20.2.2"]}),
+        _fold_record("CCC3", 30, {}),  # no fold classification -> unclassified
+    ]
+    kept, drops = filter_candidates(recs, cfg)
+    class_map = {r.entry_id: classify_components(r, cfg) for r in kept}
+    cr = build_clusters(kept, cfg)
+    sp = assign_splits(cr, cfg)
+    m = build_manifest(
+        cfg,
+        candidates_sha256="deadbeef",
+        n_candidates=len(recs),
+        drops=drops,
+        drop_counts=drop_summary(drops),
+        clusters=cr,
+        splits=sp,
+        class_map=class_map,
+    )
+    cov = m["splits"]["per_split_fold_coverage"]
+    assert set(cov) == {"train", "val", "test"}
+    for c in cov.values():
+        assert set(c) == {
+            "total_entries",
+            "classified_entries",
+            "unclassified_entries",
+            "n_distinct_folds",
+        }
+        assert c["unclassified_entries"] == c["total_entries"] - c["classified_entries"]
+    assert sum(c["n_distinct_folds"] for c in cov.values()) == 2  # two distinct folds
+    assert sum(c["classified_entries"] for c in cov.values()) == 2
+    assert sum(c["total_entries"] for c in cov.values()) == 3
+    assert sum(c["unclassified_entries"] for c in cov.values()) == 1  # CCC3, unclassified
+
+
+def test_summarize_manifest_reports_residual_ceiling(tmp_path, capsys):
+    # `stats` surfaces the unclassified fraction per split (the residual-leakage
+    # ceiling) whenever fold-aware clustering is on.
+    cfg = _cfg(structural_clustering="cath")
+    recs = [
+        _fold_record("AAA1", 10, {"cath": ["1.10.1.1"]}),
+        _fold_record("CCC3", 30, {}),  # unclassified
+    ]
+    kept, drops = filter_candidates(recs, cfg)
+    class_map = {r.entry_id: classify_components(r, cfg) for r in kept}
+    cr = build_clusters(kept, cfg)
+    sp = assign_splits(cr, cfg)
+    m = build_manifest(
+        cfg,
+        candidates_sha256="deadbeef",
+        n_candidates=len(recs),
+        drops=drops,
+        drop_counts=drop_summary(drops),
+        clusters=cr,
+        splits=sp,
+        class_map=class_map,
+    )
+    path = write_manifest(m, tmp_path)
+    assert summarize_manifest(path) == 0
+    assert "unclassified" in capsys.readouterr().out

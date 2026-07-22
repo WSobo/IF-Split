@@ -200,3 +200,32 @@ def test_per_class_test_files_written(tmp_path, sample_entries, artifact_entry):
     assert metal_file.exists()
     assert "1A1F" in json.loads(metal_file.read_text())
     assert any(k.startswith("test:") for k in paths)
+
+
+def test_load_dataset_raises_on_missing_split_file(tmp_path, sample_entries, artifact_entry):
+    # A manifest whose split files were moved/deleted must fail loudly, not return an
+    # empty (wrong) partition that silently looks like a zero-size split.
+    import pytest
+
+    manifest = _build(tmp_path, sample_entries, artifact_entry)
+    ds = load_dataset(manifest)
+    (tmp_path / "test.json").unlink()
+    with pytest.raises(FileNotFoundError, match="split file"):
+        _ = ds.test
+
+
+def test_rebuild_cleans_stale_per_class_test_files(tmp_path):
+    # Rebuilding into a used --out must not leave a stale per-class test file that
+    # lists an entry now in train (which would read as cross-split leakage).
+    import types
+
+    from ifsplit.manifest import write_split_files
+
+    sp1 = types.SimpleNamespace(entry_split={"AAAA": "test", "BBBB": "train"})
+    write_split_files(sp1, {"AAAA": {"classes": ["metal"]}}, tmp_path)
+    assert (tmp_path / "test" / "metal_test.json").exists()
+
+    # Rebuild into the SAME dir: AAAA moves to train; the test set now has no metal.
+    sp2 = types.SimpleNamespace(entry_split={"AAAA": "train", "BBBB": "test"})
+    write_split_files(sp2, {"BBBB": {"classes": []}}, tmp_path)
+    assert not (tmp_path / "test" / "metal_test.json").exists()  # stale file removed

@@ -7,6 +7,50 @@ follow [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 The **split is always computed from metadata + sequences only** — `build` never
 downloads structure coordinates. That invariant holds across every release below.
 
+## [0.4.0] — 2026-07-22 (hardening)
+
+Reliability, correctness-guard, and publication-readiness pass. No change to the
+default split output.
+
+### Added
+
+- **Fold-level leakage guard.** `check_no_leakage` now also asserts that no
+  structural (super)family straddles two splits (not just sequence clusters) when
+  `structural_clustering` is on — matching the fold-leakage guarantee. Backed by
+  new *negative* tests that construct leaky partitions and prove the guard fires.
+- **`single_chain_only`** filter (opt-in): keep only single-protein-entity
+  structures — a metadata proxy for the single-chain CATH setup.
+- **`build --count`**: preview how many entries the snapshot matches (one fast
+  Search API call) before committing to a full build.
+- **Manifest observability**: a ligand tier-reason histogram and per-split fold
+  coverage — distinct held-out folds *and* the unclassified fraction per split (the
+  **residual-leakage ceiling**: entries no CATH/ECOD/SCOP2 taxonomy classifies are
+  held out by sequence only, so fold-level hold-out is not guaranteed for them).
+  `stats` prints it whenever fold-aware clustering is on.
+- **CLI test suite** (`tests/test_cli.py`) covering exit codes and error paths.
+
+### Changed
+
+- **Removed the `mmseqs2` clustering backend.** RCSB's precomputed clusters (the
+  same 30% clustering ProteinMPNN/LigandMPNN used, locked via the snapshot) are the
+  sole backend. `clustering_backend: mmseqs2` was an unimplemented stub that crashed
+  mid-build; it is now rejected at config validation.
+- **Robust CLI error handling**: malformed JSON, old-schema files, bad values, and
+  network failures now produce actionable one-line messages with documented exit
+  codes (2 bad input, 3 not implemented, 4 network, 130 interrupted) instead of a
+  traceback. `fetch --workers` is validated `>= 1`.
+
+### Fixed
+
+- **Atomic writes** (temp file + rename) for the manifest, lock, and split lists —
+  a crash mid-write can no longer leave a partial file that crashes every reader.
+- **Stale per-class test files**: rebuilding into a used `--out` now clears the
+  managed `test/` subtree, so a `test/<class>_test.json` can no longer linger with
+  an entry that has since moved to train (which read as leakage).
+- **Loader fails loudly** on a missing split file instead of silently returning an
+  empty (wrong) partition.
+- `count_entries` no longer crashes on a zero-match (HTTP 204) Search response.
+
 ## [0.3.0] — 2026-07-14
 
 A large release: fold-honest splitting, split-output certification, a two-corpus
@@ -21,7 +65,7 @@ training model, a metadata-only curation overhaul, and offline re-derivability.
   (metadata only, no coordinates).
 - **Balance-aware split strategy** (`split_strategy: balanced`). Caps dominant folds
   to train and fills val/test to their *entry* targets from the fold tail, restoring
-  ~80/10/10 by entries with thousands of held-out folds. `config/masterclass.yaml`
+  ~80/10/10 by entries with thousands of held-out folds. `config/fold-aware.yaml`
   ships the fold-honest recipe (`scop2` + `balanced`).
 - **Split-output certification.** The `@2` `dataset.lock` records `split_sha256` (a
   hash of the entry→split partition); `verify` re-derives Stages 3–6 and certifies the

@@ -88,6 +88,13 @@ class Config(BaseModel):
     # poor inverse-folding label; it only ever drops entries whose *every* protein
     # chain is that short (any() over chains), so multi-chain complexes are unaffected.
     min_modeled_residues: int = Field(default=0, ge=0)
+    # Opt-in single-chain filter (Stage 3). When true, keep only entries with exactly
+    # one protein polymer entity and no other polymer entities (no second protein type,
+    # no nucleic acid) — a metadata proxy for a single-chain design target, matching the
+    # single-chain CATH setup ProteinMPNN used for its development model. A homo-oligomer
+    # of one entity still passes (one unique sequence to design); telling a monomer from a
+    # homo-oligomer needs assembly chain counts, which is out of scope here. Off by default.
+    single_chain_only: bool = False
     excluded_het: list[str] = Field(default_factory=list)
     use_biological_assembly: bool = True
 
@@ -108,9 +115,12 @@ class Config(BaseModel):
 
     # --- clustering + split ---
     identity_threshold: float = Field(gt=0, le=1)
-    # "precomputed": reuse RCSB's entity clusters (default, no external binary).
-    # "mmseqs2": run our own over the snapshot's sequences.
-    clustering_backend: Literal["precomputed", "mmseqs2"] = "precomputed"
+    # Clustering backend. Only "precomputed" — reuse RCSB's published polymer-entity
+    # sequence clusters (the same mmseqs2-computed 30% clusters ProteinMPNN/LigandMPNN
+    # used), locked via the snapshot so a build needs no external binary and stays
+    # byte-for-byte reproducible. The field is retained (single-valued) for forward
+    # compatibility and explicit provenance in the manifest.
+    clustering_backend: Literal["precomputed"] = "precomputed"
     # Fold-level leakage control (Stage 5). Sequence clustering alone misses
     # structural redundancy: two chains under the identity threshold can still be
     # the same fold, which an inverse-folding model (structure -> sequence) would
@@ -127,7 +137,7 @@ class Config(BaseModel):
     # train/val/test balance (~95/3/2 at superfamily grain) even though the
     # COMPONENT-level split stays ~80/10/10. Off by default; pair it with
     # split_strategy="balanced" (below) to restore entry balance — that is the
-    # "masterclass" recipe (structural_clustering="scop2" + balanced).
+    # "fold-aware" recipe (structural_clustering="scop2" + balanced).
     structural_clustering: Literal["off", "cath", "ecod", "scop2"] = "off"
     split_fractions: SplitFractions
     # Component -> split assignment strategy.
@@ -213,21 +223,17 @@ class Config(BaseModel):
     def _identity_level_supported(self) -> Config:
         """Reject identity thresholds the precomputed backend can't actually use.
 
-        The precomputed backend looks up ``identity_level`` in each entity's RCSB
+        Clustering looks up ``identity_level`` in each entity's RCSB
         ``rcsb_cluster_membership``, which exists only at RCSB_IDENTITY_LEVELS. An
         unsupported level (e.g. 0.40 -> 40%) matches nothing, so every entity would
         fall into its own singleton cluster: no clustering, and cross-split sequence
-        leakage that ``check_no_leakage`` cannot detect. Fail loudly instead. The
-        mmseqs2 backend clusters at an arbitrary threshold, so it is exempt.
+        leakage that ``check_no_leakage`` cannot detect. Fail loudly instead.
         """
-        if (
-            self.clustering_backend == "precomputed"
-            and self.identity_level not in RCSB_IDENTITY_LEVELS
-        ):
+        if self.identity_level not in RCSB_IDENTITY_LEVELS:
             levels = ", ".join(str(x) for x in sorted(RCSB_IDENTITY_LEVELS))
             raise ValueError(
                 f"identity_threshold={self.identity_threshold} -> {self.identity_level}% is not an "
-                f"RCSB precomputed cluster level. For clustering_backend='precomputed' use one of "
+                f"RCSB precomputed cluster level. Use one of "
                 f"{levels}% (i.e. 0.30/0.50/0.70/0.90/0.95/1.00); otherwise no clustering happens."
             )
         return self

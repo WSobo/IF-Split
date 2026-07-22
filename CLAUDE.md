@@ -37,7 +37,7 @@ wsl -d ubuntu bash -lc 'cd ~/projects/IF-Split && export PATH="$HOME/.local/bin:
 uv run ruff check .      # lint (must pass)
 uv run ruff format .     # format
 uv run if-split build --limit 50 --out /tmp/ifs   # dev build (small, live RCSB)
-uv run if-split build --config config/masterclass.yaml --out /tmp/mc  # fold-honest split (scop2 + balanced)
+uv run if-split build --config config/fold-aware.yaml --out /tmp/mc  # fold-honest split (scop2 + balanced)
 uv run if-split resplit --candidates data/out/candidates.jsonl --config X.yaml --out /tmp/rs  # re-derive Stages 3-7 offline (no RCSB)
 ```
 

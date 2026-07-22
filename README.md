@@ -74,18 +74,18 @@ growth-stable (via the registry), and reports a gap if a method's tail is too th
 (`cath`/`ecod` starve val; **`scop2` is the sweet spot**). `balanced` also fixes
 the plain sequence-only skew (88/6/6 → 80/10/10) from the antibody mega-cluster.
 
-### The masterclass split
+### The fold-aware split
 
 ```bash
-uv run if-split build --config config/masterclass.yaml --out data/mc
+uv run if-split build --config config/fold-aware.yaml --out data/mc
 ```
 
-`config/masterclass.yaml` = default **+ `structural_clustering: scop2` + `split_strategy: balanced`**: a fold-honest ~80/10/10 split whose val/test are thousands of folds held entirely out of train — the truest generalization measure the tool can produce, still from metadata alone.
+`config/fold-aware.yaml` = default **+ `structural_clustering: scop2` + `split_strategy: balanced`**: a fold-honest ~80/10/10 split whose val/test are thousands of folds held entirely out of train — the truest generalization measure the tool can produce, still from metadata alone.
 
 | split | strategy | structural | entry balance | val/test |
 |---|---|---|--:|---|
 | default | hash | off | 88 / 6 / 6 | sequence-clustered |
-| masterclass | balanced | scop2 | 80 / 10 / 10 | thousands of held-out folds |
+| fold-aware | balanced | scop2 | 80 / 10 / 10 | thousands of held-out folds |
 
 ---
 
@@ -132,7 +132,7 @@ uv run if-split verify data/out/dataset.lock --candidates data/out/candidates.js
 # clustering, split strategy, or TIGHTEN a filter (e.g. resolution) on a fixed
 # snapshot in ~seconds instead of re-enumerating the whole PDB.
 uv run if-split resplit --candidates data/out/candidates.jsonl \
-    --config config/masterclass.yaml --out data/mc
+    --config config/fold-aware.yaml --out data/mc
 
 # Growth-stable regeneration: pin prior cluster→split assignments.
 uv run if-split build --registry data/out/splits.registry.json --out data/out2
@@ -442,7 +442,7 @@ spec:
   ifsplit_spec: ifsplit/config@1          # schema id — the file says what it is
   name: my-split
   author: you
-  created_with: if-split 0.3.0
+  created_with: if-split 0.4.0
   expected_config_hash: 3b63318286fd2ac4994f34d10936be05
 snapshot_date: '2026-07-14'
 resolution_max_A: 3.5
@@ -475,6 +475,7 @@ doubles as a shareable **split spec** — see [Sharing a split spec](#sharing-a-
 | `resolution_max_A_by_method` | `{}` | Optional per-method resolution overrides, e.g. `{ELECTRON MICROSCOPY: 3.0}` — cryo-EM 3.5 Å ≠ X-ray 3.5 Å. Empty = one cap for all. |
 | `max_total_residues` | `5999` | Max residues **kept** (drop if `> this`) — LigandMPNN kept `< 6000`, i.e. `<= 5999`. |
 | `min_modeled_residues` | `0` | Opt-in floor on modeled (non-`X`) residues in a protein chain. `0` = off; only the always-on empty/all-`X` (poly-UNK) drop applies. `~20` also drops tiny/mostly-unknown chains. |
+| `single_chain_only` | `false` | Opt-in: keep only single-protein-entity structures (no complex, no nucleic-acid partner) — a metadata proxy for single-chain design targets (ProteinMPNN's single-chain CATH setup). |
 | `excluded_het` | waters + common ions | Extra components forced to `artifact`. |
 | `use_biological_assembly` | `true` | Count residues from assembly 1, not the deposited asymmetric unit. |
 | `purification_metals` | `[NI, CO]` | Metals treated as IMAC tags; `[]` disables the heuristic. |
@@ -482,7 +483,7 @@ doubles as a shareable **split spec** — see [Sharing a split spec](#sharing-a-
 | `histag_terminal_min_run` | `3` | Shorter His-run at a chain terminus that also counts as a tag (partial/unmodeled 6×His). |
 | `exclude_purification_artifacts` | `true` | Demote His-tag metals to `artifact`; lone uncorroborated Ni/Co → `ambiguous`. |
 | `identity_threshold` | `0.30` | Clustering cutoff (RCSB levels: 30/50/70/90/95/100). |
-| `clustering_backend` | `precomputed` | `precomputed` (RCSB clusters) or `mmseqs2` (run your own). |
+| `clustering_backend` | `precomputed` | Reuse RCSB's published 30% clusters (the only backend; locked via the snapshot). |
 | `split_fractions` | 0.80 / 0.10 / 0.10 | train / val / test. |
 | `split_salt` | `snapsplit-v1` | Bump to intentionally reshuffle the split. |
 | `max_clashscore`, `max_rfree`, `max_ramachandran_outlier_pct`, `max_rotamer_outlier_pct`, `max_rsrz_outlier_pct`, `min_em_backbone_inclusion`, `require_validation_report` | off | Optional validation-report quality caps — see [Structure quality](#structure-quality-validation-report). |
@@ -516,11 +517,23 @@ data/out/                # generated manifests + lock files
 tests/
 ```
 
+## Contributing
+
+Bug reports, feature requests, and pull requests are welcome — see
+[CONTRIBUTING.md](CONTRIBUTING.md) for the dev setup (`uv sync`, `pytest`, `ruff`)
+and the two load-bearing invariants (determinism; no cross-split leakage). All
+participation is under our [Code of Conduct](CODE_OF_CONDUCT.md).
+
+## Citation
+
+If you use IF-Split, please cite it — see [CITATION.cff](CITATION.cff).
+
 ## Changelog
 
-Release history is in [CHANGELOG.md](CHANGELOG.md). The current release is **0.3.0**
-(fold-honest splitting, split-output certification, the two-corpus training model, a
-metadata-only curation overhaul, and offline `resplit` / `verify`).
+Release history is in [CHANGELOG.md](CHANGELOG.md). The current release is **0.4.0**
+(reliability + correctness hardening: a fold-level leakage guard with negative tests, atomic
+manifest/lock writes, robust CLI error handling, a `single_chain_only` filter, and manifest
+fold-coverage observability).
 
 ## License
 

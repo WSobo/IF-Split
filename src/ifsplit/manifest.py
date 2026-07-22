@@ -32,7 +32,9 @@ Supporting maps (only needed for sampling / curation, not to read the split):
 
 from __future__ import annotations
 
+import contextlib
 import json
+import os
 import tempfile
 from pathlib import Path
 from typing import Any
@@ -105,13 +107,30 @@ def build_lock(
     return lock
 
 
-def _write_json(obj: dict[str, Any], path: Path, *, compact: bool = False) -> Path:
+def _atomic_write_text(path: Path, text: str) -> None:
+    """Write ``text`` to ``path`` atomically: a temp file in the same directory,
+    then an atomic rename. A crash mid-write can never leave a half-written manifest/
+    lock/split file that then crashes every reader — the reader sees either the old
+    file or the complete new one.
+    """
     path.parent.mkdir(parents=True, exist_ok=True)
+    fd, tmp = tempfile.mkstemp(dir=path.parent, prefix=f".{path.name}.", suffix=".tmp")
+    try:
+        with os.fdopen(fd, "w", encoding="utf-8") as fh:
+            fh.write(text)
+        os.replace(tmp, path)  # atomic within a filesystem
+    except BaseException:
+        with contextlib.suppress(OSError):
+            os.remove(tmp)
+        raise
+
+
+def _write_json(obj: dict[str, Any], path: Path, *, compact: bool = False) -> Path:
     if compact:
         text = json.dumps(obj, sort_keys=True, separators=(",", ":"))
     else:
         text = json.dumps(obj, indent=2, sort_keys=True)
-    path.write_text(text + "\n", encoding="utf-8")
+    _atomic_write_text(path, text + "\n")
     return path
 
 
@@ -185,6 +204,38 @@ def build_manifest(
     }
     n_artifacts = sum(1 for info in class_map.values() if info.get("purification_artifact"))
 
+    # Observability: a histogram of ligand tier reasons across all components (the
+    # curation audit trail at a glance — how many additive/counterion/histag_metal/
+    # ligand_bound/... calls were made), so a reviewer can sanity-check the curation
+    # distribution without opening the per-component ligands.tiers.json.
+    tier_reason_counts: dict[str, int] = {}
+    for info in class_map.values():
+        for comp in info.get("tiers", {}).values():
+            key = f"{comp['tier']}:{comp['reason']}"
+            tier_reason_counts[key] = tier_reason_counts.get(key, 0) + 1
+    tier_reason_counts = dict(sorted(tier_reason_counts.items()))
+
+    # Observability: per-split fold coverage (distinct structural families held in
+    # each split, and how many entries carry a classification). Empty when
+    # structural_clustering is off; with it on, this is the non-circular check that
+    # val/test really hold out thousands of distinct folds.
+    entry_fams = clusters.entry_families
+
+    def _fold_coverage(entries: list[str]) -> dict[str, int]:
+        classified = [e for e in entries if entry_fams.get(e)]
+        folds = {f for e in classified for f in entry_fams.get(e, [])}
+        return {
+            "total_entries": len(entries),
+            "classified_entries": len(classified),
+            # Residual-leakage ceiling: entries that no fold taxonomy classifies are
+            # held out by sequence clustering only, so fold-level hold-out is NOT
+            # guaranteed for them (see PLAN "Fold-level leakage control").
+            "unclassified_entries": len(entries) - len(classified),
+            "n_distinct_folds": len(folds),
+        }
+
+    per_split_fold_coverage = {s: _fold_coverage(per_split[s]) for s in SPLITS}
+
     # Training corpora: every kept structure is a backbone; the functional-tier
     # ligands are the conditioning targets (see targets.jsonl / build_targets).
     targets = build_targets(class_map, splits, clusters)
@@ -242,9 +293,13 @@ def build_manifest(
             "cluster_counts": dict(sorted(splits.cluster_counts.items())),
             "per_split_class_counts": per_split_class_counts,
             "per_split_ambiguous_counts": per_split_ambiguous_counts,
+            "per_split_fold_coverage": per_split_fold_coverage,
             "test_minimum_shortfalls": dict(sorted(splits.minimum_shortfalls.items())),
         },
-        "ligands": {"n_purification_artifacts": n_artifacts},
+        "ligands": {
+            "n_purification_artifacts": n_artifacts,
+            "tier_reason_counts": tier_reason_counts,
+        },
         "training": training,
         # Pointers to the data files written alongside this manifest.
         "files": {
@@ -263,9 +318,8 @@ def build_manifest(
 # --------------------------------------------------------------------------- #
 def _write_id_list(ids: list[str], path: Path) -> Path:
     """Write a JSON array of ids, one per line (compact yet grepable)."""
-    path.parent.mkdir(parents=True, exist_ok=True)
     body = ",\n".join(json.dumps(i) for i in ids)
-    path.write_text(f"[\n{body}\n]\n" if ids else "[]\n", encoding="utf-8")
+    _atomic_write_text(path, f"[\n{body}\n]\n" if ids else "[]\n")
     return path
 
 
@@ -285,6 +339,15 @@ def write_split_files(splits, class_map: dict[str, dict], out_dir: str | Path) -
     written: dict[str, Path] = {}
     for s, fname in SPLIT_FILES.items():
         written[s] = _write_id_list(per_split[s], out / fname)
+
+    # Rebuilding into a used --out must not leave STALE per-class files: a class that
+    # no longer appears (or an entry moved to train) would linger in test/<class>_test.json
+    # and read as leakage. The test/ subtree is fully managed here, so clear its
+    # id-lists before rewriting the current set.
+    test_dir = out / TEST_SUBDIR
+    if test_dir.is_dir():
+        for stale in test_dir.glob("*_test.json"):
+            stale.unlink()
 
     # Per-class test-id lists: test entries carrying each functional class.
     test_ids = per_split["test"]
@@ -674,6 +737,16 @@ def summarize_manifest(manifest_path: str | Path) -> int:
         ec = sp["entry_counts"].get(s, 0)
         cc = sp["cluster_counts"].get(s, 0)
         print(f"    {s:5s}: {ec:>7} entries  {cc:>7} components")
+    if smethod != "off":
+        cov = sp.get("per_split_fold_coverage", {})
+        print("  fold coverage (unclassified % = residual-leakage ceiling, not fold-held-out):")
+        for s in ("train", "val", "test"):
+            c = cov.get(s, {})
+            tot = c.get("total_entries") or sp["entry_counts"].get(s, 0)
+            unc = c.get("unclassified_entries", tot - c.get("classified_entries", tot))
+            folds = c.get("n_distinct_folds", 0)
+            pct = (100.0 * unc / tot) if tot else 0.0
+            print(f"    {s:5s}: {folds:>6} folds held out  {unc}/{tot} unclassified ({pct:.1f}%)")
     print("  test set by ligand class (functional tier):")
     for cls, n in sp["per_split_class_counts"].get("test", {}).items():
         print(f"    {cls}: {n}")

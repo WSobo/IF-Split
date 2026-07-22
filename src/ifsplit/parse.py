@@ -9,6 +9,9 @@ Operates on the records in ``candidates.jsonl``. Drops entries that:
 - (opt-in ``min_modeled_residues``) have no protein chain with at least that many
   modeled (non-``X``) residues (``sequence_too_short``): tiny peptide fragments and
   mostly-unknown chains,
+- (opt-in ``single_chain_only``) have more than one polymer entity
+  (``not_single_chain``): keep only single-protein-entity structures (no complex, no
+  nucleic-acid partner) — a metadata proxy for single-chain design targets,
 - exceed the residue cap (``too_large``): ``total_residues > max_total_residues``,
 - exceed the (per-method) resolution cap (``resolution_too_low``): re-derived here
   from ``resolution_A`` so the cut is auditable from ``candidates.jsonl`` and can be
@@ -31,6 +34,7 @@ from .schema import CandidateRecord
 
 DROP_NO_PROTEIN = "no_protein_entity"
 DROP_NO_SEQUENCE = "no_protein_sequence"
+DROP_NOT_SINGLE_CHAIN = "not_single_chain"
 DROP_SEQUENCE_TOO_SHORT = "sequence_too_short"
 DROP_TOO_LARGE = "too_large"
 DROP_RESOLUTION = "resolution_too_low"
@@ -124,6 +128,12 @@ def filter_candidates(
         proteins = [e for e in r.polymer_entities if e.is_protein]
         if not proteins:
             drops.append({"entry_id": r.entry_id, "reason": DROP_NO_PROTEIN})
+            continue
+        # Opt-in single-chain filter: exactly one polymer entity, which is the protein
+        # (no second protein entity, no nucleic-acid partner). Metadata proxy for a
+        # single-chain design target (ProteinMPNN's single-chain CATH setup).
+        if cfg.single_chain_only and len(r.polymer_entities) != 1:
+            drops.append({"entry_id": r.entry_id, "reason": DROP_NOT_SINGLE_CHAIN})
             continue
         # Usable sequence = at least one protein chain with >=1 modeled residue. An
         # empty string OR an all-X (poly-UNK) chain has none, so the label is

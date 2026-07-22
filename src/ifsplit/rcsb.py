@@ -205,6 +205,8 @@ class RcsbClient:
         body = self._search_query_body(cfg)
         body["request_options"] = {"return_counts": True}
         resp = self._post(SEARCH_URL, body)
+        if resp.status_code == 204:  # no matches -> RCSB returns empty body, not JSON
+            return 0
         resp.raise_for_status()
         return int(resp.json()["total_count"])
 

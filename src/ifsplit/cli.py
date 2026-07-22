@@ -13,9 +13,11 @@ candidates.jsonl via --candidates); `stats` summarizes a manifest.
 from __future__ import annotations
 
 import argparse
+import json
 import sys
 from pathlib import Path
 
+import httpx
 from pydantic import ValidationError
 
 from . import __version__
@@ -24,6 +26,13 @@ from .rcsb import RcsbError
 
 DEFAULT_CONFIG = "config/default.yaml"
 SPLITS_CHOICES = ("train", "val", "test")
+
+# Documented process exit codes (see `if-split --help` and the README).
+EXIT_OK = 0
+EXIT_BAD_INPUT = 2  # missing/malformed file, invalid config, or bad argument value
+EXIT_NOT_IMPLEMENTED = 3
+EXIT_NETWORK = 4  # RCSB / HTTP failure after retries
+EXIT_INTERRUPTED = 130
 
 
 def _print_config_header(cfg, config_path: str, *, limit: int | None = None) -> None:
@@ -169,6 +178,15 @@ def cmd_build(args: argparse.Namespace) -> int:
 
     cfg = load_config(args.config)
     _print_config_header(cfg, args.config, limit=args.limit)
+    if args.count:
+        from .rcsb import RcsbClient
+
+        with RcsbClient() as client:
+            n = client.count_entries(cfg)
+        capped = f"; a build would cap to the first {args.limit}" if args.limit else ""
+        print(f"Search matches {n} entries for this snapshot{capped}.")
+        print("(--count is a preview — no candidates were fetched or written.)")
+        return 0
     print("Stage 1 - enumerate candidates (Search + Data API, no coordinates):")
     say = make_console_progress()  # timestamped + line-flushed (survives redirect)
     records, _candidates_path, sha = enumerate_candidates(
@@ -331,6 +349,10 @@ def cmd_fetch(args: argparse.Namespace) -> int:
         )
         return 2
 
+    if args.workers < 1:
+        print(f"error: --workers must be >= 1, got {args.workers}", file=sys.stderr)
+        return 2
+
     splits = list(SPLITS) if args.all else args.split
     unknown = [s for s in splits if s not in SPLITS]
     if unknown:
@@ -409,6 +431,12 @@ def build_parser() -> argparse.ArgumentParser:
         type=int,
         default=None,
         help="Dev only: cap to the first N candidates by sorted entry id (reproducible).",
+    )
+    pb.add_argument(
+        "--count",
+        action="store_true",
+        help="Preview only: print how many entries the snapshot filters match "
+        "(one fast Search API call) and exit, without fetching or writing anything.",
     )
     pb.add_argument(
         "--registry",
@@ -499,18 +527,38 @@ def main(argv: list[str] | None = None) -> int:
     args = parser.parse_args(argv)
     try:
         return args.func(args)
+    except KeyboardInterrupt:
+        print("\ninterrupted.", file=sys.stderr)
+        return EXIT_INTERRUPTED
     except FileNotFoundError as e:
-        print(f"error: {e}", file=sys.stderr)
-        return 2
+        print(f"error: file not found: {e}", file=sys.stderr)
+        return EXIT_BAD_INPUT
     except ValidationError as e:
         print(f"invalid config:\n{e}", file=sys.stderr)
-        return 2
+        return EXIT_BAD_INPUT
+    except json.JSONDecodeError as e:
+        # JSONDecodeError subclasses ValueError, so catch it first for a precise message.
+        print(f"error: malformed JSON ({e})", file=sys.stderr)
+        return EXIT_BAD_INPUT
+    except KeyError as e:
+        print(
+            f"error: malformed or old-schema file — missing expected field {e}. "
+            "Was it produced by a different if-split version?",
+            file=sys.stderr,
+        )
+        return EXIT_BAD_INPUT
     except NotImplementedError as e:
-        print(f"not implemented yet: {e}", file=sys.stderr)
-        return 3
+        print(f"not implemented: {e}", file=sys.stderr)
+        return EXIT_NOT_IMPLEMENTED
     except RcsbError as e:
         print(f"RCSB request failed: {e}", file=sys.stderr)
-        return 4
+        return EXIT_NETWORK
+    except httpx.HTTPError as e:
+        print(f"network error: {e}", file=sys.stderr)
+        return EXIT_NETWORK
+    except ValueError as e:
+        print(f"error: {e}", file=sys.stderr)
+        return EXIT_BAD_INPUT
 
 
 if __name__ == "__main__":
