@@ -7,7 +7,7 @@ follow [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 The **split is always computed from metadata + sequences only** — `build` never
 downloads structure coordinates. That invariant holds across every release below.
 
-## [Unreleased] — 0.5.0
+## [0.5.0] — 2026-07-22
 
 Toward "The Novel-Fold Benchmark". No change to the default (`hash`) split output.
 

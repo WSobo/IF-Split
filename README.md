@@ -449,7 +449,7 @@ spec:
   ifsplit_spec: ifsplit/config@1          # schema id — the file says what it is
   name: my-split
   author: you
-  created_with: if-split 0.4.0
+  created_with: if-split 0.5.0
   expected_config_hash: 3b63318286fd2ac4994f34d10936be05
 snapshot_date: '2026-07-14'
 resolution_max_A: 3.5
@@ -537,10 +537,9 @@ If you use IF-Split, please cite it — see [CITATION.cff](CITATION.cff).
 
 ## Changelog
 
-Release history is in [CHANGELOG.md](CHANGELOG.md). The current release is **0.4.0**
-(reliability + correctness hardening: a fold-level leakage guard with negative tests, atomic
-manifest/lock writes, robust CLI error handling, a `single_chain_only` filter, and manifest
-fold-coverage observability).
+Release history is in [CHANGELOG.md](CHANGELOG.md). The current release is **0.5.0**
+(the novel-fold benchmark: a fold-seen vs novel-fold export for re-benchmarking existing
+checkpoints, a growth-stability fix for the balanced split, and an entry-skew stats view).
 
 ## License
 
