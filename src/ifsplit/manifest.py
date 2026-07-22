@@ -28,6 +28,11 @@ Supporting maps (only needed for sampling / curation, not to read the split):
   bulky (~24 MB at full-PDB scale), read only by ``fetch`` and curation audits.
 - ``splits.registry.json`` - canonical_key -> split, so a later, larger snapshot
   reuses prior assignments instead of re-hashing (growth stability).
+- ``folds.json`` / ``fold_groups.json`` / ``novel_fold_test.json`` - opt-in
+  fold-benchmark export, present only when ``fold_benchmark_method`` is set:
+  per-entry fold labels + a ``novel_fold`` flag (all splits), per-superfamily TEST
+  groups (for per-family reweighting), and the novel-fold test subset. Written
+  top-level (not under ``test/``); cleared on a rebuild that turns the export off.
 """
 
 from __future__ import annotations

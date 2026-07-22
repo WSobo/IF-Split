@@ -66,10 +66,15 @@ Invariants that must not regress:
   overlap is impossible by construction. This holds for both split strategies
   (`hash` and `balanced`, which only chooses *which* split a whole component lands
   in). `check_no_leakage` is a real invariant (not a tautology) — keep it that way.
-- **Growth stability:** a cluster/component's split is `hash(salt + canonical_key)`
+- **Growth stability:** `hash` maps a component to `hash(salt + canonical_key)`
   into cumulative fractions, keyed on the global-min member id (not RCSB's volatile
-  integer id). A larger snapshot only *adds* components; `splits.registry.json`
-  pins prior assignments.
+  integer id) — input-independent and registry-free, so a larger snapshot only
+  *adds* components and never moves existing ones. `balanced` differs: its val/test
+  fill boundaries scale with the snapshot's total entries, so prior components move
+  unless pinned. `splits.registry.json` pins them; an in-place `balanced` rebuild
+  auto-adopts `<out>/splits.registry.json` when the prior `dataset.lock`
+  `config_hash` matches (`--fresh` opts out), and the manifest records
+  `splits.growth_stable`.
 - **Annotate, never destroy:** ligand quality is a per-component *tier*
   (functional / ambiguous / artifact) in the manifest; structures are never
   dropped for ligand quality. Class labels derive from the functional tier.

@@ -18,6 +18,11 @@ max_total_residues: 5999           # max residues KEPT (drop if > this); LigandM
 # poly-UNK drop applies). Try ~20 to also drop tiny peptide fragments / mostly-unknown
 # chains whose sequence is a poor inverse-folding label.
 min_modeled_residues: 0
+# Opt-in single-chain filter: keep only entries with exactly one protein polymer
+# entity and no other polymer (no second protein type, no nucleic acid) — a metadata
+# proxy for a single-chain design target (ProteinMPNN's single-chain CATH setup). A
+# homo-oligomer of one entity still passes. Off by default.
+single_chain_only: false
 excluded_het: ["HOH", "NA", "CL", "K", "BR"]   # waters + common crystallization ions
 use_biological_assembly: true      # biounits, as in LigandMPNN (assembly 1)
 
@@ -45,6 +50,10 @@ exclude_purification_artifacts: true
 identity_threshold: 0.30           # clustering cutoff (Data API levels: 30/50/70/90/95/100)
 clustering_backend: "precomputed"  # reuse RCSB's published 30% clusters (the only backend; locked via the snapshot)
 structural_clustering: "off"       # fold-leakage control: off | cath | ecod | scop2 (opt-in; see README)
+# Novel-fold benchmark export: off | cath | ecod | scop2 (opt-in). Emits folds.json,
+# fold_groups.json, novel_fold_test.json; fold labels are DECOUPLED from fold merging,
+# so it never changes the split. Omitted from the config hash when off. See README.
+fold_benchmark_method: "off"
 split_fractions: {train: 0.80, val: 0.10, test: 0.10}
 split_strategy: "hash"             # "hash" (balance components) | "balanced" (balance entries: cap
                                    # dominant folds to train, fill val/test from the fold tail).

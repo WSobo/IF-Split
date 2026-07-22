@@ -35,12 +35,15 @@ records and sequences. Coordinates are an optional, downstream concern.
    `release_date <= snapshot_date`. Re-running with the same `snapshot_date`
    yields the same candidate set no matter *when* you run it (obsoleted entries
    are tracked, not silently dropped).
-2. **Deterministic cluster → split assignment.** A cluster's split is decided by
-   hashing a stable cluster key into the cumulative split fractions — independent
-   of how many other clusters exist. Existing clusters never move when the PDB
-   grows, which is what prevents train/test leakage on regeneration. A
-   `splits.registry.json` pins prior assignments to make this exact even across
-   re-clustering.
+2. **Deterministic cluster → split assignment.** For the default `hash` strategy a
+   cluster's split is decided by hashing a stable cluster key into the cumulative
+   split fractions — independent of how many other clusters exist, so existing
+   clusters never move when the PDB grows, which is what prevents train/test leakage
+   on regeneration (and lets `verify` certify a `hash` build). The `balanced`
+   strategy instead balances *entries*, so its val/test fill boundaries scale with
+   snapshot size; it achieves the same growth-stability by adopting a
+   `splits.registry.json` that pins prior component→split assignments — auto-adopted
+   on an in-place rebuild in v0.5.0 (see [Quickstart](#quickstart)).
 
 ### Fold-level leakage control
 
@@ -61,7 +64,11 @@ always measurable (`scripts/eval_structural_clustering.py` compares the methods)
 
 Coverage is partial by nature: CATH ≈ 55%, ECOD ≈ 80%, SCOP2 ≈ 52% of protein
 chains are classified (measured on the full 2026-07-14 snapshot); the rest fall
-back to sequence-only.
+back to sequence-only. Chains with no classification are held out by sequence
+only, so their fold-level hold-out is not guaranteed — the unclassified fraction
+is a residual-leakage *ceiling* (an upper bound), which `if-split stats` reports
+per split. It is a bound, not a measured number: IF-Split never measures fold
+leakage from coordinates.
 
 **Why it needs a balance-aware split.** On its own, fold-merging collapses the
 dominant superfamilies (antibodies, TIM barrels) into mega-components that land
@@ -70,7 +77,9 @@ split stays ~80/10/10). `split_strategy: "balanced"` fixes this: it **caps the
 dominant folds to train and fills val/test to their entry targets from the tail of
 smaller folds** — restoring ~80/10/10 by entries with thousands of distinct,
 held-out folds per split. It stays leakage-safe (whole components) and
-growth-stable (via the registry), and reports a gap if a method's tail is too thin
+growth-stable via the registry (an in-place rebuild auto-adopts
+`<out>/splits.registry.json` when its config matches; `--fresh` opts out — see
+[Quickstart](#quickstart)), and reports a gap if a method's tail is too thin
 (`cath`/`ecod` starve val; **`scop2` is the sweet spot**). `balanced` also fixes
 the plain sequence-only skew (88/6/6 → 80/10/10) from the antibody mega-cluster.
 
@@ -86,6 +95,39 @@ uv run if-split build --config config/fold-aware.yaml --out data/mc
 |---|---|---|--:|---|
 | default | hash | off | 88 / 6 / 6 | sequence-clustered |
 | fold-aware | balanced | scop2 | 80 / 10 / 10 | thousands of held-out folds |
+
+### Novel-fold benchmark (fold-seen vs novel-fold)
+
+Set `fold_benchmark_method: cath|ecod|scop2` (default `off`) to export a
+**fold-seen vs novel-fold** partition of the test set — a turnkey way to
+re-benchmark an *existing* checkpoint on folds it never saw in training. Fold
+**labels** are decoupled from the fold **merging** used by `structural_clustering`:
+they never feed union-find, so the split output and `check_no_leakage` are
+byte-identical whether it's on or off, and labels attach even to a fold-*leaky*
+split (e.g. the sequence-only split a public checkpoint was trained on).
+
+A test entry is **novel-fold** iff it is fold-classified and *every* one of its
+fold (super)families is absent from train. Unclassified test entries are neither
+novel nor seen — the unclassified fraction is a residual-leakage *ceiling*, not a
+measured number (IF-Split never measures fold leakage from coordinates).
+
+It writes three sidecars into `--out`: `folds.json` (per-entry fold labels +
+`novel_fold` flag, all splits), `fold_groups.json` (per-superfamily TEST groups
+for per-family reweighting), and `novel_fold_test.json` (just the novel-fold test
+ids).
+
+```python
+from ifsplit.dataset import load_dataset
+
+ds = load_dataset("data/out/manifest.json")
+ds.test.novel_fold_entries()   # test ids whose every fold is unseen in train
+ds.test.is_novel_fold("1abc")  # bool
+ds.test.folds_of("1abc")       # ["3.40.50.300", ...]
+ds.fold_groups()               # {superfamily -> {novel, test_entries}} for reweighting
+```
+
+`if-split stats` prints the novel-fold count. The export is opt-in metadata only:
+enabling it never downloads coordinates and never changes the split.
 
 ---
 
@@ -118,7 +160,9 @@ uv run if-split build --config config/default.yaml --out data/out
 # Dev: cap to the first N candidates (by sorted entry id — still reproducible).
 uv run if-split build --limit 50 --out /tmp/ifs
 
-# Summarize a build: split sizes, per-class test counts, curation tiers.
+# Summarize a build: split sizes + entry-fraction skew vs target, per-class test
+# counts, curation tiers, growth-stability status, fold coverage, and (if exported)
+# the novel-fold count.
 uv run if-split stats data/out/manifest.json
 
 # Reproduce-check: re-derive from a lock, report candidate drift vs the live PDB,
@@ -134,8 +178,13 @@ uv run if-split verify data/out/dataset.lock --candidates data/out/candidates.js
 uv run if-split resplit --candidates data/out/candidates.jsonl \
     --config config/fold-aware.yaml --out data/mc
 
-# Growth-stable regeneration: pin prior cluster→split assignments.
-uv run if-split build --registry data/out/splits.registry.json --out data/out2
+# Growth-stable regeneration (balanced strategy): rebuilding IN PLACE auto-adopts the
+# prior <out>/splits.registry.json when its config matches, preserving prior
+# component→split assignments as the PDB grows. --fresh starts a new lineage;
+# --registry <path> pins from a different prior build. (`hash` is growth-stable on
+# its own and ignores the registry, so `verify` still certifies it.)
+uv run if-split build --config config/fold-aware.yaml --out data/out          # re-run: auto-pins
+uv run if-split build --config config/fold-aware.yaml --out data/out --fresh   # opt out
 
 # OPTIONAL: download the actual structures for a built split (see below).
 uv run if-split fetch data/out/manifest.json --split test --out data/structures
@@ -336,8 +385,12 @@ The split is deterministic (a per-component hash, or the `balanced` fold-tail
 fill), so the test set's ligand mix is reported but not forced by default:
 `manifest.json` carries per-split, per-class `functional` counts plus `ambiguous`
 counts, so under-representation is visible.
-An opt-in `--enforce-minimums` top-up (recruit `functional`-only ligand clusters
-into test in deterministic order) is scoped for a future release.
+An opt-in `test_min_per_class` floor (e.g. `{metal: 500}`) tops up
+under-represented classes by recruiting WHOLE `functional`-tier sequence
+components into test in deterministic hash order — never individual entries (no
+leakage) and skipping registry-pinned components (growth stays stable). A floor
+beyond the available supply is met as far as possible and the shortfall is
+reported in the manifest (and by `if-split stats`), not forced.
 
 ### Using a split (loader)
 
@@ -491,7 +544,11 @@ doubles as a shareable **split spec** — see [Sharing a split spec](#sharing-a-
 | `exclude_purification_artifacts` | `true` | Demote His-tag metals to `artifact`; lone uncorroborated Ni/Co → `ambiguous`. |
 | `identity_threshold` | `0.30` | Clustering cutoff (RCSB levels: 30/50/70/90/95/100). |
 | `clustering_backend` | `precomputed` | Reuse RCSB's published 30% clusters (the only backend; locked via the snapshot). |
+| `structural_clustering` | `off` | Fold-level leakage control: `off` \| `cath` \| `ecod` \| `scop2`. Union-merges same-(super)family protein chains so a fold can't straddle train/test — see [Fold-level leakage control](#fold-level-leakage-control). Additive: only merges, never splits. |
 | `split_fractions` | 0.80 / 0.10 / 0.10 | train / val / test. |
+| `split_strategy` | `hash` | `hash` (balance components; input-independent and registry-free) or `balanced` (balance *entries*: cap dominant folds to train, fill val/test from the fold tail). |
+| `fold_benchmark_method` | `off` | Novel-fold benchmark export: `off` \| `cath` \| `ecod` \| `scop2`. When set, emits `folds.json` / `fold_groups.json` / `novel_fold_test.json`; fold *labels* are decoupled from fold *merging*, so it never changes the split or `check_no_leakage`. Omitted from the config hash when `off`. |
+| `test_min_per_class` | `{}` | Optional per-class floor of test entries carrying each functional ligand class; recruits WHOLE sequence components into test in deterministic order (never individual entries → no leakage), skipping registry-pinned components. Empty = off. |
 | `split_salt` | `snapsplit-v1` | Bump to intentionally reshuffle the split. |
 | `max_clashscore`, `max_rfree`, `max_ramachandran_outlier_pct`, `max_rotamer_outlier_pct`, `max_rsrz_outlier_pct`, `min_em_backbone_inclusion`, `require_validation_report` | off | Optional validation-report quality caps — see [Structure quality](#structure-quality-validation-report). |
 | `ligand_context_radius_A`, `max_ligand_atoms` | `8.0`, `25` | Featurization only (not part of the split). |

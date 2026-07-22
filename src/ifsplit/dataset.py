@@ -15,6 +15,12 @@ inverse-folding model actually consumes:
   never a target. Ambiguous opt-ins (``metal_site_nonnative`` pockets, ``glycan``
   carbohydrates) are available via ``include_ambiguous``.
 
+When the build enabled ``fold_benchmark_method``, the same views expose the
+decoupled fold-benchmark labels: ``SplitView.novel_fold_entries() /
+is_novel_fold(entry) / folds_of(entry)`` and ``IFSplitDataset.fold_groups()``
+(empty otherwise) - for scoring native recovery on the novel-fold test subset and
+per-superfamily reweighting. Still coordinate-free.
+
 The PDB is heavily redundant (thousands of near-identical lysozyme / kinase
 co-crystals). ``sample_by_cluster`` draws one entry per sequence cluster per epoch
 so over-represented folds don't dominate - deterministic given a seed (no global
