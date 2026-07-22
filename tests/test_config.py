@@ -103,13 +103,13 @@ def test_all_rcsb_identity_levels_accepted_for_precomputed():
         assert Config.model_validate(d).identity_level == round(frac * 100)
 
 
-def test_nonstandard_identity_level_allowed_for_mmseqs2_backend():
-    # mmseqs2 clusters at an arbitrary threshold, so a non-RCSB level is fine there
-    # even though the precomputed backend rejects it.
+def test_mmseqs2_backend_is_rejected():
+    # mmseqs2 was removed: RCSB's precomputed clusters are the only backend. A config
+    # asking for it must fail loudly at validation, not crash deep in Stage 5.
     d = _good_dict()
-    d["identity_threshold"] = 0.40
     d["clustering_backend"] = "mmseqs2"
-    assert Config.model_validate(d).identity_level == 40
+    with pytest.raises(ValidationError):
+        Config.model_validate(d)
 
 
 def test_resolution_by_method_normalizes_and_validates():

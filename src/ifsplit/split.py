@@ -270,11 +270,15 @@ def assign_splits(
 
 
 def check_no_leakage(result: SplitResult, clusters: ClusterResult) -> None:
-    """Verify no sequence cluster spans two splits. Raises on violation.
+    """Verify no sequence cluster — and, with structural clustering on, no fold
+    (super)family — spans two splits. Raises ``AssertionError`` on violation.
 
-    Genuine check (not a tautology): for every entry, every *raw* sequence
-    cluster it touches must resolve to the entry's own split. Union-find
-    guarantees this, so a failure means a real bug upstream.
+    Genuine check (not a tautology): for every entry, every *raw* sequence cluster
+    it touches must resolve to the entry's own split, and (when
+    ``structural_clustering`` is on) so must every structural (super)family it
+    carries. Union-find guarantees both, so a failure means a real bug upstream.
+    The fold check is a no-op for sequence-only builds (``entry_families`` empty),
+    where two distinct folds may legitimately land in different splits.
     """
     raw_to_split: dict[str, str] = {}
     for entry, raw_keys in clusters.entry_raw_clusters.items():
@@ -284,4 +288,16 @@ def check_no_leakage(result: SplitResult, clusters: ClusterResult) -> None:
             if prior != split:
                 raise AssertionError(
                     f"leakage: raw cluster {rk} appears in both {prior!r} and {split!r}"
+                )
+
+    # Fold-level: no homologous (super)family may straddle two splits either — the
+    # guarantee that makes structural_clustering meaningful. Empty (no-op) when off.
+    fam_to_split: dict[str, str] = {}
+    for entry, fams in clusters.entry_families.items():
+        split = result.entry_split[entry]
+        for fam in fams:
+            prior = fam_to_split.setdefault(fam, split)
+            if prior != split:
+                raise AssertionError(
+                    f"fold leakage: family {fam!r} appears in both {prior!r} and {split!r}"
                 )

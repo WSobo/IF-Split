@@ -1,9 +1,11 @@
 """Stage 5 - Cluster protein entities into leakage-safe groups.
 
-The ``precomputed`` backend reads each protein entity's RCSB cluster id at the
-configured identity level from ``PolymerEntity.cluster_ids`` (captured in Stage 1
-from the Data API ``rcsb_cluster_membership`` field) - no file download, no
-mmseqs2 binary.
+Clustering reuses RCSB's published polymer-entity clusters: each protein entity's
+RCSB cluster id at the configured identity level is read from
+``PolymerEntity.cluster_ids`` (captured in Stage 1 from the Data API
+``rcsb_cluster_membership`` field) - no file download, no external binary. These
+are the same mmseqs2-computed 30% clusters ProteinMPNN/LigandMPNN used, but locked
+via the snapshot so the split stays byte-for-byte reproducible.
 
 A *raw cluster* is the set of protein entities sharing an RCSB cluster id. But an
 entry with several protein chains can touch several raw clusters, so raw clusters
@@ -61,6 +63,11 @@ class ClusterResult:
     structural_method: str = "off"
     n_seq_only_components: int = 0
     n_structural_families: int = 0
+    # Per-entry structural (super)family keys under the active method (empty when
+    # structural_method == "off"). Lets check_no_leakage assert the fold-level
+    # guarantee — no homologous (super)family straddles two splits — directly,
+    # matching the fold-leakage claim (not just sequence-cluster leakage).
+    entry_families: dict[str, list[str]] = field(default_factory=dict)
 
     @property
     def n_clusters(self) -> int:
@@ -70,11 +77,6 @@ class ClusterResult:
 
 def build_clusters(records: list[CandidateRecord], cfg: Config) -> ClusterResult:
     """Cluster filtered records at ``cfg.identity_level``, merged into components."""
-    if cfg.clustering_backend != "precomputed":
-        raise NotImplementedError(
-            f"clustering_backend {cfg.clustering_backend!r} not implemented "
-            "(only 'precomputed' is available)."
-        )
     level = cfg.identity_level
 
     # 1. Raw clusters: RCSB cluster id -> member entity ids -> canonical raw key
@@ -96,6 +98,7 @@ def build_clusters(records: list[CandidateRecord], cfg: Config) -> ClusterResult
     unclustered: list[str] = []
     all_keys: set[str] = set(raw_key.values())
     family_raw: dict[str, set[str]] = {}  # structural family -> raw keys sharing it
+    entry_families: dict[str, list[str]] = {}  # entry -> fold family keys (method on)
     for r in records:
         proteins = [e for e in r.polymer_entities if e.is_protein]
         if not proteins:
@@ -110,13 +113,17 @@ def build_clusters(records: list[CandidateRecord], cfg: Config) -> ClusterResult
             multichain.append(r.entry_id)
         entry_raw[r.entry_id] = keys
         if method != "off":
+            efams: set[str] = set()
             for e in proteins:
                 fams = e.structural_families.get(method)
                 if not fams:
                     continue
+                efams.update(fams)
                 rk = raw_key[e.cluster_ids[level]] if level in e.cluster_ids else keys[0]
                 for fam in fams:
                     family_raw.setdefault(fam, set()).add(rk)
+            if efams:
+                entry_families[r.entry_id] = sorted(efams)
 
     # 3. Union-find: merge raw clusters joined by a shared entry into components.
     #    The smaller key is always made the root, so a component's root is its
@@ -172,4 +179,5 @@ def build_clusters(records: list[CandidateRecord], cfg: Config) -> ClusterResult
         structural_method=method,
         n_seq_only_components=n_seq_only,
         n_structural_families=n_bridging_families,
+        entry_families=dict(sorted(entry_families.items())),
     )
