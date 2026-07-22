@@ -43,6 +43,16 @@ Two mechanisms deliver this, and they must both be in from the start:
   > cluster's membership among current entities) and persist a cluster→split
   > registry so growth only ever *adds* clusters.
 
+  > **Two strategies, one guarantee (v0.5.0).** This pure-hash guarantee is what
+  > makes `split_strategy: hash` input-independent and registry-free — the reason
+  > `verify` can certify a hash build. `split_strategy: balanced` is different: it
+  > fills val/test to *entry* targets derived from the snapshot's total size, so its
+  > component→split boundaries shift as the snapshot grows and it is growth-stable
+  > only when a `splits.registry.json` pins prior assignments. Since v0.5.0 an
+  > in-place rebuild (same `--out`, and a prior `dataset.lock` whose `config_hash`
+  > matches) auto-adopts that registry; `--fresh` starts a fresh, unpinned lineage.
+  > The build records the outcome as `splits.growth_stable` in the manifest.
+
 ## 1.5 Architecture: metadata-first, no bulk structure downloads
 
 The split is computed entirely from **metadata + sequences**, which are tiny and
@@ -159,9 +169,14 @@ histag_min_run: 6
 exclude_purification_artifacts: true
 identity_threshold: 0.30           # clustering cutoff (Data API levels: 30/50/70/90/95/100)
 clustering_backend: "precomputed"  # reuse RCSB's published 30% clusters (the only backend)
+structural_clustering: "off"       # fold-leakage control: off | cath | ecod | scop2 (opt-in)
+fold_benchmark_method: "off"       # opt-in novel-fold benchmark export: off | cath | ecod | scop2
+                                   # (omitted from config_hash when off)
 split_fractions: {train: 0.80, val: 0.10, test: 0.10}
+split_strategy: "hash"             # "hash" (balance components) | "balanced" (balance entries)
 split_salt: "snapsplit-v1"         # bump to reshuffle intentionally
 seed: 0
+test_min_per_class: {}             # opt-in per-class test floor; {} = off
 # ligand context (downstream-optional; see §4 on separation of concerns)
 ligand_context_radius_A: 8.0
 max_ligand_atoms: 25
@@ -275,10 +290,11 @@ re-featurize from the cleaned structures.
 > **Test-set stratification (see §6).** Default is a **report-only floor**: the
 > pure hash split is untouched; the manifest carries per-split, per-class
 > *functional* counts plus *ambiguous* counts so under-representation is visible.
-> An opt-in `--enforce-minimums N` top-up (recruit `functional`-only ligand
-> clusters into test in deterministic hash order, registry-pinned, shortfall
-> logged) is scoped but deferred — tiering first guarantees a quota can only ever
-> recruit *functional* ligands, never junk.
+> An opt-in `test_min_per_class` floor (config field, e.g. `{metal: 500}`) is
+> **implemented**: any class below its floor recruits whole `functional`-tier
+> sequence components into test in deterministic hash order, registry-pinned and
+> with the shortfall logged (never individual entries, so no leakage). Tiering
+> first guarantees a quota can only ever recruit *functional* ligands, never junk.
 
 **Stage 5 — Sequence clustering (`cluster.py`) — two backends**
 
@@ -323,6 +339,14 @@ ECOD/SCOP2 on the family name. Purely additive (only merges, never splits);
 coverage is partial (CATH ~55%, ECOD ~81%, SCOP2 ~52% of chains) so unclassified
 chains fall back to sequence-only. See README "Fold-level leakage control".
 
+**Fold labels are decoupled from fold merging (v0.5.0).** `structural_clustering`
+feeds union-find (it changes the split). The novel-fold benchmark instead reads a
+separate `fold_benchmark_method` (`off | cath | ecod | scop2`) into
+`ClusterResult.entry_fold_labels`, which *never* enters union-find. So enabling
+labels leaves the split partition and `check_no_leakage` byte-identical, and labels
+attach even to a fold-leaky sequence-only split. These labels drive the Stage 6/7
+novel-fold export below.
+
 **Stage 6 — Split assignment (`split.py`) — the reproducibility core**
 
 - Assign each cluster (not each entry) to a split by deterministic hash:
@@ -334,9 +358,17 @@ chains fall back to sequence-only. See README "Fold-level leakage control".
   (under structural clustering) or the antibody mega-cluster (even sequence-only)
   balloons one split. `balanced` caps dominant folds (> 0.2% of entries) to train
   and fills val/test to their *entry* targets from the tail of smaller folds in
-  hash order — leakage-safe (whole components), growth-stable via the registry,
-  and it reports a gap rather than forcing a target it can't reach. The
-  "fold-aware" recipe `structural_clustering: scop2` + `split_strategy: balanced`
+  hash order — leakage-safe (whole components), and it reports a gap rather than
+  forcing a target it can't reach. Growth stability is **not** automatic for
+  `balanced`: because val/test are filled to entry targets that scale with the
+  snapshot size, a larger snapshot would move prior components unless they are
+  pinned (this was the v0.5.0 bug). Since v0.5.0 an in-place rebuild auto-adopts
+  `<out>/splits.registry.json` when the previous build's `dataset.lock`
+  `config_hash` matches (the CLI self-pins; `--fresh` starts a new lineage;
+  `--registry <path>` pins an explicit prior). `hash` is unchanged — input-
+  independent and registry-free, so `verify` still certifies it. The manifest
+  carries `splits.growth_stable` and `stats` prints the pinned / NOT-pinned status.
+  The "fold-aware" recipe `structural_clustering: scop2` + `split_strategy: balanced`
   (`config/fold-aware.yaml`) yields ~80/10/10 by entries with thousands of folds
   held entirely out of train.
 - Stratify the test set by ligand class so SM/metal/nucleotide are all
@@ -354,7 +386,10 @@ Emit two artifacts in `data/out/`:
 
 - `manifest.json` — human-facing: snapshot_date, config hash, tool version
   (if-split), per-split entry lists, per-structure metadata, ligand-class
-  tags, per-class test counts, drop log.
+  tags, per-class test counts, drop log, `splits.growth_stable` (growth-stability
+  flag), per-split fold coverage (unclassified % = residual-leakage ceiling), the
+  optional `fold_benchmark` summary block, and a `files` index (split files,
+  registry, and — when exported — folds.json / fold_groups.json / novel_fold_test.json).
 - `dataset.lock` — reproduction-facing anchors: (1) the embedded config + the
   **candidate set** — every entry ID and the canonical `candidates.jsonl` SHA-256
   (the candidate set is reproduced from the Data API by id + `release_date <=
@@ -367,6 +402,16 @@ Emit two artifacts in `data/out/`:
   with identical inputs. (mmCIF SHA-256s belong to the *optional* featurization
   fetch, not this lock.)
 - Version the dataset as `IF-Split-<snapshot_date>` (e.g. `IF-Split-2026.05.30`).
+
+**Novel-fold benchmark export (opt-in `fold_benchmark_method` ← *implemented***).
+From the decoupled `entry_fold_labels` (Stage 5), emit three top-level sidecars:
+`folds.json` (per-entry `{split, families, novel_fold}`), `fold_groups.json`
+(per-superfamily test groups for per-family reweighting), and `novel_fold_test.json`
+(the test entries whose every fold (super)family is unseen in train). A
+`fold_benchmark` summary is added to the manifest. The field is omitted from
+`config_hash` when `off`, and because the labels never feed union-find the export
+changes no split membership — it lets you re-benchmark existing checkpoints
+(fold-seen vs novel-fold) without altering the split.
 
 **Stage 8 — Loader (`dataset.py`)**
 
@@ -381,16 +426,33 @@ Emit two artifacts in `data/out/`:
   so an epoch is reproducible and varying the seed rotates which member is drawn.
   Bigger *training-quality* lever than perfecting ligand tiers, and free because
   the clusters already exist.
+- **Novel-fold views (v0.5.0).** When a build exported the fold benchmark,
+  `SplitView.novel_fold_entries() / is_novel_fold(entry) / folds_of(entry)` and
+  `IFSplitDataset.fold_groups()` expose the per-entry fold labels and
+  per-superfamily test groups for fold-seen-vs-novel evaluation and per-family
+  reweighting — still coordinate-free.
 
 ## 5. CLI surface (`cli.py`)
 
 - `if-split build --config config/default.yaml` → runs Stages 1–7, writes
-  manifest+lock.
-- `if-split verify data/out/dataset.lock` → re-downloads by ID, checks hashes,
-  reports drift.
-- `if-split stats data/out/manifest.json` → split sizes, per-class test counts,
-  identity audit (sanity-check cross-split max identity is below threshold on a
-  sample).
+  manifest+lock. `--count` caps candidates for a dev build; for the `balanced`
+  strategy `--fresh` opts out of registry auto-adopt and `--registry <path>` pins
+  an explicit prior. When `fold_benchmark_method` is set, `build` also emits the
+  novel-fold benchmark sidecars (folds.json / fold_groups.json / novel_fold_test.json).
+- `if-split resplit --candidates candidates.jsonl --config X.yaml` → re-runs
+  Stages 3–7 offline from a cached snapshot (no Stage 1 / no RCSB), for ablating
+  curation, clustering, or the split strategy in seconds.
+- `if-split verify data/out/dataset.lock` → re-enumerates by ID, reports candidate
+  drift, and (when candidates reproduce) certifies the split-output hash. With
+  `--candidates` it integrity-checks a distributed snapshot offline.
+- `if-split spec <manifest|config>` → emit a portable, self-identifying split spec.
+- `if-split fetch <manifest>` → optional Stage-2 coordinate download for a built
+  split (not part of the split path).
+- `if-split stats data/out/manifest.json` → per-split entry counts with each
+  split's entry fraction vs its configured target (entry-skew), component counts,
+  growth-stability status (pinned / NOT pinned), per-split fold coverage
+  (unclassified % reported as the residual-leakage *ceiling*, not a measured leak),
+  the novel-fold benchmark summary when exported, and per-class test counts.
 
 ## 6. Gotchas to handle (these will bite otherwise)
 
@@ -460,10 +522,12 @@ split).
 given a config (proven live: repeated builds produce byte-identical manifests),
 `verify` round-trips the lock, and the no-cluster-leakage invariant is asserted
 every build. Beyond the original spec: Stage 4 grew **confidence tiering**
-(functional/ambiguous/artifact, annotate-never-drop) and Stage 8 grew
-**cluster-balanced sampling**. Remaining optional work, all explicitly out of the
-core split path: Stage 2 on-demand coordinate fetch and the opt-in
-`--enforce-minimums` test-stratification top-up.
+(functional/ambiguous/artifact, annotate-never-drop), Stage 8 grew
+**cluster-balanced sampling**, the opt-in `test_min_per_class` test-stratification
+top-up shipped as a config field, and v0.5.0 added the balanced-split
+growth-stability fix and the opt-in novel-fold benchmark export. Remaining
+optional work, explicitly out of the core split path: the Stage 2 on-demand
+coordinate fetch.
 
 Each phase ends with a runnable CLI command and a test. The dataset is "done"
 when `build` is deterministic given a config, and `verify` round-trips the lock

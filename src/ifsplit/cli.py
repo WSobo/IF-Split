@@ -55,8 +55,53 @@ def _print_config_header(cfg, config_path: str, *, limit: int | None = None) -> 
     print()
 
 
+def _resolve_registry(cfg, out, registry_path, fresh) -> dict[str, str]:
+    """Resolve the growth-stability registry for this build.
+
+    Precedence: an explicit ``--registry`` path wins; ``--fresh`` forces a clean
+    (unpinned) lineage; otherwise, for the ``balanced`` strategy only, auto-adopt
+    ``<out>/splits.registry.json`` when a prior in-place build used the SAME config
+    (its ``dataset.lock`` ``config_hash`` matches). This makes an in-place rebuild
+    growth-stable by default — the fix for ``balanced``, whose fill boundaries shift
+    as the snapshot grows unless prior components are pinned. ``hash`` is already
+    input-independent and registry-free (so ``verify`` can still certify it), so it
+    is never auto-pinned.
+    """
+    from .manifest import read_lock, read_registry
+
+    if registry_path:
+        return read_registry(registry_path)
+    if fresh or cfg.split_strategy != "balanced":
+        return {}
+    reg_file = Path(out) / "splits.registry.json"
+    if not reg_file.exists():
+        return {}  # first build into this dir — nothing to pin
+    same_config = False
+    lock_file = Path(out) / "dataset.lock"
+    if lock_file.exists():
+        try:
+            lock = read_lock(lock_file)
+            same_config = isinstance(lock, dict) and lock.get("config_hash") == cfg.config_hash()
+        except (OSError, ValueError):
+            same_config = False
+    if same_config:
+        reg = read_registry(reg_file)
+        if reg:
+            print(
+                f"  growth stability: pinning {len(reg)} prior assignments from "
+                f"{reg_file.name} (same config; --fresh to start a new lineage)"
+            )
+        return reg
+    print(
+        f"  growth stability: {reg_file.name} exists but its build config differs — "
+        f"starting a NEW lineage (a balanced split is only growth-stable within one "
+        f"config; pass --registry <prior> to pin, or --fresh to silence)"
+    )
+    return {}
+
+
 def _run_pipeline(
-    cfg, records, sha, out, *, limit, registry_path, source="build"
+    cfg, records, sha, out, *, limit, registry_path, fresh=False, source="build"
 ) -> tuple[Path, int]:
     """Stages 3-7 from an in-memory candidate set (shared by ``build`` and ``resplit``).
 
@@ -67,13 +112,14 @@ def _run_pipeline(
     from .cluster import build_clusters
     from .ligands import classify_components
     from .manifest import (
+        build_fold_benchmark,
         build_lock,
         build_manifest,
         build_targets,
         build_tiers_doc,
-        read_registry,
         write_classes,
         write_clusters,
+        write_fold_benchmark,
         write_lock,
         write_manifest,
         write_registry,
@@ -108,7 +154,8 @@ def _run_pipeline(
     )
 
     print("Stage 6 - assign splits (deterministic hash):")
-    registry = read_registry(registry_path) if registry_path else {}
+    registry = _resolve_registry(cfg, out, registry_path, fresh)
+    growth_stable = cfg.split_strategy != "balanced" or bool(registry)
     entry_classes = {eid: info["classes"] for eid, info in class_map.items()}
     splits = assign_splits(clusters, cfg, registry=registry, entry_classes=entry_classes)
     check_no_leakage(splits, clusters)  # structural guarantee; raises on violation
@@ -126,6 +173,10 @@ def _run_pipeline(
         else:
             print("  test minimums: applied; all per-class floors met")
 
+    fold_benchmark = build_fold_benchmark(
+        clusters.entry_fold_labels, splits.entry_split, cfg.fold_benchmark_method
+    )
+
     print("Stage 7 - manifest + registry:")
     manifest = build_manifest(
         cfg,
@@ -136,6 +187,8 @@ def _run_pipeline(
         clusters=clusters,
         splits=splits,
         class_map=class_map,
+        growth_stable=growth_stable,
+        fold_benchmark_summary=fold_benchmark["summary"] if fold_benchmark else None,
     )
     mpath = write_manifest(manifest, out)
     # The lock is written here (after Stage 6), not at Stage 1, so it can pin the
@@ -162,6 +215,7 @@ def _run_pipeline(
     write_tiers(build_tiers_doc(class_map), out)
     targets = build_targets(class_map, splits, clusters)
     write_targets(targets, out)
+    write_fold_benchmark(fold_benchmark, out)  # writes sidecars, or clears stale ones
     n_targets = sum(1 for t in targets if t["tier"] == "functional")
     print(f"  wrote {mpath} (provenance + counts)")
     for s in ("train", "val", "test"):
@@ -170,6 +224,12 @@ def _run_pipeline(
         print(f"  wrote {p}")
     print("  wrote clusters.json, ligands.classes.json, ligands.tiers.json, splits.registry.json")
     print(f"  wrote targets.jsonl ({len(kept)} backbones, {n_targets} conditioning targets)")
+    if fold_benchmark is not None:
+        n_novel = fold_benchmark["summary"]["n_test_novel_fold"]
+        print(
+            f"  wrote novel_fold_test.json, folds.json, fold_groups.json "
+            f"({n_novel} novel-fold test entries)"
+        )
     return mpath, len(kept)
 
 
@@ -193,7 +253,13 @@ def cmd_build(args: argparse.Namespace) -> int:
         cfg, args.out, limit=args.limit, progress=say
     )
     mpath, n_kept = _run_pipeline(
-        cfg, records, sha, args.out, limit=args.limit, registry_path=args.registry
+        cfg,
+        records,
+        sha,
+        args.out,
+        limit=args.limit,
+        registry_path=args.registry,
+        fresh=getattr(args, "fresh", False),
     )
     print()
     print(f"Build complete: {n_kept} structures across train/val/test.")
@@ -273,7 +339,14 @@ def cmd_resplit(args: argparse.Namespace) -> int:
     print(f"  read {len(records)} candidates from {cand} (sha256={sha[:12]}...)")
     _warn_if_config_would_reenumerate(cfg, cand, sha)
     mpath, n_kept = _run_pipeline(
-        cfg, records, sha, args.out, limit=None, registry_path=args.registry, source="resplit"
+        cfg,
+        records,
+        sha,
+        args.out,
+        limit=None,
+        registry_path=args.registry,
+        fresh=getattr(args, "fresh", False),
+        source="resplit",
     )
     print()
     print(f"Resplit complete: {n_kept} structures across train/val/test (from a fixed snapshot).")
@@ -444,6 +517,13 @@ def build_parser() -> argparse.ArgumentParser:
         help="Optional prior splits.registry.json to pin existing cluster->split "
         "assignments (growth stability).",
     )
+    pb.add_argument(
+        "--fresh",
+        action="store_true",
+        help="Start a new split lineage: ignore any splits.registry.json already in "
+        "--out. By default a balanced rebuild into the same --out auto-pins the prior "
+        "assignments when the config matches (growth stability); --fresh opts out.",
+    )
     pb.set_defaults(func=cmd_build)
 
     prs = sub.add_parser(
@@ -463,6 +543,11 @@ def build_parser() -> argparse.ArgumentParser:
         "--registry",
         default=None,
         help="Optional prior splits.registry.json to pin existing cluster->split assignments.",
+    )
+    prs.add_argument(
+        "--fresh",
+        action="store_true",
+        help="Start a new split lineage: ignore any splits.registry.json already in --out.",
     )
     prs.set_defaults(func=cmd_resplit)
 

@@ -68,6 +68,10 @@ class ClusterResult:
     # guarantee — no homologous (super)family straddles two splits — directly,
     # matching the fold-leakage claim (not just sequence-cluster leakage).
     entry_families: dict[str, list[str]] = field(default_factory=dict)
+    # Fold-benchmark labels (cfg.fold_benchmark_method): per-entry (super)family
+    # membership DECOUPLED from union-find — never merges components, so it can label
+    # folds even on a fold-leaky split. Empty when fold_benchmark_method == "off".
+    entry_fold_labels: dict[str, list[str]] = field(default_factory=dict)
 
     @property
     def n_clusters(self) -> int:
@@ -93,12 +97,14 @@ def build_clusters(records: list[CandidateRecord], cfg: Config) -> ClusterResult
     #    entity's raw key, so structural families (step 3b) can be attached to the
     #    same union-find nodes the sequence clusters use.
     method = cfg.structural_clustering
+    bench_method = cfg.fold_benchmark_method
     entry_raw: dict[str, list[str]] = {}
     multichain: list[str] = []
     unclustered: list[str] = []
     all_keys: set[str] = set(raw_key.values())
     family_raw: dict[str, set[str]] = {}  # structural family -> raw keys sharing it
     entry_families: dict[str, list[str]] = {}  # entry -> fold family keys (method on)
+    entry_fold_labels: dict[str, list[str]] = {}  # entry -> fold labels (benchmark; no merge)
     for r in records:
         proteins = [e for e in r.polymer_entities if e.is_protein]
         if not proteins:
@@ -124,6 +130,14 @@ def build_clusters(records: list[CandidateRecord], cfg: Config) -> ClusterResult
                     family_raw.setdefault(fam, set()).add(rk)
             if efams:
                 entry_families[r.entry_id] = sorted(efams)
+        if bench_method != "off":
+            bfams: set[str] = set()
+            for e in proteins:
+                fams = e.structural_families.get(bench_method)
+                if fams:
+                    bfams.update(fams)
+            if bfams:
+                entry_fold_labels[r.entry_id] = sorted(bfams)
 
     # 3. Union-find: merge raw clusters joined by a shared entry into components.
     #    The smaller key is always made the root, so a component's root is its
@@ -180,4 +194,5 @@ def build_clusters(records: list[CandidateRecord], cfg: Config) -> ClusterResult
         n_seq_only_components=n_seq_only,
         n_structural_families=n_bridging_families,
         entry_families=dict(sorted(entry_families.items())),
+        entry_fold_labels=dict(sorted(entry_fold_labels.items())),
     )

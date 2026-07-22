@@ -488,6 +488,152 @@ def test_existing_cluster_does_not_move_when_dataset_grows(sample_entries, artif
         assert sp_b.cluster_split[key] == split
 
 
+def _clusters_from(members):
+    """Build a ClusterResult from a {component_key: [entry_ids]} map (for split tests)."""
+    from ifsplit.cluster import ClusterResult
+
+    e2c, eraw = {}, {}
+    for key, ents in members.items():
+        for e in ents:
+            e2c[e] = key
+            eraw[e] = [key]
+    return ClusterResult(
+        30, dict(sorted(e2c.items())), dict(sorted(members.items())), dict(sorted(eraw.items()))
+    )
+
+
+def _members(prefix, n, start=0):
+    """n components with tail sizes 1..20, so the balanced val/test fill is exercised."""
+    return {
+        f"{prefix}{i:05d}": [f"{prefix}{i:05d}_{j}" for j in range(1 + i % 20)]
+        for i in range(start, start + n)
+    }
+
+
+def test_balanced_growth_stability_needs_registry():
+    # A balanced split's val/test fill boundaries scale with total entries, so WITHOUT a
+    # registry a grown snapshot moves prior components across splits; the registry pins them.
+    cfg = _cfg(split_strategy="balanced")
+    a_mem = _members("A", 1000)
+    clusters_a = _clusters_from(a_mem)
+    clusters_b = _clusters_from({**a_mem, **_members("B", 1000)})  # A + 1000 new components
+
+    sp_a = assign_splits(clusters_a, cfg)
+    sp_b_noreg = assign_splits(clusters_b, cfg)  # registry defaults to {}
+    moved = sum(1 for k in a_mem if sp_a.cluster_split[k] != sp_b_noreg.cluster_split[k])
+    assert moved > 0, "balanced must NOT be assumed growth-stable without a registry"
+
+    sp_b_reg = assign_splits(clusters_b, cfg, registry=sp_a.cluster_split)
+    moved_reg = sum(1 for k in a_mem if sp_a.cluster_split[k] != sp_b_reg.cluster_split[k])
+    assert moved_reg == 0, "the registry must restore growth stability for balanced"
+
+
+def test_balanced_rebuild_auto_pins_registry(tmp_path, sample_entries, artifact_entry, capsys):
+    # The fix: a balanced rebuild into the same --out auto-adopts the prior registry when
+    # the config matches, so the lock records it and the manifest reports growth_stable.
+    from ifsplit.cli import _run_pipeline
+    from ifsplit.manifest import read_lock, read_manifest
+
+    cfg = _cfg(split_strategy="balanced")
+    recs = _records(sample_entries, artifact_entry)
+    out = tmp_path / "d"
+
+    _run_pipeline(cfg, recs, "sha", out, limit=None, registry_path=None)  # first build
+    assert read_lock(out / "dataset.lock")["split"]["registry_sha256"] is None  # registry-free
+
+    capsys.readouterr()
+    _run_pipeline(cfg, recs, "sha", out, limit=None, registry_path=None)  # in-place rebuild
+    assert "pinning" in capsys.readouterr().out
+    assert read_lock(out / "dataset.lock")["split"]["registry_sha256"] is not None
+    assert read_manifest(out / "manifest.json")["splits"]["growth_stable"] is True
+
+    _run_pipeline(cfg, recs, "sha", out, limit=None, registry_path=None, fresh=True)  # opt out
+    assert read_lock(out / "dataset.lock")["split"]["registry_sha256"] is None
+
+
+def test_hash_rebuild_stays_registry_free(tmp_path, sample_entries, artifact_entry):
+    # No regression: hash is input-independent, so it is never auto-pinned and stays
+    # registry-free (verify can still certify the split output).
+    from ifsplit.cli import _run_pipeline
+    from ifsplit.manifest import read_lock, read_manifest
+
+    cfg = _cfg()  # hash (default)
+    recs = _records(sample_entries, artifact_entry)
+    out = tmp_path / "d"
+    _run_pipeline(cfg, recs, "sha", out, limit=None, registry_path=None)
+    _run_pipeline(cfg, recs, "sha", out, limit=None, registry_path=None)  # rebuild
+    assert read_lock(out / "dataset.lock")["split"]["registry_sha256"] is None
+    assert read_manifest(out / "manifest.json")["splits"]["growth_stable"] is True
+
+
+# ----------------------- Phase 7: novel-fold benchmark --------------------- #
+def test_build_fold_benchmark_novel_is_train_unseen():
+    from ifsplit.manifest import build_fold_benchmark
+
+    labels = {"T1": ["fam.seen"], "T2": ["fam.novel"], "TR1": ["fam.seen"], "V1": ["fam.novel"]}
+    entry_split = {"T1": "test", "T2": "test", "TR1": "train", "V1": "val"}
+    fb = build_fold_benchmark(labels, entry_split, "scop2")
+    assert fb["novel_fold_test"] == ["T2"]  # its fold is not in train; T1's is
+    assert fb["summary"]["n_test_classified"] == 2
+    assert fb["summary"]["n_test_novel_fold"] == 1
+    assert fb["fold_groups"]["fam.seen"] == {"novel": False, "test_entries": ["T1"]}
+    assert fb["fold_groups"]["fam.novel"] == {"novel": True, "test_entries": ["T2"]}
+    assert fb["per_entry"]["V1"]["novel_fold"] is True  # val held out + fold unseen
+    assert fb["per_entry"]["TR1"]["novel_fold"] is False  # train is never novel
+    assert build_fold_benchmark(labels, entry_split, "off") is None
+
+
+def test_fold_benchmark_decoupled_from_split():
+    # structural_clustering OFF but fold_benchmark ON: labels are emitted WITHOUT merging,
+    # so the split is byte-identical to a pure off/off build (the decoupling guarantee).
+    recs = [
+        _fold_record("AAA1", 10, {"cath": ["1.10.1.1"]}),
+        _fold_record("BBB2", 20, {"cath": ["1.10.1.1"]}),  # same fold, different seq cluster
+    ]
+    base = _cfg()  # off / off
+    bench = _cfg(fold_benchmark_method="cath")  # off clustering, cath benchmark labels
+
+    cr_base = build_clusters(filter_candidates(recs, base)[0], base)
+    cr_bench = build_clusters(filter_candidates(recs, bench)[0], bench)
+    assert cr_base.cluster_members == cr_bench.cluster_members  # labels never merged them
+    assert cr_bench.entry_families == {}  # structural_clustering off -> no merge labels
+    assert cr_bench.entry_fold_labels == {"AAA1": ["1.10.1.1"], "BBB2": ["1.10.1.1"]}
+    assert assign_splits(cr_base, base).entry_split == assign_splits(cr_bench, bench).entry_split
+
+
+def test_fold_benchmark_off_is_config_hash_stable():
+    # Off (default) is a pure export toggle: omitted from the hash so legacy configs are
+    # unchanged; turning it on changes the hash (it changes the outputs).
+    assert "fold_benchmark_method" not in _cfg().canonical_dict()
+    assert "fold_benchmark_method" in _cfg(fold_benchmark_method="cath").canonical_dict()
+    assert _cfg().config_hash() != _cfg(fold_benchmark_method="cath").config_hash()
+
+
+def test_fold_benchmark_export_end_to_end(tmp_path):
+    from ifsplit.cli import _run_pipeline
+    from ifsplit.dataset import load_dataset
+    from ifsplit.manifest import read_manifest
+
+    cfg = _cfg(fold_benchmark_method="cath")
+    recs = [_fold_record(f"E{i:03d}", i, {"cath": [f"1.10.{i}.1"]}) for i in range(30)]
+    out = tmp_path / "d"
+    _run_pipeline(cfg, recs, "sha", out, limit=None, registry_path=None)
+
+    for fname in ("folds.json", "fold_groups.json", "novel_fold_test.json"):
+        assert (out / fname).exists()
+    assert read_manifest(out / "manifest.json")["fold_benchmark"]["method"] == "cath"
+
+    ds = load_dataset(out / "manifest.json")
+    novel = ds.test.novel_fold_entries()
+    assert set(novel) <= set(ds.test.entry_ids)
+    # Every cath fold here is unique to one entry, so a test fold is never in train:
+    # all classified test entries are novel-fold, and every fold group is novel.
+    assert set(novel) == set(ds.test.entry_ids)
+    assert all(g["novel"] for g in ds.fold_groups().values())
+    for e in ds.test.entry_ids:
+        assert ds.test.is_novel_fold(e) and ds.test.folds_of(e)
+
+
 # --------------- union-find: structural leakage prevention ----------------- #
 def _protein_record(entry_id: str, cluster30_ids: list[int]) -> CandidateRecord:
     """A record whose protein chains sit in the given raw clusters (id at 30%)."""

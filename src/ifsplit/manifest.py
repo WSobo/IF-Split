@@ -28,6 +28,11 @@ Supporting maps (only needed for sampling / curation, not to read the split):
   bulky (~24 MB at full-PDB scale), read only by ``fetch`` and curation audits.
 - ``splits.registry.json`` - canonical_key -> split, so a later, larger snapshot
   reuses prior assignments instead of re-hashing (growth stability).
+- ``folds.json`` / ``fold_groups.json`` / ``novel_fold_test.json`` - opt-in
+  fold-benchmark export, present only when ``fold_benchmark_method`` is set:
+  per-entry fold labels + a ``novel_fold`` flag (all splits), per-superfamily TEST
+  groups (for per-family reweighting), and the novel-fold test subset. Written
+  top-level (not under ``test/``); cleared on a rebuild that turns the export off.
 """
 
 from __future__ import annotations
@@ -55,6 +60,10 @@ CLUSTERS_FILENAME = "clusters.json"
 TARGETS_FILENAME = "targets.jsonl"
 SPLIT_FILES = {"train": "train.json", "val": "val.json", "test": "test.json"}
 TEST_SUBDIR = "test"  # per-class test-id lists live here: test/<class>_test.json
+# Fold-benchmark export (top-level so the test/*_test.json cleanup can't touch them).
+FOLDS_FILENAME = "folds.json"
+FOLD_GROUPS_FILENAME = "fold_groups.json"
+NOVEL_FOLD_TEST_FILENAME = "novel_fold_test.json"
 
 
 # --------------------------------------------------------------------------- #
@@ -178,6 +187,8 @@ def build_manifest(
     clusters,
     splits,
     class_map: dict[str, dict],
+    growth_stable: bool = True,
+    fold_benchmark_summary: dict[str, Any] | None = None,
 ) -> dict[str, Any]:
     """Assemble manifest.json as a pure function of the build outputs."""
     from .split import SPLITS
@@ -262,7 +273,7 @@ def build_manifest(
 
     # The manifest is small provenance only: NO per-entry arrays live here. The
     # split membership and supporting maps are separate files (see "files").
-    return {
+    manifest: dict[str, Any] = {
         "manifest_schema": MANIFEST_SCHEMA,
         "dataset_version": cfg.dataset_version,
         "if_split_version": __version__,
@@ -287,6 +298,7 @@ def build_manifest(
         },
         "splits": {
             "strategy": splits.strategy,
+            "growth_stable": growth_stable,
             "capped_folds": splits.capped_folds,
             "balance_gaps": dict(sorted(splits.balance_gaps.items())),
             "entry_counts": dict(sorted(splits.counts.items())),
@@ -311,6 +323,17 @@ def build_manifest(
             "targets": TARGETS_FILENAME,
         },
     }
+    # Optional fold-benchmark export (opt-in via cfg.fold_benchmark_method). Only the
+    # small summary lives in the manifest; the per-entry labels / groups / novel-fold
+    # id list are sidecar files (see write_fold_benchmark).
+    if fold_benchmark_summary is not None:
+        manifest["fold_benchmark"] = fold_benchmark_summary
+        manifest["files"]["fold_benchmark"] = {
+            "per_entry": FOLDS_FILENAME,
+            "fold_groups": FOLD_GROUPS_FILENAME,
+            "novel_fold_test": NOVEL_FOLD_TEST_FILENAME,
+        }
+    return manifest
 
 
 # --------------------------------------------------------------------------- #
@@ -359,6 +382,115 @@ def write_split_files(splits, class_map: dict[str, dict], out_dir: str | Path) -
         written[f"test:{cls}"] = _write_id_list(sorted(ids), out / TEST_SUBDIR / f"{cls}_test.json")
 
     return written
+
+
+# --------------------------------------------------------------------------- #
+# Fold-benchmark export (fold-seen vs novel-fold; lists + labels, metadata-only)
+# --------------------------------------------------------------------------- #
+def build_fold_benchmark(
+    entry_fold_labels: dict[str, list[str]],
+    entry_split: dict[str, str],
+    method: str,
+) -> dict[str, Any] | None:
+    """Fold-seen vs novel-fold TEST partition for re-benchmarking existing checkpoints.
+
+    Operationalizes the paper's re-benchmark call (lists + labels only; running
+    recovery is out of scope). A test entry is NOVEL-FOLD iff it is fold-classified
+    AND none of its (super)families appears in TRAIN (conservative: every family
+    unseen). "novel" is defined w.r.t. TRAIN only — the set a checkpoint is fit on.
+    Uses ``entry_fold_labels`` (decoupled from union-find), so it works even on a
+    fold-leaky split. Returns ``None`` when off / nothing is labelled; otherwise a
+    dict with a small ``summary`` (for the manifest), ``per_entry`` (folds.json),
+    ``novel_fold_test`` ids (novel_fold_test.json), and per-superfamily ``fold_groups``
+    over the test set (fold_groups.json, for per-family reweighting).
+    """
+    if method == "off" or not entry_fold_labels:
+        return None
+    train_families: set[str] = set()
+    for e, fams in entry_fold_labels.items():
+        if entry_split.get(e) == "train":
+            train_families.update(fams)
+
+    per_entry: dict[str, dict] = {}
+    novel_fold_test: list[str] = []
+    fold_groups: dict[str, dict] = {}
+    n_test = sum(1 for s in entry_split.values() if s == "test")
+    n_test_classified = 0
+    for e in sorted(entry_fold_labels):
+        split = entry_split.get(e)
+        if split is None:
+            continue  # entry dropped from the split (defensive)
+        fams = entry_fold_labels[e]
+        # Held-out (not train) AND every fold unseen in train -> a genuine novel fold.
+        novel = split != "train" and all(f not in train_families for f in fams)
+        per_entry[e] = {"split": split, "families": fams, "novel_fold": novel}
+        if split == "test":
+            n_test_classified += 1
+            if novel:
+                novel_fold_test.append(e)
+            for f in fams:
+                g = fold_groups.setdefault(
+                    f, {"novel": f not in train_families, "test_entries": []}
+                )
+                g["test_entries"].append(e)
+    for g in fold_groups.values():
+        g["test_entries"].sort()
+
+    n_novel_folds = sum(1 for g in fold_groups.values() if g["novel"])
+    summary = {
+        "method": method,
+        "novel_definition": "test entry whose every fold (super)family is absent from train",
+        "n_test": n_test,
+        "n_test_classified": n_test_classified,
+        "n_test_novel_fold": len(novel_fold_test),
+        "n_test_distinct_folds": len(fold_groups),
+        "n_test_novel_folds": n_novel_folds,
+    }
+    return {
+        "summary": summary,
+        "per_entry": dict(sorted(per_entry.items())),
+        "novel_fold_test": sorted(novel_fold_test),
+        "fold_groups": dict(sorted(fold_groups.items())),
+    }
+
+
+def write_fold_benchmark(fb: dict[str, Any] | None, out_dir: str | Path) -> dict[str, Path]:
+    """Write the fold-benchmark sidecars, or (when ``fb`` is None) clear stale ones.
+
+    Clearing on None keeps a rebuild that turns the export OFF from leaving stale
+    novel-fold files that a direct reader could mistake for current truth.
+    """
+    out = Path(out_dir)
+    files = [out / FOLDS_FILENAME, out / FOLD_GROUPS_FILENAME, out / NOVEL_FOLD_TEST_FILENAME]
+    if fb is None:
+        for f in files:
+            if f.exists():
+                f.unlink()
+        return {}
+    return {
+        "per_entry": _write_json(
+            {"method": fb["summary"]["method"], "entries": fb["per_entry"]}, out / FOLDS_FILENAME
+        ),
+        "fold_groups": _write_json(fb["fold_groups"], out / FOLD_GROUPS_FILENAME),
+        "novel_fold_test": _write_id_list(fb["novel_fold_test"], out / NOVEL_FOLD_TEST_FILENAME),
+    }
+
+
+def read_fold_labels(path: str | Path) -> dict[str, dict]:
+    """Load folds.json's per-entry ``{entry_id -> {split, families, novel_fold}}``, or {}."""
+    path = Path(path)
+    if not path.exists():
+        return {}
+    doc = json.loads(path.read_text(encoding="utf-8"))
+    return dict(doc.get("entries", {}))
+
+
+def read_fold_groups(path: str | Path) -> dict[str, dict]:
+    """Load fold_groups.json (``superfamily -> {novel, test_entries}``), or {}."""
+    path = Path(path)
+    if not path.exists():
+        return {}
+    return json.loads(path.read_text(encoding="utf-8"))
 
 
 # --------------------------------------------------------------------------- #
@@ -732,11 +864,23 @@ def summarize_manifest(manifest_path: str | Path) -> int:
         if gaps:
             extra += f"; TAIL TOO THIN, val/test short by {gaps}"
         print(f"  split strategy: {strat}{extra}")
+    if strat == "balanced":
+        if sp.get("growth_stable", True):
+            print("  growth stability: pinned — prior component splits preserved on rebuild")
+        else:
+            print(
+                "  growth stability: NOT pinned — a rebuild may move prior components across "
+                "splits; rebuild in place (same --out + config) or pass --registry"
+            )
     print("  splits (entries / components):")
+    total = sum(sp["entry_counts"].values()) or 1
+    fracs = m.get("config", {}).get("split_fractions", {})
     for s in ("train", "val", "test"):
         ec = sp["entry_counts"].get(s, 0)
         cc = sp["cluster_counts"].get(s, 0)
-        print(f"    {s:5s}: {ec:>7} entries  {cc:>7} components")
+        pct = 100.0 * ec / total
+        tgt = 100.0 * fracs.get(s, 0)
+        print(f"    {s:5s}: {ec:>7} entries ({pct:4.1f}% / target {tgt:4.1f}%)  {cc:>7} components")
     if smethod != "off":
         cov = sp.get("per_split_fold_coverage", {})
         print("  fold coverage (unclassified % = residual-leakage ceiling, not fold-held-out):")
@@ -747,6 +891,13 @@ def summarize_manifest(manifest_path: str | Path) -> int:
             folds = c.get("n_distinct_folds", 0)
             pct = (100.0 * unc / tot) if tot else 0.0
             print(f"    {s:5s}: {folds:>6} folds held out  {unc}/{tot} unclassified ({pct:.1f}%)")
+    fb = m.get("fold_benchmark")
+    if fb:
+        print(
+            f"  novel-fold benchmark ({fb['method']}): {fb['n_test_novel_fold']}/"
+            f"{fb['n_test_classified']} classified test entries are novel-fold "
+            f"({fb['n_test_novel_folds']}/{fb['n_test_distinct_folds']} test folds unseen in train)"
+        )
     print("  test set by ligand class (functional tier):")
     for cls, n in sp["per_split_class_counts"].get("test", {}).items():
         print(f"    {cls}: {n}")

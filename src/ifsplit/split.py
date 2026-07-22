@@ -19,7 +19,9 @@ mega-cluster even in sequence-only mode) one component balloons a split. Balance
 caps dominant folds to train and fills val/test to their *entry* targets from the
 tail of smaller folds in hash order — restoring ~80/10/10 by entries with diverse,
 fold-honest val/test sets. It stays leakage-safe (whole components) and
-growth-stable via the registry, and reports a gap if the tail was too thin.
+growth-stable via the registry (an in-place balanced rebuild auto-adopts
+``<out>/splits.registry.json`` when the config matches; ``--fresh`` opts out), and
+reports a gap if the tail was too thin.
 
 **No-leakage is structural, not heuristic.** Because every entity an entry
 touches lives in the same component (union-find merged them), and a component
