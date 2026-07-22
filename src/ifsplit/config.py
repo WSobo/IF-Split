@@ -137,7 +137,7 @@ class Config(BaseModel):
     # train/val/test balance (~95/3/2 at superfamily grain) even though the
     # COMPONENT-level split stays ~80/10/10. Off by default; pair it with
     # split_strategy="balanced" (below) to restore entry balance — that is the
-    # "masterclass" recipe (structural_clustering="scop2" + balanced).
+    # "fold-aware" recipe (structural_clustering="scop2" + balanced).
     structural_clustering: Literal["off", "cath", "ecod", "scop2"] = "off"
     split_fractions: SplitFractions
     # Component -> split assignment strategy.

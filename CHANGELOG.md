@@ -7,7 +7,7 @@ follow [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 The **split is always computed from metadata + sequences only** — `build` never
 downloads structure coordinates. That invariant holds across every release below.
 
-## [Unreleased] — 0.4.0 (hardening)
+## [0.4.0] — 2026-07-22 (hardening)
 
 Reliability, correctness-guard, and publication-readiness pass. No change to the
 default split output.
@@ -62,7 +62,7 @@ training model, a metadata-only curation overhaul, and offline re-derivability.
   (metadata only, no coordinates).
 - **Balance-aware split strategy** (`split_strategy: balanced`). Caps dominant folds
   to train and fills val/test to their *entry* targets from the fold tail, restoring
-  ~80/10/10 by entries with thousands of held-out folds. `config/masterclass.yaml`
+  ~80/10/10 by entries with thousands of held-out folds. `config/fold-aware.yaml`
   ships the fold-honest recipe (`scop2` + `balanced`).
 - **Split-output certification.** The `@2` `dataset.lock` records `split_sha256` (a
   hash of the entry→split partition); `verify` re-derives Stages 3–6 and certifies the

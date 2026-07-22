@@ -7,14 +7,13 @@ abstract: >-
   from RCSB metadata only, with fold-level (CATH/ECOD/SCOP2) leakage control and a
   content-hashed reproduction lock.
 authors:
-  - family-names: "FILL IN family name"
-    given-names: "FILL IN given name"
-    orcid: "https://orcid.org/0000-0000-0000-0000"
+  - family-names: "Sobolewski"
+    given-names: "Will"
 repository-code: "https://github.com/WSobo/IF-Split"
 url: "https://github.com/WSobo/IF-Split"
 license: MIT
-version: 0.3.0
-date-released: "2026-07-14"
+version: 0.4.0
+date-released: "2026-07-22"
 keywords:
   - inverse folding
   - protein design

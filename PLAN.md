@@ -336,8 +336,8 @@ chains fall back to sequence-only. See README "Fold-level leakage control".
   and fills val/test to their *entry* targets from the tail of smaller folds in
   hash order — leakage-safe (whole components), growth-stable via the registry,
   and it reports a gap rather than forcing a target it can't reach. The
-  "masterclass" recipe `structural_clustering: scop2` + `split_strategy: balanced`
-  (`config/masterclass.yaml`) yields ~80/10/10 by entries with thousands of folds
+  "fold-aware" recipe `structural_clustering: scop2` + `split_strategy: balanced`
+  (`config/fold-aware.yaml`) yields ~80/10/10 by entries with thousands of folds
   held entirely out of train.
 - Stratify the test set by ligand class so SM/metal/nucleotide are all
   represented (LigandMPNN's test sets are deliberately ligand-containing).

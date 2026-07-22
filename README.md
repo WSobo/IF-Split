@@ -74,18 +74,18 @@ growth-stable (via the registry), and reports a gap if a method's tail is too th
 (`cath`/`ecod` starve val; **`scop2` is the sweet spot**). `balanced` also fixes
 the plain sequence-only skew (88/6/6 → 80/10/10) from the antibody mega-cluster.
 
-### The masterclass split
+### The fold-aware split
 
 ```bash
-uv run if-split build --config config/masterclass.yaml --out data/mc
+uv run if-split build --config config/fold-aware.yaml --out data/mc
 ```
 
-`config/masterclass.yaml` = default **+ `structural_clustering: scop2` + `split_strategy: balanced`**: a fold-honest ~80/10/10 split whose val/test are thousands of folds held entirely out of train — the truest generalization measure the tool can produce, still from metadata alone.
+`config/fold-aware.yaml` = default **+ `structural_clustering: scop2` + `split_strategy: balanced`**: a fold-honest ~80/10/10 split whose val/test are thousands of folds held entirely out of train — the truest generalization measure the tool can produce, still from metadata alone.
 
 | split | strategy | structural | entry balance | val/test |
 |---|---|---|--:|---|
 | default | hash | off | 88 / 6 / 6 | sequence-clustered |
-| masterclass | balanced | scop2 | 80 / 10 / 10 | thousands of held-out folds |
+| fold-aware | balanced | scop2 | 80 / 10 / 10 | thousands of held-out folds |
 
 ---
 
@@ -132,7 +132,7 @@ uv run if-split verify data/out/dataset.lock --candidates data/out/candidates.js
 # clustering, split strategy, or TIGHTEN a filter (e.g. resolution) on a fixed
 # snapshot in ~seconds instead of re-enumerating the whole PDB.
 uv run if-split resplit --candidates data/out/candidates.jsonl \
-    --config config/masterclass.yaml --out data/mc
+    --config config/fold-aware.yaml --out data/mc
 
 # Growth-stable regeneration: pin prior cluster→split assignments.
 uv run if-split build --registry data/out/splits.registry.json --out data/out2
@@ -442,7 +442,7 @@ spec:
   ifsplit_spec: ifsplit/config@1          # schema id — the file says what it is
   name: my-split
   author: you
-  created_with: if-split 0.3.0
+  created_with: if-split 0.4.0
   expected_config_hash: 3b63318286fd2ac4994f34d10936be05
 snapshot_date: '2026-07-14'
 resolution_max_A: 3.5
@@ -530,9 +530,10 @@ If you use IF-Split, please cite it — see [CITATION.cff](CITATION.cff).
 
 ## Changelog
 
-Release history is in [CHANGELOG.md](CHANGELOG.md). The current release is **0.3.0**
-(fold-honest splitting, split-output certification, the two-corpus training model, a
-metadata-only curation overhaul, and offline `resplit` / `verify`).
+Release history is in [CHANGELOG.md](CHANGELOG.md). The current release is **0.4.0**
+(reliability + correctness hardening: a fold-level leakage guard with negative tests, atomic
+manifest/lock writes, robust CLI error handling, a `single_chain_only` filter, and manifest
+fold-coverage observability).
 
 ## License
 
