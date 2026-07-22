@@ -37,12 +37,11 @@ Two mechanisms deliver this, and they must both be in from the start:
 
   > **Implementation note (Stage 6):** the "existing clusters never move"
   > guarantee holds only if `cluster_representative_id` is *input-independent*.
-  > mmseqs2 picks a representative from whatever is in the input set, so as the
-  > snapshot grows a cluster's representative can change and its hash with it.
-  > Hash a canonical member (e.g. the lexicographically smallest member id over
-  > the cluster's *full* membership in the locked cluster file, not just the
-  > date-surviving members) and persist a cluster→split registry so growth only
-  > ever *adds* clusters.
+  > A clusterer's chosen representative depends on whatever is in the input set, so
+  > as the snapshot grows a cluster's representative can change and its hash with it.
+  > Hash a canonical member (the lexicographically smallest member id over the
+  > cluster's membership among current entities) and persist a cluster→split
+  > registry so growth only ever *adds* clusters.
 
 ## 1.5 Architecture: metadata-first, no bulk structure downloads
 
@@ -74,21 +73,20 @@ build time and both lockable:
 
 Same `snapshot_date` + same locked cluster file → identical split, forever.
 
-**Clustering backend** is configurable: `precomputed` (default — reuse RCSB's
-published polymer-entity clusters at the configured identity; no external binary,
-instant) or `mmseqs2` (run our own over the snapshot's sequences for full
-control). Both feed the same Stage 6 hash assignment.
+**Clustering backend**: `precomputed` — reuse RCSB's published polymer-entity
+clusters at the configured identity (no external binary, instant), feeding the
+Stage 6 hash assignment. (An `mmseqs2` "run-our-own" backend was considered and
+removed: RCSB's precomputed clusters *are* mmseqs2-computed 30% clusters, so a
+second in-house clustering added a footgun, not fidelity.)
 
 > **Design stance:** LigandMPNN is the reference for the *split logic*
 > (cluster-by-identity, no cross-split leakage, ligand-categorized test sets),
-> **not** a byte-for-byte fidelity target. IF-Split builds on *today's RCSB*. So
-> the default `precomputed` backend reuses RCSB's current clustering (computed
-> with **DIAMOND** — `--cluster`, member-coverage 0.8, BLOSUM62, DNA/RNA and
-> <10-aa peptides filtered, recomputed weekly), which is perfectly fine for the
-> logic we're after and is made reproducible by locking the cluster file. The
-> optional `mmseqs2` backend exists for anyone who wants to run their own
-> clustering on the snapshot. Record the backend + parameters in the manifest so
-> the choice is always explicit.
+> **not** a byte-for-byte fidelity target. IF-Split builds on *today's RCSB*. The
+> `precomputed` backend reuses RCSB's current clustering (computed with **DIAMOND**
+> — `--cluster`, member-coverage 0.8, BLOSUM62, DNA/RNA and <10-aa peptides
+> filtered, recomputed weekly), which is exactly the 30%-identity logic both papers
+> used and is made reproducible by locking it into the snapshot. Record the backend
+> + parameters in the manifest so the choice is always explicit.
 
 ## 2. Repository layout
 
@@ -106,7 +104,7 @@ IF-Split/
     download.py                # Stage 2: OPTIONAL on-demand mmCIF fetch (featurization)
     parse.py                   # Stage 3: metadata filters + drop log
     ligands.py                 # Stage 4: classify non-protein entities from metadata
-    cluster.py                 # Stage 5: seq clusters (precomputed|mmseqs2) + opt. fold-level structural union
+    cluster.py                 # Stage 5: seq clusters (precomputed) + opt. fold-level structural union
     split.py                   # Stage 6: split assignment (hash | balanced) + stratification
     manifest.py                # Stage 7: emit manifest + lock file
     dataset.py                 # Stage 8: loader / torch Dataset consuming a manifest
@@ -160,7 +158,7 @@ purification_metals: ["NI", "CO"]
 histag_min_run: 6
 exclude_purification_artifacts: true
 identity_threshold: 0.30           # clustering cutoff (Data API levels: 30/50/70/90/95/100)
-clustering_backend: "precomputed"  # "precomputed" (reuse RCSB) | "mmseqs2" (run our own)
+clustering_backend: "precomputed"  # reuse RCSB's published 30% clusters (the only backend)
 split_fractions: {train: 0.80, val: 0.10, test: 0.10}
 split_salt: "snapsplit-v1"         # bump to reshuffle intentionally
 seed: 0
@@ -303,16 +301,14 @@ Default backend — **`precomputed`** (reuse RCSB clusters):
   be fully growth-stable we persist the cluster→split registry, since the Data
   API only reports membership among *current* entities).
 
-Optional backend — **`mmseqs2`** (run our own):
+> An in-house **`mmseqs2`** backend (pool the snapshot's sequences and re-cluster)
+> was considered and removed: RCSB's precomputed clusters *are* mmseqs2-computed 30%
+> clusters, so re-running our own added a footgun (a value that passed config
+> validation then crashed mid-build) without improving fidelity.
 
-- Pool the snapshot's protein entity sequences. Run mmseqs2 `easy-cluster` at
-  `--min-seq-id identity_threshold` with coverage flags matching LigandMPNN's
-  intent (record exact flags). Pin and log the mmseqs2 version. Sort inputs for
-  determinism.
-
-Both backends output cluster id → member entities, and entry → cluster(s). An
-entry may touch multiple clusters via different chains; assign the entry to the
-cluster of its longest protein chain (record all) so split assignment is
+The backend outputs cluster id → member entities, and entry → cluster(s). An entry
+may touch multiple clusters via different chains; all are recorded and union-find
+merges them into one leakage-safe component (see Stage 5) so split assignment is
 unambiguous.
 
 **Fold-level structural clustering (`structural_clustering`, opt-in ← *implemented***).
@@ -356,8 +352,8 @@ chains fall back to sequence-only. See README "Fold-level leakage control".
 
 Emit two artifacts in `data/out/`:
 
-- `manifest.json` — human-facing: snapshot_date, config hash, tool versions
-  (mmseqs2, gemmi), per-split entry lists, per-structure metadata, ligand-class
+- `manifest.json` — human-facing: snapshot_date, config hash, tool version
+  (if-split), per-split entry lists, per-structure metadata, ligand-class
   tags, per-class test counts, drop log.
 - `dataset.lock` — reproduction-facing anchors: (1) the embedded config + the
   **candidate set** — every entry ID and the canonical `candidates.jsonl` SHA-256
@@ -418,8 +414,9 @@ Emit two artifacts in `data/out/`:
 - **His-tag/Ni purification artifacts** masquerading as metal binders — handled
   by Stage 4 curation above. This is a concrete defect inherited examples would
   carry over from LigandMPNN; we detect it from sequence + comp metadata.
-- **Determinism of mmseqs2** — clustering can be sensitive to input order and
-  version; sort inputs, pin the version, and log flags.
+- **Cluster-file drift** — RCSB recomputes its clusters weekly; the split is made
+  reproducible by locking the per-entity membership into the snapshot, never by
+  re-downloading (see §1.5 / §6).
 
 Do not add training-time coordinate noise here (LigandMPNN's 0.1 Å Gaussian
 noise is a model-side regularizer applied at load time, not a property of the
@@ -428,12 +425,11 @@ split).
 ## 7. Tech stack
 
 - Python ≥ 3.11, **`uv`** (env + lockfile), **`ruff`** (lint + format).
-- `httpx` (RCSB Search + Data API + cluster file), `pyyaml`, `pydantic` (config
-  validation). `gemmi` (mmCIF parsing + assemblies) is needed only for the
-  *optional* featurization path (Stage 2/4 context, Stage 8 loader). `mmseqs2`
-  (external binary, version-pinned) is needed **only** for the optional
-  `mmseqs2` clustering backend — the default `precomputed` backend has no
-  external-binary dependency. `torch` optional for the loader. `pytest` for tests.
+- `httpx` (RCSB Search + Data API), `pyyaml`, `pydantic` (config validation).
+  `gemmi` (mmCIF parsing + assemblies) is needed only for the *optional*
+  featurization path (Stage 2/4 context, Stage 8 loader). The `precomputed`
+  clustering backend has **no external-binary dependency**. `torch` optional for the
+  loader. `pytest` for tests.
 
 ## 8. Build order (phases)
 
@@ -466,8 +462,8 @@ given a config (proven live: repeated builds produce byte-identical manifests),
 every build. Beyond the original spec: Stage 4 grew **confidence tiering**
 (functional/ambiguous/artifact, annotate-never-drop) and Stage 8 grew
 **cluster-balanced sampling**. Remaining optional work, all explicitly out of the
-core split path: Stage 2 on-demand coordinate fetch, the `mmseqs2` clustering
-backend, and the opt-in `--enforce-minimums` test-stratification top-up.
+core split path: Stage 2 on-demand coordinate fetch and the opt-in
+`--enforce-minimums` test-stratification top-up.
 
 Each phase ends with a runnable CLI command and a test. The dataset is "done"
 when `build` is deterministic given a config, and `verify` round-trips the lock

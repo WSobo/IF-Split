@@ -5,7 +5,7 @@ description = "Reproducible, date-pinned, ligand-aware train/val/test splitter f
 readme = "README.md"
 requires-python = ">=3.11"
 license = { text = "MIT" }
-authors = [{ name = "WSobo" }]
+authors = [{ name = "Will Sobolewski", email = "wcsobo7@gmail.com" }]
 keywords = ["protein", "pdb", "ligandmpnn", "dataset", "mmseqs2", "reproducibility"]
 
 # Runtime deps. mmseqs2 is an EXTERNAL binary (not a pip package) and is

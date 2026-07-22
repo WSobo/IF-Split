@@ -1,0 +1,24 @@
+cff-version: 1.2.0
+message: "If you use IF-Split, please cite it using these metadata."
+title: "IF-Split: reproducible, fold-aware train/validation/test splits of the Protein Data Bank for inverse folding"
+abstract: >-
+  IF-Split builds reproducible, date-pinned, ligand-aware train/validation/test
+  splits of the Protein Data Bank for inverse-folding and sequence-design models,
+  from RCSB metadata only, with fold-level (CATH/ECOD/SCOP2) leakage control and a
+  content-hashed reproduction lock.
+authors:
+  - family-names: "FILL IN family name"
+    given-names: "FILL IN given name"
+    orcid: "https://orcid.org/0000-0000-0000-0000"
+repository-code: "https://github.com/WSobo/IF-Split"
+url: "https://github.com/WSobo/IF-Split"
+license: MIT
+version: 0.3.0
+date-released: "2026-07-14"
+keywords:
+  - inverse folding
+  - protein design
+  - Protein Data Bank
+  - data leakage
+  - reproducibility
+  - machine learning
