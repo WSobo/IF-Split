@@ -178,6 +178,7 @@ def build_manifest(
     clusters,
     splits,
     class_map: dict[str, dict],
+    growth_stable: bool = True,
 ) -> dict[str, Any]:
     """Assemble manifest.json as a pure function of the build outputs."""
     from .split import SPLITS
@@ -287,6 +288,7 @@ def build_manifest(
         },
         "splits": {
             "strategy": splits.strategy,
+            "growth_stable": growth_stable,
             "capped_folds": splits.capped_folds,
             "balance_gaps": dict(sorted(splits.balance_gaps.items())),
             "entry_counts": dict(sorted(splits.counts.items())),
@@ -732,6 +734,14 @@ def summarize_manifest(manifest_path: str | Path) -> int:
         if gaps:
             extra += f"; TAIL TOO THIN, val/test short by {gaps}"
         print(f"  split strategy: {strat}{extra}")
+    if strat == "balanced":
+        if sp.get("growth_stable", True):
+            print("  growth stability: pinned — prior component splits preserved on rebuild")
+        else:
+            print(
+                "  growth stability: NOT pinned — a rebuild may move prior components across "
+                "splits; rebuild in place (same --out + config) or pass --registry"
+            )
     print("  splits (entries / components):")
     for s in ("train", "val", "test"):
         ec = sp["entry_counts"].get(s, 0)

@@ -488,6 +488,84 @@ def test_existing_cluster_does_not_move_when_dataset_grows(sample_entries, artif
         assert sp_b.cluster_split[key] == split
 
 
+def _clusters_from(members):
+    """Build a ClusterResult from a {component_key: [entry_ids]} map (for split tests)."""
+    from ifsplit.cluster import ClusterResult
+
+    e2c, eraw = {}, {}
+    for key, ents in members.items():
+        for e in ents:
+            e2c[e] = key
+            eraw[e] = [key]
+    return ClusterResult(
+        30, dict(sorted(e2c.items())), dict(sorted(members.items())), dict(sorted(eraw.items()))
+    )
+
+
+def _members(prefix, n, start=0):
+    """n components with tail sizes 1..20, so the balanced val/test fill is exercised."""
+    return {
+        f"{prefix}{i:05d}": [f"{prefix}{i:05d}_{j}" for j in range(1 + i % 20)]
+        for i in range(start, start + n)
+    }
+
+
+def test_balanced_growth_stability_needs_registry():
+    # A balanced split's val/test fill boundaries scale with total entries, so WITHOUT a
+    # registry a grown snapshot moves prior components across splits; the registry pins them.
+    cfg = _cfg(split_strategy="balanced")
+    a_mem = _members("A", 1000)
+    clusters_a = _clusters_from(a_mem)
+    clusters_b = _clusters_from({**a_mem, **_members("B", 1000)})  # A + 1000 new components
+
+    sp_a = assign_splits(clusters_a, cfg)
+    sp_b_noreg = assign_splits(clusters_b, cfg)  # registry defaults to {}
+    moved = sum(1 for k in a_mem if sp_a.cluster_split[k] != sp_b_noreg.cluster_split[k])
+    assert moved > 0, "balanced must NOT be assumed growth-stable without a registry"
+
+    sp_b_reg = assign_splits(clusters_b, cfg, registry=sp_a.cluster_split)
+    moved_reg = sum(1 for k in a_mem if sp_a.cluster_split[k] != sp_b_reg.cluster_split[k])
+    assert moved_reg == 0, "the registry must restore growth stability for balanced"
+
+
+def test_balanced_rebuild_auto_pins_registry(tmp_path, sample_entries, artifact_entry, capsys):
+    # The fix: a balanced rebuild into the same --out auto-adopts the prior registry when
+    # the config matches, so the lock records it and the manifest reports growth_stable.
+    from ifsplit.cli import _run_pipeline
+    from ifsplit.manifest import read_lock, read_manifest
+
+    cfg = _cfg(split_strategy="balanced")
+    recs = _records(sample_entries, artifact_entry)
+    out = tmp_path / "d"
+
+    _run_pipeline(cfg, recs, "sha", out, limit=None, registry_path=None)  # first build
+    assert read_lock(out / "dataset.lock")["split"]["registry_sha256"] is None  # registry-free
+
+    capsys.readouterr()
+    _run_pipeline(cfg, recs, "sha", out, limit=None, registry_path=None)  # in-place rebuild
+    assert "pinning" in capsys.readouterr().out
+    assert read_lock(out / "dataset.lock")["split"]["registry_sha256"] is not None
+    assert read_manifest(out / "manifest.json")["splits"]["growth_stable"] is True
+
+    _run_pipeline(cfg, recs, "sha", out, limit=None, registry_path=None, fresh=True)  # opt out
+    assert read_lock(out / "dataset.lock")["split"]["registry_sha256"] is None
+
+
+def test_hash_rebuild_stays_registry_free(tmp_path, sample_entries, artifact_entry):
+    # No regression: hash is input-independent, so it is never auto-pinned and stays
+    # registry-free (verify can still certify the split output).
+    from ifsplit.cli import _run_pipeline
+    from ifsplit.manifest import read_lock, read_manifest
+
+    cfg = _cfg()  # hash (default)
+    recs = _records(sample_entries, artifact_entry)
+    out = tmp_path / "d"
+    _run_pipeline(cfg, recs, "sha", out, limit=None, registry_path=None)
+    _run_pipeline(cfg, recs, "sha", out, limit=None, registry_path=None)  # rebuild
+    assert read_lock(out / "dataset.lock")["split"]["registry_sha256"] is None
+    assert read_manifest(out / "manifest.json")["splits"]["growth_stable"] is True
+
+
 # --------------- union-find: structural leakage prevention ----------------- #
 def _protein_record(entry_id: str, cluster30_ids: list[int]) -> CandidateRecord:
     """A record whose protein chains sit in the given raw clusters (id at 30%)."""

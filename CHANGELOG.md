@@ -7,6 +7,22 @@ follow [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 The **split is always computed from metadata + sequences only** — `build` never
 downloads structure coordinates. That invariant holds across every release below.
 
+## [Unreleased] — 0.5.0
+
+Toward "The Novel-Fold Benchmark". No change to the default (`hash`) split output.
+
+### Fixed
+
+- **Growth-stability for the `balanced` strategy.** A `balanced` split's val/test
+  fill boundaries scale with the snapshot's total entries, so a growing snapshot
+  could move a few percent of prior components across train/val/test (including
+  train→val/test contamination) unless a registry pinned them — and the CLI never
+  self-pinned. An in-place rebuild now auto-adopts `<out>/splits.registry.json` when
+  the prior build used the same config (its `dataset.lock` `config_hash` matches);
+  `--fresh` opts out. `hash` is unchanged (already input-independent and registry-free,
+  so `verify` can still certify it). The manifest records `splits.growth_stable` and
+  `stats` prints it.
+
 ## [0.4.0] — 2026-07-22 (hardening)
 
 Reliability, correctness-guard, and publication-readiness pass. No change to the
