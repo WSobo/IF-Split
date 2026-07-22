@@ -22,6 +22,10 @@ Toward "The Novel-Fold Benchmark". No change to the default (`hash`) split outpu
   decoupled from fold *merging*, so they attach even to a fold-leaky split (the split a
   checkpoint was trained on) and never change the split or `check_no_leakage`. `stats` and
   the loader (`SplitView.novel_fold_entries()`, `IFSplitDataset.fold_groups()`) expose it.
+- **`stats` entry-skew view**: each split prints its entry fraction against the configured
+  target (e.g. `train: 95.0% / target 80.0%`), so the entry-balance skew the `balanced`
+  strategy corrects is visible. The README Outputs table now lists every build output, and
+  the hydrated `DATASET_CARD.md` integrity snippet is filled in.
 
 ### Fixed
 

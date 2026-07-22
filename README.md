@@ -148,10 +148,17 @@ uv run if-split spec data/out/manifest.json --name my-split --out my-split.ifspl
 
 | File | Purpose |
 |---|---|
-| `candidates.jsonl` | The snapshot definition — one canonical JSON record per entry. Hashed into the lock. |
+| `train.json` / `val.json` / `test.json` | **The split** — plain JSON arrays of PDB entry ids (one per line, grepable and trivially loadable). |
+| `test/<class>_test.json` | Test ids carrying each functional ligand class (`metal` / `small_molecule` / `nucleic_acid`), for per-class evaluation. |
+| `manifest.json` | Human-facing run record: config, drop log, per-split + per-class (and ambiguous) counts, cluster/leakage stats, per-split fold coverage, growth-stability flag, and a `files` index. |
 | `dataset.lock` | Reproduction anchor: embedded config + candidates SHA-256 + entry list + a `split` hash of the entry→split partition (so `verify` certifies the split output, not just the inputs). |
-| `manifest.json` | Human-facing run record: per-split entry lists, ligand classes + tiers, per-class (and ambiguous) counts, drop log, cluster/leakage stats, entry→cluster map. |
-| `splits.registry.json` | `cluster key → split`, for growth-stable regeneration. |
+| `candidates.jsonl` | The snapshot definition — one canonical JSON record per entry. Hashed into the lock. |
+| `clusters.json` | `entry_id → component key`, for cluster-balanced sampling. |
+| `ligands.classes.json` | `entry_id → functional ligand class labels`. |
+| `ligands.tiers.json` | Per-component ligand curation audit trail (tier + reason). |
+| `targets.jsonl` | Conditioning-target corpus: one row per (structure, functional ligand) for ligand-conditioned training. |
+| `splits.registry.json` | `component key → split`, for growth-stable regeneration. |
+| `folds.json`, `fold_groups.json`, `novel_fold_test.json` | **Novel-fold benchmark** export (only with `fold_benchmark_method` set): per-entry fold labels + novel-fold flag, per-superfamily test groups (for reweighting), and the novel-fold test subset. |
 
 ## Downloading structures (`fetch`)
 

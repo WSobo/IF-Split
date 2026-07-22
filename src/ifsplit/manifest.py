@@ -868,10 +868,14 @@ def summarize_manifest(manifest_path: str | Path) -> int:
                 "splits; rebuild in place (same --out + config) or pass --registry"
             )
     print("  splits (entries / components):")
+    total = sum(sp["entry_counts"].values()) or 1
+    fracs = m.get("config", {}).get("split_fractions", {})
     for s in ("train", "val", "test"):
         ec = sp["entry_counts"].get(s, 0)
         cc = sp["cluster_counts"].get(s, 0)
-        print(f"    {s:5s}: {ec:>7} entries  {cc:>7} components")
+        pct = 100.0 * ec / total
+        tgt = 100.0 * fracs.get(s, 0)
+        print(f"    {s:5s}: {ec:>7} entries ({pct:4.1f}% / target {tgt:4.1f}%)  {cc:>7} components")
     if smethod != "off":
         cov = sp.get("per_split_fold_coverage", {})
         print("  fold coverage (unclassified % = residual-leakage ceiling, not fold-held-out):")

@@ -166,9 +166,17 @@ epoch = train.sort_values("entry_id").groupby("cluster").head(1)
 ```
 
 ## Integrity
+Every structure's sha256 is recorded in `index.jsonl`. Re-verify the whole tree:
 ```bash
-# every file's sha256 is in the index; re-fetch is resumable and verifiable.
+python - <<'PY'
+import hashlib, json
+from pathlib import Path
+bad = [r["entry_id"] for r in map(json.loads, open("index.jsonl"))
+       if hashlib.sha256(Path(r["path"]).read_bytes()).hexdigest() != r["sha256"]]
+print("OK" if not bad else "MISMATCH: " + ", ".join(bad))
+PY
 ```
+Re-running `fetch` is resumable and re-checks existing files against these hashes.
 """
 
 
