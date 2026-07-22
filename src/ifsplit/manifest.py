@@ -224,7 +224,15 @@ def build_manifest(
     def _fold_coverage(entries: list[str]) -> dict[str, int]:
         classified = [e for e in entries if entry_fams.get(e)]
         folds = {f for e in classified for f in entry_fams.get(e, [])}
-        return {"classified_entries": len(classified), "n_distinct_folds": len(folds)}
+        return {
+            "total_entries": len(entries),
+            "classified_entries": len(classified),
+            # Residual-leakage ceiling: entries that no fold taxonomy classifies are
+            # held out by sequence clustering only, so fold-level hold-out is NOT
+            # guaranteed for them (see PLAN "Fold-level leakage control").
+            "unclassified_entries": len(entries) - len(classified),
+            "n_distinct_folds": len(folds),
+        }
 
     per_split_fold_coverage = {s: _fold_coverage(per_split[s]) for s in SPLITS}
 
@@ -729,6 +737,16 @@ def summarize_manifest(manifest_path: str | Path) -> int:
         ec = sp["entry_counts"].get(s, 0)
         cc = sp["cluster_counts"].get(s, 0)
         print(f"    {s:5s}: {ec:>7} entries  {cc:>7} components")
+    if smethod != "off":
+        cov = sp.get("per_split_fold_coverage", {})
+        print("  fold coverage (unclassified % = residual-leakage ceiling, not fold-held-out):")
+        for s in ("train", "val", "test"):
+            c = cov.get(s, {})
+            tot = c.get("total_entries") or sp["entry_counts"].get(s, 0)
+            unc = c.get("unclassified_entries", tot - c.get("classified_entries", tot))
+            folds = c.get("n_distinct_folds", 0)
+            pct = (100.0 * unc / tot) if tot else 0.0
+            print(f"    {s:5s}: {folds:>6} folds held out  {unc}/{tot} unclassified ({pct:.1f}%)")
     print("  test set by ligand class (functional tier):")
     for cls, n in sp["per_split_class_counts"].get("test", {}).items():
         print(f"    {cls}: {n}")

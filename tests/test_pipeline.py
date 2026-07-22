@@ -10,7 +10,7 @@ from ifsplit.cluster import build_clusters
 from ifsplit.config import Config, load_config
 from ifsplit.dataset import load_dataset
 from ifsplit.ligands import classify_components
-from ifsplit.manifest import build_manifest, write_manifest
+from ifsplit.manifest import build_manifest, summarize_manifest, write_manifest
 from ifsplit.parse import (
     DROP_CLASHSCORE,
     DROP_EM_INCLUSION,
@@ -739,11 +739,13 @@ def test_manifest_tier_reason_histogram(sample_entries, artifact_entry):
 
 def test_manifest_fold_coverage_counts_distinct_folds():
     # per_split_fold_coverage counts the distinct structural families held in each
-    # split. Two entries with different CATH folds -> 2 distinct folds total.
+    # split, plus the unclassified count — the residual-leakage ceiling: entries no
+    # fold taxonomy classifies are held out by sequence only, not by fold.
     cfg = _cfg(structural_clustering="cath")
     recs = [
         _fold_record("AAA1", 10, {"cath": ["1.10.1.1"]}),
         _fold_record("BBB2", 20, {"cath": ["2.20.2.2"]}),
+        _fold_record("CCC3", 30, {}),  # no fold classification -> unclassified
     ]
     kept, drops = filter_candidates(recs, cfg)
     class_map = {r.entry_id: classify_components(r, cfg) for r in kept}
@@ -762,6 +764,41 @@ def test_manifest_fold_coverage_counts_distinct_folds():
     cov = m["splits"]["per_split_fold_coverage"]
     assert set(cov) == {"train", "val", "test"}
     for c in cov.values():
-        assert set(c) == {"classified_entries", "n_distinct_folds"}
+        assert set(c) == {
+            "total_entries",
+            "classified_entries",
+            "unclassified_entries",
+            "n_distinct_folds",
+        }
+        assert c["unclassified_entries"] == c["total_entries"] - c["classified_entries"]
     assert sum(c["n_distinct_folds"] for c in cov.values()) == 2  # two distinct folds
     assert sum(c["classified_entries"] for c in cov.values()) == 2
+    assert sum(c["total_entries"] for c in cov.values()) == 3
+    assert sum(c["unclassified_entries"] for c in cov.values()) == 1  # CCC3, unclassified
+
+
+def test_summarize_manifest_reports_residual_ceiling(tmp_path, capsys):
+    # `stats` surfaces the unclassified fraction per split (the residual-leakage
+    # ceiling) whenever fold-aware clustering is on.
+    cfg = _cfg(structural_clustering="cath")
+    recs = [
+        _fold_record("AAA1", 10, {"cath": ["1.10.1.1"]}),
+        _fold_record("CCC3", 30, {}),  # unclassified
+    ]
+    kept, drops = filter_candidates(recs, cfg)
+    class_map = {r.entry_id: classify_components(r, cfg) for r in kept}
+    cr = build_clusters(kept, cfg)
+    sp = assign_splits(cr, cfg)
+    m = build_manifest(
+        cfg,
+        candidates_sha256="deadbeef",
+        n_candidates=len(recs),
+        drops=drops,
+        drop_counts=drop_summary(drops),
+        clusters=cr,
+        splits=sp,
+        class_map=class_map,
+    )
+    path = write_manifest(m, tmp_path)
+    assert summarize_manifest(path) == 0
+    assert "unclassified" in capsys.readouterr().out

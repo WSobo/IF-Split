@@ -23,7 +23,10 @@ default split output.
 - **`build --count`**: preview how many entries the snapshot matches (one fast
   Search API call) before committing to a full build.
 - **Manifest observability**: a ligand tier-reason histogram and per-split fold
-  coverage (distinct held-out folds per split) for non-circular sanity checks.
+  coverage — distinct held-out folds *and* the unclassified fraction per split (the
+  **residual-leakage ceiling**: entries no CATH/ECOD/SCOP2 taxonomy classifies are
+  held out by sequence only, so fold-level hold-out is not guaranteed for them).
+  `stats` prints it whenever fold-aware clustering is on.
 - **CLI test suite** (`tests/test_cli.py`) covering exit codes and error paths.
 
 ### Changed
