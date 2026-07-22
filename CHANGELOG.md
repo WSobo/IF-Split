@@ -11,6 +11,18 @@ downloads structure coordinates. That invariant holds across every release below
 
 Toward "The Novel-Fold Benchmark". No change to the default (`hash`) split output.
 
+### Added
+
+- **Novel-fold benchmark export** (opt-in `fold_benchmark_method: cath|ecod|scop2`).
+  Emits the fold-seen vs novel-fold TEST partition as turnkey lists + labels —
+  `novel_fold_test.json` (the novel-fold test subset), `fold_groups.json` (per-superfamily
+  test groups, for per-family reweighting), and `folds.json` (per-entry fold labels +
+  novel-fold flag) — so a model developer can score native recovery on the novel-fold
+  subset and per-superfamily-reweighted on an existing checkpoint. Fold *labels* are
+  decoupled from fold *merging*, so they attach even to a fold-leaky split (the split a
+  checkpoint was trained on) and never change the split or `check_no_leakage`. `stats` and
+  the loader (`SplitView.novel_fold_entries()`, `IFSplitDataset.fold_groups()`) expose it.
+
 ### Fixed
 
 - **Growth-stability for the `balanced` strategy.** A `balanced` split's val/test

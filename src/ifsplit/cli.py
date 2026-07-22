@@ -112,12 +112,14 @@ def _run_pipeline(
     from .cluster import build_clusters
     from .ligands import classify_components
     from .manifest import (
+        build_fold_benchmark,
         build_lock,
         build_manifest,
         build_targets,
         build_tiers_doc,
         write_classes,
         write_clusters,
+        write_fold_benchmark,
         write_lock,
         write_manifest,
         write_registry,
@@ -171,6 +173,10 @@ def _run_pipeline(
         else:
             print("  test minimums: applied; all per-class floors met")
 
+    fold_benchmark = build_fold_benchmark(
+        clusters.entry_fold_labels, splits.entry_split, cfg.fold_benchmark_method
+    )
+
     print("Stage 7 - manifest + registry:")
     manifest = build_manifest(
         cfg,
@@ -182,6 +188,7 @@ def _run_pipeline(
         splits=splits,
         class_map=class_map,
         growth_stable=growth_stable,
+        fold_benchmark_summary=fold_benchmark["summary"] if fold_benchmark else None,
     )
     mpath = write_manifest(manifest, out)
     # The lock is written here (after Stage 6), not at Stage 1, so it can pin the
@@ -208,6 +215,7 @@ def _run_pipeline(
     write_tiers(build_tiers_doc(class_map), out)
     targets = build_targets(class_map, splits, clusters)
     write_targets(targets, out)
+    write_fold_benchmark(fold_benchmark, out)  # writes sidecars, or clears stale ones
     n_targets = sum(1 for t in targets if t["tier"] == "functional")
     print(f"  wrote {mpath} (provenance + counts)")
     for s in ("train", "val", "test"):
@@ -216,6 +224,12 @@ def _run_pipeline(
         print(f"  wrote {p}")
     print("  wrote clusters.json, ligands.classes.json, ligands.tiers.json, splits.registry.json")
     print(f"  wrote targets.jsonl ({len(kept)} backbones, {n_targets} conditioning targets)")
+    if fold_benchmark is not None:
+        n_novel = fold_benchmark["summary"]["n_test_novel_fold"]
+        print(
+            f"  wrote novel_fold_test.json, folds.json, fold_groups.json "
+            f"({n_novel} novel-fold test entries)"
+        )
     return mpath, len(kept)
 
 

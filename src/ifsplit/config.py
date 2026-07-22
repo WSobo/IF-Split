@@ -139,6 +139,15 @@ class Config(BaseModel):
     # split_strategy="balanced" (below) to restore entry balance — that is the
     # "fold-aware" recipe (structural_clustering="scop2" + balanced).
     structural_clustering: Literal["off", "cath", "ecod", "scop2"] = "off"
+    # Fold-benchmark export (opt-in, metadata-only, DECOUPLED from fold merging).
+    # When set, emit per-entry fold (super)family labels and the fold-seen vs
+    # novel-fold TEST partition (folds.json, test/novel_fold_test.json,
+    # fold_groups.json) so a model dev can score native recovery on the novel-fold
+    # subset and per-superfamily-reweighted -- WITHOUT changing the split. Unlike
+    # structural_clustering it never feeds the union-find, so labels attach even to a
+    # fold-LEAKY split (the split an existing checkpoint was trained on). "off"
+    # (default) emits nothing and is omitted from the config hash (legacy-stable).
+    fold_benchmark_method: Literal["off", "cath", "ecod", "scop2"] = "off"
     split_fractions: SplitFractions
     # Component -> split assignment strategy.
     #   "hash": each component hashed onto the cumulative fractions (balances
@@ -268,6 +277,10 @@ class Config(BaseModel):
         """
         d = self.model_dump(mode="json")
         d.pop("spec", None)
+        # A pure export toggle with no effect on the split: when off it emits nothing,
+        # so omit it to keep the config hash byte-identical to a pre-benchmark config.
+        if self.fold_benchmark_method == "off":
+            d.pop("fold_benchmark_method", None)
         return d
 
     def config_hash(self) -> str:

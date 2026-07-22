@@ -32,6 +32,8 @@ from .manifest import (
     TARGETS_FILENAME,
     read_classes,
     read_clusters,
+    read_fold_groups,
+    read_fold_labels,
     read_id_list,
     read_manifest,
     read_targets,
@@ -66,6 +68,8 @@ class SplitView:
     ligand_classes: dict[str, list[str]]  # entry_id -> classes
     entry_clusters: dict[str, str]  # entry_id -> cluster key
     targets: list[ConditioningTarget] = field(default_factory=list)
+    # entry -> {split, families, novel_fold} (fold-benchmark export; empty when off).
+    fold_labels: dict[str, dict] = field(default_factory=dict)
 
     def __len__(self) -> int:
         return len(self.entry_ids)
@@ -73,6 +77,23 @@ class SplitView:
     def with_class(self, cls: str) -> list[str]:
         """Entry ids in this split tagged with ligand class ``cls``."""
         return [e for e in self.entry_ids if cls in self.ligand_classes.get(e, [])]
+
+    # --------------------------- fold-benchmark views ---------------------- #
+    def is_novel_fold(self, entry: str) -> bool:
+        """True if ``entry`` is fold-classified and its fold is unseen in train."""
+        return bool(self.fold_labels.get(entry, {}).get("novel_fold"))
+
+    def folds_of(self, entry: str) -> list[str]:
+        """The (super)family labels of ``entry`` (empty if unclassified / export off)."""
+        return list(self.fold_labels.get(entry, {}).get("families", []))
+
+    def novel_fold_entries(self) -> list[str]:
+        """Sorted entry ids in this split whose fold is unseen in train.
+
+        Empty unless the build enabled ``fold_benchmark_method``; for the test split
+        this is the paper's novel-fold benchmark subset.
+        """
+        return sorted(e for e in self.entry_ids if self.is_novel_fold(e))
 
     # ----------------------------- training views -------------------------- #
     @property
@@ -171,6 +192,14 @@ class IFSplitDataset:
                     )
                 )
 
+        # Fold-benchmark labels + groups (absent -> empty; off / older builds).
+        fb_files = files.get("fold_benchmark", {})
+        self._fold_labels: dict[str, dict] = (
+            read_fold_labels(self._dir / fb_files["per_entry"]) if fb_files else {}
+        )
+        self._fold_groups_path = self._dir / fb_files["fold_groups"] if fb_files else None
+        self.fold_benchmark: dict | None = self._m.get("fold_benchmark")
+
     def split(self, name: str) -> SplitView:
         if name not in SPLITS:
             raise KeyError(f"unknown split {name!r}; expected one of {SPLITS}")
@@ -191,6 +220,7 @@ class IFSplitDataset:
             ligand_classes={e: self._classes.get(e, []) for e in ids},
             entry_clusters={e: self._entry_clusters.get(e, e) for e in ids},
             targets=self._targets_by_split.get(name, []),
+            fold_labels={e: self._fold_labels[e] for e in ids if e in self._fold_labels},
         )
 
     @property
@@ -204,6 +234,15 @@ class IFSplitDataset:
     @property
     def test(self) -> SplitView:
         return self.split("test")
+
+    def fold_groups(self) -> dict[str, dict]:
+        """Per-superfamily TEST groups for reweighting: family -> {novel, test_entries}.
+
+        Empty unless the build enabled ``fold_benchmark_method``.
+        """
+        if self._fold_groups_path is None:
+            return {}
+        return read_fold_groups(self._fold_groups_path)
 
 
 def load_dataset(manifest_path: str | Path) -> IFSplitDataset:
