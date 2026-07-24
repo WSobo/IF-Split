@@ -35,9 +35,10 @@ splits.registry.json.tmp*
 .mypy_cache/
 .ruff_cache/
 
-# Claude Code: share settings.json (project conventions), ignore local + runtime.
+# Claude Code: share settings.json + skills (project conventions), ignore local + runtime.
 .claude/*
 !.claude/settings.json
+!.claude/skills/
 .claude/settings.local.json
 
 # uv: commit uv.lock, ignore the managed virtualenv.
