@@ -38,6 +38,52 @@ def test_default_config_loads():
     assert cfg.use_biological_assembly is True
 
 
+def _write(tmp_path, d) -> Path:
+    import yaml
+
+    p = tmp_path / "c.yaml"
+    p.write_text(yaml.safe_dump(d), encoding="utf-8")
+    return p
+
+
+def test_load_config_warns_when_benchmark_method_equals_merge(tmp_path):
+    # fold_benchmark_method == structural_clustering makes the novel-fold count a
+    # tautological ~100% (the same-method merge already holds every fold out of test).
+    d = _good_dict()
+    d["structural_clustering"] = "scop2"
+    d["fold_benchmark_method"] = "scop2"
+    with pytest.warns(UserWarning, match="tautological"):
+        load_config(_write(tmp_path, d))
+
+
+def test_load_config_no_tautology_warning_when_methods_differ(tmp_path, recwarn):
+    d = _good_dict()
+    d["structural_clustering"] = "scop2"
+    d["fold_benchmark_method"] = "ecod"  # an INDEPENDENT authority -> meaningful, no warning
+    load_config(_write(tmp_path, d))
+    assert not any("tautological" in str(w.message) for w in recwarn.list)
+
+
+def test_load_config_no_tautology_warning_when_benchmark_off(tmp_path, recwarn):
+    d = _good_dict()
+    d["structural_clustering"] = "scop2"  # merge on, benchmark off (default) -> fine
+    load_config(_write(tmp_path, d))
+    assert not any("tautological" in str(w.message) for w in recwarn.list)
+
+
+def test_build_fold_benchmark_flags_tautology_only_when_methods_match():
+    from ifsplit.manifest import build_fold_benchmark
+
+    labels = {"E1": ["FamA"], "E2": ["FamB"]}
+    split = {"E1": "train", "E2": "test"}
+    taut = build_fold_benchmark(labels, split, method="scop2", merge_method="scop2")
+    assert taut["summary"]["tautological_with_merge"] is True
+    off = build_fold_benchmark(labels, split, method="scop2", merge_method="off")
+    assert off["summary"]["tautological_with_merge"] is False
+    diff = build_fold_benchmark(labels, split, method="scop2", merge_method="ecod")
+    assert diff["summary"]["tautological_with_merge"] is False
+
+
 def test_dataset_version():
     cfg = load_config(DEFAULT_CONFIG)
     assert cfg.dataset_version == "IF-Split-2026.05.30"

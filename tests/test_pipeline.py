@@ -66,6 +66,38 @@ def _seq_record(entry_id: str, seq: str) -> CandidateRecord:
     )
 
 
+def _unclustered_record(entry_id: str, seq: str) -> CandidateRecord:
+    """A single-protein record whose chain RCSB left UNCLUSTERED at 30% (cluster_ids empty)."""
+    rec = _seq_record(entry_id, seq)
+    rec.polymer_entities[0].cluster_ids = {}
+    return rec
+
+
+def test_identical_unclustered_sequences_share_one_component():
+    # Two distinct entries carrying the SAME unclustered peptide. Keyed by sequence
+    # (not entity id) they must collapse into ONE component, so the sequence cannot
+    # straddle splits and check_no_leakage stays clean under any salt. Entity-id
+    # keying (the bug) gave two components that a salt could split apart.
+    seq = "GSHMWYPQR" * 2  # short peptide RCSB would not cluster at 30%
+    clusters = build_clusters(
+        [_unclustered_record("1PEP", seq), _unclustered_record("2PEP", seq)], _cfg()
+    )
+    assert clusters.n_clusters == 1
+    assert clusters.entry_to_cluster["1PEP"] == clusters.entry_to_cluster["2PEP"]
+    for salt in ("s1", "s2", "s3", "s4", "s5"):
+        splits = assign_splits(clusters, _cfg(split_salt=salt))
+        check_no_leakage(splits, clusters)
+        assert splits.entry_split["1PEP"] == splits.entry_split["2PEP"]
+
+
+def test_distinct_unclustered_sequences_stay_separate():
+    clusters = build_clusters(
+        [_unclustered_record("1PEP", "GSHMWYPQRT"), _unclustered_record("2PEP", "AAAKKKDDEE")],
+        _cfg(),
+    )
+    assert clusters.n_clusters == 2  # different sequences -> different components
+
+
 # ----------------------------- Stage 3: filter ----------------------------- #
 def test_filter_keeps_protein_entries(sample_entries):
     recs = [CandidateRecord.from_data_api(e) for e in sample_entries.values()]
@@ -488,6 +520,53 @@ def test_existing_cluster_does_not_move_when_dataset_grows(sample_entries, artif
         assert sp_b.cluster_split[key] == split
 
 
+def test_growth_bridging_merge_is_honest_and_registry_stable():
+    # The case the disjoint-growth test above misses: a later snapshot adds a bridging
+    # 2-chain entry C that MERGES A's and B's previously-separate components. Assert at
+    # the ENTRY level (where the invariant actually lives), for both strategies of pinning.
+    a = _protein_record("AAAA", [1])
+    b = _protein_record("BBBB", [2])
+    c = _protein_record("CCCC", [1, 2])  # bridges clusters 1 and 2 -> merges the components
+
+    def _v1_entry_split(s):
+        c = _cfg(split_salt=s)
+        return assign_splits(build_clusters(filter_candidates([a, b], c)[0], c), c).entry_split
+
+    # A salt that, in the v1 (two-component) build, holds B out in test and puts A elsewhere.
+    salt = None
+    for s in (f"g{i}" for i in range(300)):
+        es = _v1_entry_split(s)
+        if es["BBBB"] == "test" and es["AAAA"] != "test":
+            salt = s
+            break
+    assert salt is not None, "no salt placed B in test and A elsewhere"
+    cfg = _cfg(split_salt=salt)
+
+    v1_clusters = build_clusters(filter_candidates([a, b], cfg)[0], cfg)
+    v1 = assign_splits(v1_clusters, cfg)
+    assert v1_clusters.n_clusters == 2
+    registry = dict(v1.cluster_split)  # {AAAA_1: <A's split>, BBBB_1: 'test'}
+
+    v2_clusters = build_clusters(filter_candidates([a, b, c], cfg)[0], cfg)
+    assert v2_clusters.n_clusters == 1  # the bridge merged the two components into one
+
+    # Without a registry: B is absorbed into A's component and leaves test — the
+    # unavoidable migration, now honest (pinned_reassignments needs a registry to count).
+    v2 = assign_splits(v2_clusters, cfg)
+    assert v2.entry_split["BBBB"] != "test"
+    assert v2.entry_split["AAAA"] == v2.entry_split["BBBB"]  # one component -> one split
+    assert v2.pinned_reassignments == 0
+
+    # With the v1 registry: B's held-out (test) pin wins across the merge (test
+    # precedence), so B STAYS in test; A's prior pin is overridden and that reassignment
+    # is counted, not dropped silently.
+    v2r = assign_splits(v2_clusters, cfg, registry=registry)
+    check_no_leakage(v2r, v2_clusters)
+    assert v2r.entry_split["BBBB"] == "test"  # held-out data preserved across the merge
+    assert v2r.entry_split["AAAA"] == "test"  # forced to B's split (single component)
+    assert v2r.pinned_reassignments == 1  # A's non-test pin overridden -> reported
+
+
 def _clusters_from(members):
     """Build a ClusterResult from a {component_key: [entry_ids]} map (for split tests)."""
     from ifsplit.cluster import ClusterResult
@@ -750,6 +829,31 @@ def test_structural_method_is_selectable():
     assert build_clusters(kept, _cfg(structural_clustering="ecod")).n_clusters == 1
 
 
+def test_cath_key_is_name_stable_but_scop2_key_is_name_sensitive():
+    # CATH keys on the stable superfamily code, so a display-name change does NOT change
+    # the grouping key. ECOD/SCOP2 key on the free-text name (their annotation_id is
+    # per-domain), so a rename DOES change the key — the documented fresh-rebuild
+    # limitation (#6): a locked build still reproduces exactly via candidates.jsonl.
+    from ifsplit.schema import structural_families_from_instances
+
+    def _inst(atype, ann_id, name):
+        return [
+            {
+                "rcsb_polymer_instance_annotation": [
+                    {"type": atype, "annotation_id": ann_id, "name": name}
+                ]
+            }
+        ]
+
+    cath_a = structural_families_from_instances(_inst("CATH", "1.10.490.10", "Globins"))
+    cath_b = structural_families_from_instances(_inst("CATH", "1.10.490.10", "Globins (renamed)"))
+    assert cath_a["cath"] == cath_b["cath"]  # keyed on the code -> rename-stable
+
+    scop_a = structural_families_from_instances(_inst("SCOP2", "8039836", "Globin-like"))
+    scop_b = structural_families_from_instances(_inst("SCOP2", "8039836", "Globin fold"))
+    assert scop_a["scop2"] != scop_b["scop2"]  # keyed on the name -> rename-sensitive (known)
+
+
 def test_structural_clustering_keeps_split_leakage_safe():
     # A fold shared across two entries must land in ONE split, never straddle.
     recs = [
@@ -794,6 +898,45 @@ def test_balanced_strategy_reports_thin_tail_gap():
     check_no_leakage(res, cr)
     assert res.balance_gaps  # tail too thin -> reported
     assert "val" in res.balance_gaps
+
+
+def test_test_min_does_not_recruit_capped_fold_under_balanced():
+    # A dominant fold (capped to train under balanced) that ALSO carries the floored
+    # class must NOT be pulled into test to meet a small floor — that would blow the
+    # entry balance (the bug). The floor is met from the small-fold tail instead.
+    cfg = _cfg(split_strategy="balanced", test_min_per_class={"metal": 30})
+    recs = [_protein_record(f"D{i:04d}", [1]) for i in range(400)]  # one 400-entry fold
+    recs += [_protein_record(f"S{i:04d}", [1000 + i]) for i in range(200)]  # size-1 tail
+    kept, _ = filter_candidates(recs, cfg)
+    cr = build_clusters(kept, cfg)
+    # metal in the mega-fold AND in 40 small components (a satisfiable tail supply).
+    entry_classes = {f"D{i:04d}": ["metal"] for i in range(400)}
+    entry_classes.update({f"S{i:04d}": ["metal"] for i in range(40)})
+    res = assign_splits(cr, cfg, entry_classes=entry_classes)
+    check_no_leakage(res, cr)
+    mega = cr.entry_to_cluster["D0000"]
+    assert res.cluster_split[mega] == "train"  # capped fold stays in train, not recruited
+    assert res.counts["test"] < 200  # not ballooned by the 400-entry fold
+    assert res.minimum_shortfalls == {}  # floor met from the small-fold tail
+    metal_in_test = sum(
+        1 for e, s in res.entry_split.items() if s == "test" and "metal" in entry_classes.get(e, [])
+    )
+    assert metal_in_test >= 30
+
+
+def test_test_min_reports_shortfall_when_only_capped_fold_has_class():
+    # If the class exists ONLY in a capped dominant fold, the floor cannot be met
+    # without blowing the balance — so it is reported as a shortfall, not forced.
+    cfg = _cfg(split_strategy="balanced", test_min_per_class={"metal": 50})
+    recs = [_protein_record(f"D{i:04d}", [1]) for i in range(400)]
+    recs += [_protein_record(f"S{i:04d}", [1000 + i]) for i in range(200)]
+    kept, _ = filter_candidates(recs, cfg)
+    cr = build_clusters(kept, cfg)
+    entry_classes = {f"D{i:04d}": ["metal"] for i in range(400)}  # metal only in the mega-fold
+    res = assign_splits(cr, cfg, entry_classes=entry_classes)
+    mega = cr.entry_to_cluster["D0000"]
+    assert res.cluster_split[mega] == "train"  # not recruited despite the unmet floor
+    assert res.minimum_shortfalls.get("metal") == 50  # honest shortfall, not a silent blowup
 
 
 # ---------- negative leakage: the guard MUST fire on a corrupted partition ------- #

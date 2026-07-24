@@ -332,4 +332,40 @@ def load_config(path: str | Path) -> Config:
             f"the settings in {path} differ from when the spec was stamped.",
             stacklevel=2,
         )
+    warn_tautological_benchmark(cfg)
     return cfg
+
+
+def is_tautological_benchmark(cfg: Config) -> bool:
+    """True when the novel-fold benchmark method equals the (non-off) fold-merge method.
+
+    In that pairing the structural merge already guarantees no (super)family straddles
+    splits, so every classified test entry is novel by construction — the reported
+    novel-fold fraction is a tautological ~100%, measuring the config not the data. The
+    fold labels are decoupled from union-find precisely so the benchmark can score a
+    fold-LEAKY split, so a meaningful benchmark uses a DIFFERENT authority (or
+    ``structural_clustering: off``).
+    """
+    m = cfg.fold_benchmark_method
+    return m != "off" and m == cfg.structural_clustering
+
+
+def warn_tautological_benchmark(cfg: Config) -> bool:
+    """Warn (never fail) on the tautological benchmark pairing; return whether it fired.
+
+    Callers that want to surface it in their own UI (the wizard) can use
+    :func:`is_tautological_benchmark` directly.
+    """
+    if is_tautological_benchmark(cfg):
+        import warnings
+
+        warnings.warn(
+            f"fold_benchmark_method={cfg.fold_benchmark_method!r} equals "
+            f"structural_clustering={cfg.structural_clustering!r}: the novel-fold benchmark is "
+            f"then tautological — ~100% of classified test entries are novel by construction, "
+            f"because the same-method merge already forbids a fold from straddling splits. Score "
+            f"novelty with a different authority, or set structural_clustering: off.",
+            stacklevel=2,
+        )
+        return True
+    return False

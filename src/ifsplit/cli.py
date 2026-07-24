@@ -174,7 +174,10 @@ def _run_pipeline(
             print("  test minimums: applied; all per-class floors met")
 
     fold_benchmark = build_fold_benchmark(
-        clusters.entry_fold_labels, splits.entry_split, cfg.fold_benchmark_method
+        clusters.entry_fold_labels,
+        splits.entry_split,
+        cfg.fold_benchmark_method,
+        merge_method=cfg.structural_clustering,
     )
 
     print("Stage 7 - manifest + registry:")
@@ -364,6 +367,13 @@ def cmd_stats(args: argparse.Namespace) -> int:
     from .manifest import summarize_manifest
 
     return summarize_manifest(args.manifest)
+
+
+def cmd_init(args: argparse.Namespace) -> int:
+    """Interactively scaffold a build config from a recipe (never runs a build)."""
+    from .wizard import run_init
+
+    return run_init(args)
 
 
 def cmd_spec(args: argparse.Namespace) -> int:
@@ -568,6 +578,29 @@ def build_parser() -> argparse.ArgumentParser:
     )
     ps.add_argument("manifest", help="Path to manifest.json")
     ps.set_defaults(func=cmd_stats)
+
+    pin = sub.add_parser(
+        "init",
+        help="Interactively scaffold a build config.yaml from a recipe (no build, no network).",
+    )
+    pin.add_argument(
+        "--out",
+        default="if-split.yaml",
+        help="Where to write the config (default: if-split.yaml).",
+    )
+    pin.add_argument(
+        "--recipe",
+        choices=("default", "fold-aware"),
+        default=None,
+        help="Base recipe to start from; skips the recipe prompt.",
+    )
+    pin.add_argument(
+        "--non-interactive",
+        action="store_true",
+        help="Don't prompt; write the base recipe verbatim (scriptable, uses --recipe).",
+    )
+    pin.add_argument("--force", action="store_true", help="Overwrite --out if it already exists.")
+    pin.set_defaults(func=cmd_init)
 
     psp = sub.add_parser(
         "spec",

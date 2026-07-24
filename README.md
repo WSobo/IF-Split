@@ -27,23 +27,31 @@ records and sequences. Coordinates are an optional, downstream concern.
 | **Reproducible** | A `dataset.lock` pins the snapshot **and the split output**; `verify` re-derives both and certifies they reproduced byte-for-byte (or reports exactly what drifted). |
 | **Cheap** | Metadata-only — a split is megabytes of JSON, not a terabyte of mmCIF. |
 | **Honest about quality** | Every ligand is tiered (`functional` / `ambiguous` / `artifact`) with a reason; nothing is silently dropped. |
-| **Fold-aware** | Controls *structural* leakage, not just sequence: same-fold chains can't straddle train/test — the leak that matters most for structure→sequence models. |
+| **Fold-aware** | Controls *structural* leakage, not just sequence: for chains a fold taxonomy classifies (SCOP2 ≈ 52%), same-fold chains can't straddle train/test — the leak that matters most for structure→sequence models. Unclassified chains are held out by sequence only (a disclosed residual-leakage *ceiling*). |
 
 ### Two reproducibility guarantees
 
 1. **Snapshot by release date, not query time.** Entries are selected by
-   `release_date <= snapshot_date`. Re-running with the same `snapshot_date`
-   yields the same candidate set no matter *when* you run it (obsoleted entries
-   are tracked, not silently dropped).
+   `release_date <= snapshot_date`, so the same `snapshot_date` yields the same
+   *candidate set* (obsoleted entries are tracked, not silently dropped). The exact
+   *split*, though, reproduces from the `dataset.lock` + `candidates.jsonl`, **not**
+   from `snapshot_date` alone: RCSB recomputes its sequence clusters and CATH/ECOD/SCOP2
+   annotations over time (no public history), so a *fresh* re-enumeration months later
+   can differ — share the lock + candidates to reproduce a split byte-for-byte.
 2. **Deterministic cluster → split assignment.** For the default `hash` strategy a
    cluster's split is decided by hashing a stable cluster key into the cumulative
-   split fractions — independent of how many other clusters exist, so existing
-   clusters never move when the PDB grows, which is what prevents train/test leakage
-   on regeneration (and lets `verify` certify a `hash` build). The `balanced`
-   strategy instead balances *entries*, so its val/test fill boundaries scale with
-   snapshot size; it achieves the same growth-stability by adopting a
-   `splits.registry.json` that pins prior component→split assignments — auto-adopted
-   on an in-place rebuild in v0.5.0 (see [Quickstart](#quickstart)).
+   split fractions — independent of how many other clusters exist, so a cluster whose
+   key is unchanged never moves as the PDB grows (and `verify` can certify a `hash`
+   build). The one exception is a *merge*: a later bridging multi-chain entry (or a
+   shared fold under `structural_clustering`) can unite two prior clusters, and the
+   absorbed one's entries then follow the survivor — an unavoidable reassignment now
+   **counted** in `splits.pinned_reassignments`, not hidden. A `splits.registry.json`
+   makes even that case stable: it pins prior assignments matched on *any* key a
+   component covers (so a held-out cluster stays held out across a merge; conflicts
+   resolve `test > val > train`). `balanced` additionally needs the registry as a
+   baseline (its val/test fill boundaries scale with snapshot size); an in-place
+   rebuild auto-adopts it when the config matches (`--fresh` opts out — see
+   [Quickstart](#quickstart)).
 
 ### Fold-level leakage control
 
@@ -79,9 +87,20 @@ smaller folds** — restoring ~80/10/10 by entries with thousands of distinct,
 held-out folds per split. It stays leakage-safe (whole components) and
 growth-stable via the registry (an in-place rebuild auto-adopts
 `<out>/splits.registry.json` when its config matches; `--fresh` opts out — see
-[Quickstart](#quickstart)), and reports a gap if a method's tail is too thin
-(`cath`/`ecod` starve val; **`scop2` is the sweet spot**). `balanced` also fixes
-the plain sequence-only skew (88/6/6 → 80/10/10) from the antibody mega-cluster.
+[Quickstart](#quickstart)), and reports a gap if a method's tail is too thin.
+`balanced` also fixes the plain sequence-only skew (88/6/6 → 80/10/10) from the
+antibody mega-cluster.
+
+**Two honest caveats.** (1) *Method choice is a trade-off, not a winner:* `ecod`
+classifies more chains (≈80% vs SCOP2's ≈52% — a lower residual-leakage ceiling) but
+its heavier merging starves val on the full PDB, so `config/fold-aware.yaml` ships
+`scop2`. `if-split stats` reports each method's coverage and any gap so you can judge —
+and that ECOD cannot fill a fold-disjoint 80/10/10 is itself a finding worth reporting,
+not a reason to switch authorities silently. (2) *`balanced` shifts the val/test
+distribution by construction:* dominant folds are capped to train, so val/test hold
+**only small, rare folds**. That is the point (a hard novel-fold test), but it means
+recovery on a `balanced` test set is **not comparable** to published
+LigandMPNN/ProteinMPNN numbers or across strategies — report it as its own measurement.
 
 ### The fold-aware split
 
@@ -154,6 +173,11 @@ Linux/WSL if you use `fetch`.)
 ## Quickstart
 
 ```bash
+# Scaffold a config interactively — pick a recipe (default | fold-aware) and tweak the
+# key knobs. It writes the config (comments intact) and prints the build command; it
+# NEVER runs a build. Works from an installed wheel too. --non-interactive for scripts.
+uv run if-split init --out my-split.yaml
+
 # Build the full split from today's PDB (metadata only).
 uv run if-split build --config config/default.yaml --out data/out
 
