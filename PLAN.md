@@ -336,6 +336,21 @@ may touch multiple clusters via different chains; all are recorded and union-fin
 merges them into one leakage-safe component (see Stage 5) so split assignment is
 unambiguous.
 
+**Unclustered chains (short peptides) — keyed by sequence, merge-gated by length.** RCSB
+does not cluster very short sequences (a probe found 9-mer peptides unclustered, the
+smallest clustered protein — crambin — at 46 aa). Such a chain is keyed by a hash of its
+*sequence* (not its entity id) so two entries sharing an identical unclustered chain co-key
+and cannot straddle splits. A *fully*-unclustered entry always keys and merges — bounded,
+since its component can only hold entries that are entirely that sequence. But an
+unclustered chain *inside an otherwise-clustered entry* adds a merge edge only when it is
+≥ `MIN_UNCLUSTERED_MERGE_LEN` residues: a promiscuous short peptide (a common ligand/tag)
+would otherwise union every host protein it appears in into a spurious mega-component —
+catastrophic under `hash`, where that component lands in a salt-chosen split. The gate is
+on sequence **length** (intrinsic → growth-stable), never on how many components a sequence
+touches (a snapshot-dependent count → would make the split input-dependent). The threshold
+is **provisional (40, 2026-07-24)** pending the full-snapshot fan-out knee from
+`scripts/measure_unclustered_fanout.py`.
+
 **Fold-level structural clustering (`structural_clustering`, opt-in ← *implemented***).
 Sequence clustering misses *structural* redundancy: chains below the identity
 threshold can still share a fold, which a structure→sequence model leaks across

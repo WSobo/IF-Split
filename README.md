@@ -44,14 +44,15 @@ records and sequences. Coordinates are an optional, downstream concern.
    key is unchanged never moves as the PDB grows (and `verify` can certify a `hash`
    build). The one exception is a *merge*: a later bridging multi-chain entry (or a
    shared fold under `structural_clustering`) can unite two prior clusters, and the
-   absorbed one's entries then follow the survivor — an unavoidable reassignment now
-   **counted** in `splits.pinned_reassignments`, not hidden. A `splits.registry.json`
-   makes even that case stable: it pins prior assignments matched on *any* key a
-   component covers (so a held-out cluster stays held out across a merge; conflicts
-   resolve `test > val > train`). `balanced` additionally needs the registry as a
-   baseline (its val/test fill boundaries scale with snapshot size); an in-place
-   rebuild auto-adopts it when the config matches (`--fresh` opts out — see
-   [Quickstart](#quickstart)).
+   absorbed one's entries then follow the survivor. With a `splits.registry.json` this is
+   both **prevented and reported**: the registry pins prior assignments matched on *any*
+   key a component covers (so a held-out cluster stays held out across a merge; conflicts
+   resolve `test > val > train`), and any pin it must override is **counted** in
+   `splits.pinned_reassignments`. Without a registry — the default `hash` path — the
+   reassignment still happens and is **not** separately counted (`pinned_reassignments`
+   needs a registry); it surfaces only as entry-fraction drift, which `stats` now warns on.
+   Pass `--registry` (or use `balanced`, which auto-adopts one in place when the config
+   matches; `--fresh` opts out) if you need merges pinned and counted.
 
 ### Fold-level leakage control
 

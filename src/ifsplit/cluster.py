@@ -20,12 +20,13 @@ A component's canonical key is the lexicographically smallest raw-cluster key ac
 its members. (Each RCSB raw key is itself a min-entity-id; an unclustered chain's raw
 key is ``singleton:<hash of its sequence>``.) Keying the split hash on a stable,
 content-derived key rather than RCSB's volatile integer cluster id keeps assignments
-stable as the dataset grows (PLAN.md §6). Sub-10-aa peptides that RCSB does not cluster
-form singleton components keyed by a hash of the sequence, so two **fully-unclustered**
-entries carrying an identical sequence share one component and cannot straddle two splits.
-(A clustered entry's own unclustered chains ride along in its clustered component; an
-identical sequence shared *only* via such a mixed entry is a rare residual — not
-separately merged, and covered for the common case by the sequence-cluster path.)
+stable as the dataset grows (PLAN.md §6). A chain RCSB does not cluster (a short peptide)
+is keyed by a hash of its sequence: a fully-unclustered entry's chains always key and merge
+(bounded — the component holds only entries that are entirely that sequence), while an
+unclustered chain inside an otherwise-clustered entry adds a merge edge only when it is long
+enough to be a real chain (``MIN_UNCLUSTERED_MERGE_LEN``), so a promiscuous short peptide
+cannot fan out into a spurious mega-component. An identical unclustered sequence that keys
+thus cannot straddle two splits (check_no_leakage, comparing raw keys, sees it).
 
 **Fold-level leakage control (opt-in via ``structural_clustering``).** Sequence
 clustering alone misses structural redundancy: two chains below the identity
@@ -47,6 +48,21 @@ from .config import Config
 from .schema import CandidateRecord
 
 SINGLETON_PREFIX = "singleton:"
+
+# Minimum sequence length for an UNCLUSTERED chain *inside an otherwise-clustered entry*
+# to add a merge edge (union its entry's component with every other entry carrying that
+# exact sequence). Below this, the chain is a short peptide/tag RCSB does not cluster;
+# letting it union would fan out — one promiscuous peptide would merge every host protein
+# it appears in into a spurious mega-component (catastrophic under `hash`, where that
+# component lands in a salt-chosen split). Gating on LENGTH — intrinsic to the sequence and
+# therefore growth-stable — rather than on how many components a sequence touches (a
+# snapshot-dependent count that would make the split input-dependent) is what keeps the
+# rule deterministic. A *fully*-unclustered entry is exempt: its sequence hash is its only
+# identity, and its component can only hold entries that are entirely that sequence (no
+# fan-out). PROVISIONAL (2026-07-24): a targeted RCSB probe found 9-mer peptides unclustered
+# and the smallest clustered protein (crambin) at 46 aa. Confirm the exact knee against the
+# full snapshot with scripts/measure_unclustered_fanout.py before treating this as final.
+MIN_UNCLUSTERED_MERGE_LEN = 40
 
 
 def _seq_singleton_key(seq: str) -> str:
@@ -127,17 +143,27 @@ def build_clusters(records: list[CandidateRecord], cfg: Config) -> ClusterResult
         proteins = [e for e in r.polymer_entities if e.is_protein]
         if not proteins:
             continue  # defensive; Stage 3 already drops no-protein entries
-        keys = sorted({raw_key[e.cluster_ids[level]] for e in proteins if level in e.cluster_ids})
-        if not keys:
-            # Every protein chain is unclustered at this level (typically sub-10-aa
-            # peptides RCSB does not cluster). Key each on a hash of its SEQUENCE so
-            # identical unclustered chains co-key into one component; an entity-id key
-            # would let an identical sequence straddle splits while check_no_leakage
-            # (which only compares raw keys) stayed blind.
-            keys = sorted({_seq_singleton_key(e.seq) for e in proteins})
-            all_keys.update(keys)
-            unclustered.append(r.entry_id)
-        elif len(keys) > 1:
+        clustered = {raw_key[e.cluster_ids[level]] for e in proteins if level in e.cluster_ids}
+        uncl = [e for e in proteins if level not in e.cluster_ids]
+        if clustered:
+            # Already identified by its clustered chain(s); an unclustered chain adds a
+            # MERGE EDGE only if it is long enough to be a real chain, never a short peptide
+            # (which would fan out — see MIN_UNCLUSTERED_MERGE_LEN).
+            singletons = {
+                _seq_singleton_key(e.seq) for e in uncl if len(e.seq) >= MIN_UNCLUSTERED_MERGE_LEN
+            }
+        else:
+            # Fully unclustered: the sequence hash is the chain's ONLY identity, so it must
+            # always key (gating here would leave a short-peptide-only entry with no key,
+            # reopening the straddle bug). Merging is bounded (the component holds only
+            # entries that are entirely this sequence), so there is nothing to gate.
+            singletons = {_seq_singleton_key(e.seq) for e in uncl}
+        keys = sorted(clustered | singletons)
+        key_set = set(keys)
+        all_keys.update(keys)
+        if not clustered:
+            unclustered.append(r.entry_id)  # every protein chain is unclustered
+        if len(keys) > 1:
             multichain.append(r.entry_id)
         entry_raw[r.entry_id] = keys
         if method != "off":
@@ -147,7 +173,13 @@ def build_clusters(records: list[CandidateRecord], cfg: Config) -> ClusterResult
                 if not fams:
                     continue
                 efams.update(fams)
-                rk = raw_key[e.cluster_ids[level]] if level in e.cluster_ids else keys[0]
+                if level in e.cluster_ids:
+                    rk = raw_key[e.cluster_ids[level]]
+                else:
+                    sk = _seq_singleton_key(e.seq)
+                    rk = (
+                        sk if sk in key_set else keys[0]
+                    )  # short uncl chain -> entry's own component
                 for fam in fams:
                     family_raw.setdefault(fam, set()).add(rk)
             if efams:

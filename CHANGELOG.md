@@ -7,6 +7,29 @@ follow [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 The **split is always computed from metadata + sequences only** — `build` never
 downloads structure coordinates. That invariant holds across every release below.
 
+## [Unreleased]
+
+### Fixed
+
+- **Unclustered-chain keying, length-gated.** An unclustered protein chain is keyed by its
+  sequence hash so two entries sharing an identical such chain co-key and cannot straddle
+  splits. A *fully*-unclustered entry always keys + merges (bounded — its component holds
+  only entries that are entirely that sequence). An unclustered chain *inside an
+  otherwise-clustered entry* adds a merge edge only when it is at least
+  `MIN_UNCLUSTERED_MERGE_LEN` (40, provisional) residues, so a promiscuous short peptide/tag
+  cannot fan out into a spurious mega-component (catastrophic under `hash`, where it lands in
+  a salt-chosen split). The gate is on sequence **length** — intrinsic and growth-stable —
+  never on a snapshot-dependent occurrence count. `scripts/measure_unclustered_fanout.py`
+  derives the exact knee from a `candidates.jsonl` (run during a full-PDB validation).
+- **Honest growth reporting.** `splits.pinned_reassignments` counts merge-overridden pins
+  only when a registry is in use; the docs no longer imply the registry-free `hash` path's
+  merge migration is counted (it surfaces as entry-fraction drift). `stats` now **warns**
+  when a `balanced` split's realized entry fractions drift from target (the
+  `test > val > train` precedence ratchets test upward across a rebuilt lineage). The
+  `examples/IF-Split-2026.07.14` README no longer claims a fresh `build` reproduces the split
+  byte-for-byte (that needs the locked `candidates.jsonl` + `dataset.lock`) and now notes the
+  example is the fold-leaky default.
+
 ## [0.6.0] — 2026-07-24
 
 A correctness-hardening release: five confirmed silent-failure fixes (each found by

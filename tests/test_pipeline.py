@@ -98,6 +98,71 @@ def test_distinct_unclustered_sequences_stay_separate():
     assert clusters.n_clusters == 2  # different sequences -> different components
 
 
+def _mixed_record(entry_id: str, cid: int, uncl_seq: str) -> CandidateRecord:
+    """An entry with one CLUSTERED protein chain (cluster `cid`) + one UNCLUSTERED chain."""
+    return CandidateRecord(
+        entry_id=entry_id,
+        methods=["X-RAY DIFFRACTION"],
+        resolution_A=2.0,
+        release_date="2020-01-01",
+        deposited_residues=100,
+        assemblies={f"{entry_id}-1": 100},
+        polymer_entities=[
+            PolymerEntity(
+                entity_id=f"{entry_id}_1",
+                polymer_type="Protein",
+                seq_len=60,
+                seq="A" * 60,
+                cluster_ids={30: cid},
+            ),
+            PolymerEntity(
+                entity_id=f"{entry_id}_2",
+                polymer_type="Protein",
+                seq_len=len(uncl_seq),
+                seq=uncl_seq,
+                cluster_ids={},
+            ),
+        ],
+        nonpolymer_comps=[],
+        bound_components=[],
+        affinity_comp_ids=[],
+    )
+
+
+_LONG_UNCL = "MKTAYIAKQRQISFVKSHFSRQLEERLGHKLMNPQRSTVWY"  # 41 aa >= MIN_UNCLUSTERED_MERGE_LEN
+_SHORT_PEP = "GSHMWYPQR"  # 9 aa, below the merge gate
+
+
+def test_partial_entries_merge_via_long_unclustered_chain():
+    # Two entries with DISTINCT clustered chains but the SAME long unclustered chain must
+    # merge — a long shared sequence is a real leak signal, keeping them apart would leak it.
+    cr = build_clusters(
+        [_mixed_record("EE01", 1, _LONG_UNCL), _mixed_record("EE02", 2, _LONG_UNCL)], _cfg()
+    )
+    assert cr.entry_to_cluster["EE01"] == cr.entry_to_cluster["EE02"]
+
+
+def test_short_shared_peptide_does_not_merge_partial_entries():
+    # The SAME short peptide as a second chain must NOT union two otherwise-unrelated
+    # proteins (a peptide ligand/tag is not a homology signal, and would fan out).
+    cr = build_clusters(
+        [_mixed_record("EE01", 1, _SHORT_PEP), _mixed_record("EE02", 2, _SHORT_PEP)], _cfg()
+    )
+    assert cr.entry_to_cluster["EE01"] != cr.entry_to_cluster["EE02"]
+
+
+def test_promiscuous_short_peptide_forms_no_megacomponent():
+    # 50 unrelated proteins each carry the SAME short peptide as a second chain. The gate
+    # keeps them 50 components; WITHOUT it they collapse into ONE mega-component (== every
+    # entry), which under `hash` would land wholesale in a salt-chosen split. Goes red if
+    # someone removes the gate.
+    recs = [_mixed_record(f"P{i:03d}", 100 + i, _SHORT_PEP) for i in range(50)]
+    cr = build_clusters(recs, _cfg())
+    n = sum(len(m) for m in cr.cluster_members.values())
+    biggest = max(len(m) for m in cr.cluster_members.values())
+    assert biggest <= 0.1 * n  # gate holds (biggest == 1); without it biggest == n
+
+
 # ----------------------------- Stage 3: filter ----------------------------- #
 def test_filter_keeps_protein_entries(sample_entries):
     recs = [CandidateRecord.from_data_api(e) for e in sample_entries.values()]

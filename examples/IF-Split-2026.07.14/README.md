@@ -1,12 +1,21 @@
 # Example split — IF-Split-2026.07.14
 
 A full-PDB split at a **today's-date cutoff** (snapshot `2026-07-14`), produced
-entirely from RCSB metadata — **no structure coordinates downloaded**. The split
-itself is committed here: plain lists of PDB ids, KB-to-MB in size. Reproduce it
-byte-for-byte with:
+entirely from RCSB metadata — **no structure coordinates downloaded**. This is the
+project's **default** split (`hash` + `structural_clustering: off`): it prevents
+sequence-cluster leakage but is **fold-leaky** (folds are not held out of test — for a
+fold-honest split use `config/fold-aware.yaml`).
+
+The split itself is committed here: plain lists of PDB ids, KB-to-MB in size. To
+**re-derive it byte-for-byte** you need the locked snapshot — the (uncommitted)
+`candidates.jsonl` + `dataset.lock` listed below. A fresh `build --config …` at a *later*
+date will **not** reproduce it, because RCSB re-clusters and re-annotates over time (see
+the main README's reproducibility note). With the snapshot artifacts in hand, offline and
+network-free:
 
 ```bash
-uv run if-split build --config examples/IF-Split-2026.07.14/config.yaml --out data/out
+uv run if-split verify examples/IF-Split-2026.07.14/dataset.lock \
+    --candidates examples/IF-Split-2026.07.14/candidates.jsonl
 ```
 
 ## The split (committed)
@@ -46,8 +55,9 @@ GitHub Release / Zenodo if you want them downloadable:
 | `clusters.json` | ~3.3 MB | entry → sequence-cluster component (for `sample_by_cluster`) |
 | `dataset.lock` | ~3 MB | reproduction anchor: embedded config + all entry ids + candidates SHA-256 + split hash |
 
-`build` regenerates everything from `config.yaml` (same config hash → identical
-output); `verify … --candidates candidates.jsonl` re-derives and certifies it offline.
+`build` regenerates the full tree from `config.yaml` + the *current* PDB, but only the
+locked snapshot (`candidates.jsonl` + `dataset.lock`) reproduces **this** split exactly;
+`verify … --candidates candidates.jsonl` re-derives and certifies it offline.
 
 ## Headline numbers
 

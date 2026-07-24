@@ -71,12 +71,14 @@ Invariants that must not regress:
   integer id). A component whose canonical key is unchanged never moves as the
   snapshot grows; the exception is a **merge** — a later bridging multi-chain entry
   (or, with `structural_clustering`, a shared fold) can unite two prior components,
-  and the absorbed one's entries then follow the survivor's split. Without a registry
-  that reassignment is unavoidable (now *reported*, not hidden — the old "hash never
-  moves existing ones" claim was false under merges). A registry pins prior
-  assignments matched on **any** key a component covers, so a held-out component stays
-  held out across a merge; a conflicting merge is resolved `test > val > train` and
-  the override is counted in `splits.pinned_reassignments`. `balanced` additionally
+  and the absorbed one's entries then follow the survivor's split (the old "hash never
+  moves existing ones" claim was false under merges). With a registry this is prevented
+  and reported: it pins prior assignments matched on **any** key a component covers, so a
+  held-out component stays held out across a merge; a conflicting merge is resolved
+  `test > val > train` and each overridden pin is counted in `splits.pinned_reassignments`.
+  Without a registry (the default `hash` path) the reassignment still happens and is NOT
+  counted — `pinned_reassignments` needs a registry — it surfaces only as entry-fraction
+  drift (which `stats` warns on). `balanced` additionally
   needs the registry for baseline stability (its val/test fill boundaries scale with
   total entries): an in-place `balanced` rebuild auto-adopts
   `<out>/splits.registry.json` when the prior `dataset.lock` `config_hash` matches
