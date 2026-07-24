@@ -20,12 +20,11 @@ A component's canonical key is the lexicographically smallest raw-cluster key ac
 its members. (Each RCSB raw key is itself a min-entity-id; an unclustered chain's raw
 key is ``singleton:<hash of its sequence>``.) Keying the split hash on a stable,
 content-derived key rather than RCSB's volatile integer cluster id keeps assignments
-stable as the dataset grows (PLAN.md §6). Sub-10-aa peptides that RCSB does not cluster
-form singleton components keyed by a hash of the sequence, so two **fully-unclustered**
-entries carrying an identical sequence share one component and cannot straddle two splits.
-(A clustered entry's own unclustered chains ride along in its clustered component; an
-identical sequence shared *only* via such a mixed entry is a rare residual — not
-separately merged, and covered for the common case by the sequence-cluster path.)
+stable as the dataset grows (PLAN.md §6). A chain RCSB does not cluster (typically a
+sub-10-aa peptide) is keyed by a hash of its sequence, so any two entries sharing an
+identical unclustered chain — whether or not their other chains are clustered — land in
+one component, and that sequence cannot straddle two splits (check_no_leakage, comparing
+raw keys, then sees it).
 
 **Fold-level leakage control (opt-in via ``structural_clustering``).** Sequence
 clustering alone misses structural redundancy: two chains below the identity
@@ -127,17 +126,19 @@ def build_clusters(records: list[CandidateRecord], cfg: Config) -> ClusterResult
         proteins = [e for e in r.polymer_entities if e.is_protein]
         if not proteins:
             continue  # defensive; Stage 3 already drops no-protein entries
-        keys = sorted({raw_key[e.cluster_ids[level]] for e in proteins if level in e.cluster_ids})
-        if not keys:
-            # Every protein chain is unclustered at this level (typically sub-10-aa
-            # peptides RCSB does not cluster). Key each on a hash of its SEQUENCE so
-            # identical unclustered chains co-key into one component; an entity-id key
-            # would let an identical sequence straddle splits while check_no_leakage
-            # (which only compares raw keys) stayed blind.
-            keys = sorted({_seq_singleton_key(e.seq) for e in proteins})
-            all_keys.update(keys)
-            unclustered.append(r.entry_id)
-        elif len(keys) > 1:
+        # A protein chain's raw key is its RCSB cluster key when clustered at this level,
+        # else a hash of its SEQUENCE. Keying unclustered chains by sequence (not entity
+        # id) makes two entries sharing an identical unclustered chain — even if one is
+        # otherwise clustered — co-key into one component instead of straddling splits
+        # invisibly to check_no_leakage (which compares only raw keys). Sub-10-aa peptides
+        # RCSB does not cluster are the common case.
+        clustered = {raw_key[e.cluster_ids[level]] for e in proteins if level in e.cluster_ids}
+        singletons = {_seq_singleton_key(e.seq) for e in proteins if level not in e.cluster_ids}
+        keys = sorted(clustered | singletons)
+        all_keys.update(keys)
+        if not clustered:
+            unclustered.append(r.entry_id)  # every protein chain is unclustered
+        if len(keys) > 1:
             multichain.append(r.entry_id)
         entry_raw[r.entry_id] = keys
         if method != "off":
@@ -147,7 +148,11 @@ def build_clusters(records: list[CandidateRecord], cfg: Config) -> ClusterResult
                 if not fams:
                     continue
                 efams.update(fams)
-                rk = raw_key[e.cluster_ids[level]] if level in e.cluster_ids else keys[0]
+                rk = (
+                    raw_key[e.cluster_ids[level]]
+                    if level in e.cluster_ids
+                    else _seq_singleton_key(e.seq)
+                )
                 for fam in fams:
                     family_raw.setdefault(fam, set()).add(rk)
             if efams:

@@ -7,6 +7,17 @@ follow [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 The **split is always computed from metadata + sequences only** — `build` never
 downloads structure coordinates. That invariant holds across every release below.
 
+## [Unreleased]
+
+### Fixed
+
+- **Closed the partial-entry singleton gap (follow-up to v0.6.0's #3 fix).** An
+  unclustered protein chain is now keyed by its sequence hash in *every* entry, not only
+  in fully-unclustered ones — so two entries sharing an identical unclustered chain land
+  in one component even when one entry's other chains are clustered, and that sequence can
+  never straddle two splits. (An entry mixing a clustered chain and an unclustered chain is
+  now counted in `multichain_entries`.)
+
 ## [0.6.0] — 2026-07-24
 
 A correctness-hardening release: five confirmed silent-failure fixes (each found by

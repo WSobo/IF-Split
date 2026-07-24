@@ -98,6 +98,44 @@ def test_distinct_unclustered_sequences_stay_separate():
     assert clusters.n_clusters == 2  # different sequences -> different components
 
 
+def test_partial_entry_shares_component_via_unclustered_chain():
+    # An entry with a CLUSTERED chain + an UNCLUSTERED chain (seq S) must share a
+    # component with a fully-unclustered entry carrying the same seq S: S is keyed by
+    # hash regardless of the entry's other, clustered chains. Previously a partial
+    # entry's unclustered chain was dropped, so S could still straddle splits.
+    s = "GSHMWYPQR" * 2
+    partial = CandidateRecord(
+        entry_id="MIX1",
+        methods=["X-RAY DIFFRACTION"],
+        resolution_A=2.0,
+        release_date="2020-01-01",
+        deposited_residues=100,
+        assemblies={"MIX1-1": 100},
+        polymer_entities=[
+            PolymerEntity(
+                entity_id="MIX1_1",
+                polymer_type="Protein",
+                seq_len=60,
+                seq="A" * 60,
+                cluster_ids={30: 1},
+            ),
+            PolymerEntity(
+                entity_id="MIX1_2", polymer_type="Protein", seq_len=len(s), seq=s, cluster_ids={}
+            ),
+        ],
+        nonpolymer_comps=[],
+        bound_components=[],
+        affinity_comp_ids=[],
+    )
+    cr = build_clusters([partial, _unclustered_record("2PEP", s)], _cfg())
+    assert cr.entry_to_cluster["MIX1"] == cr.entry_to_cluster["2PEP"]  # shared via seq S
+    assert "MIX1" in cr.multichain_entries  # a cluster + a singleton = multi-key
+    for salt in ("s1", "s2", "s3", "s4"):
+        splits = assign_splits(cr, _cfg(split_salt=salt))
+        check_no_leakage(splits, cr)
+        assert splits.entry_split["MIX1"] == splits.entry_split["2PEP"]
+
+
 # ----------------------------- Stage 3: filter ----------------------------- #
 def test_filter_keeps_protein_entries(sample_entries):
     recs = [CandidateRecord.from_data_api(e) for e in sample_entries.values()]
