@@ -163,6 +163,32 @@ def test_promiscuous_short_peptide_forms_no_megacomponent():
     assert biggest <= 0.1 * n  # gate holds (biggest == 1); without it biggest == n
 
 
+def test_rebuild_diff_reports_entry_moves_into_train(tmp_path, capsys):
+    # The entry-level growth signal: a same-config rebuild reports how many prior entries
+    # changed split AND how many were absorbed into train (the unsafe hash-merge direction).
+    import json as _json
+
+    from ifsplit.cli import _report_rebuild_migration
+
+    cfg = _cfg()
+    (tmp_path / "train.json").write_text(_json.dumps(["B"]))
+    (tmp_path / "val.json").write_text(_json.dumps([]))
+    (tmp_path / "test.json").write_text(_json.dumps(["A"]))
+    (tmp_path / "dataset.lock").write_text(_json.dumps({"config_hash": cfg.config_hash()}))
+    # New assignment: A moved test -> train (held-out absorbed into train); B unchanged.
+    _report_rebuild_migration(cfg, tmp_path, {"A": "train", "B": "train"})
+    out = capsys.readouterr().out
+    assert "CHANGED split" in out
+    assert "1 absorbed INTO train" in out
+
+
+def test_rebuild_diff_silent_on_first_build(tmp_path, capsys):
+    from ifsplit.cli import _report_rebuild_migration
+
+    _report_rebuild_migration(_cfg(), tmp_path, {"A": "train"})  # no prior split in the dir
+    assert capsys.readouterr().out == ""
+
+
 # ----------------------------- Stage 3: filter ----------------------------- #
 def test_filter_keeps_protein_entries(sample_entries):
     recs = [CandidateRecord.from_data_api(e) for e in sample_entries.values()]

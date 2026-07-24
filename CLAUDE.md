@@ -77,8 +77,12 @@ Invariants that must not regress:
   held-out component stays held out across a merge; a conflicting merge is resolved
   `test > val > train` and each overridden pin is counted in `splits.pinned_reassignments`.
   Without a registry (the default `hash` path) the reassignment still happens and is NOT
-  counted — `pinned_reassignments` needs a registry — it surfaces only as entry-fraction
-  drift (which `stats` warns on). `balanced` additionally
+  counted (`pinned_reassignments` needs a registry). An in-place rebuild instead reports it
+  at the ENTRY level — `_report_rebuild_migration` prints how many prior entries changed
+  split and how many were absorbed into train (hash merges are train-biased: the survivor's
+  bucket, train owns 80%). Aggregate fractions cannot detect it (conserved by construction —
+  ~10% of entries can churn while 80/10/10 barely moves), so the balanced drift warning is a
+  coarse balanced-only signal, NOT the hash-path detector. `balanced` additionally
   needs the registry for baseline stability (its val/test fill boundaries scale with
   total entries): an in-place `balanced` rebuild auto-adopts
   `<out>/splits.registry.json` when the prior `dataset.lock` `config_hash` matches

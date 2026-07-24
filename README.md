@@ -49,10 +49,13 @@ records and sequences. Coordinates are an optional, downstream concern.
    key a component covers (so a held-out cluster stays held out across a merge; conflicts
    resolve `test > val > train`), and any pin it must override is **counted** in
    `splits.pinned_reassignments`. Without a registry — the default `hash` path — the
-   reassignment still happens and is **not** separately counted (`pinned_reassignments`
-   needs a registry); it surfaces only as entry-fraction drift, which `stats` now warns on.
-   Pass `--registry` (or use `balanced`, which auto-adopts one in place when the config
-   matches; `--fresh` opts out) if you need merges pinned and counted.
+   reassignment still happens and is **not** counted (`pinned_reassignments` needs a
+   registry). An in-place rebuild instead reports it at the **entry level**: how many prior
+   entries changed split, and how many were absorbed **into train** — the direction
+   registry-free `hash` merges are biased toward (the survivor's bucket, and train owns 80%
+   of it), i.e. held-out data eroding into train. Aggregate fractions can't detect this
+   (they're conserved by construction). Pass `--registry` (or use `balanced`, which
+   auto-adopts one in place when the config matches; `--fresh` opts out) to pin merges.
 
 ### Fold-level leakage control
 

@@ -38,6 +38,18 @@ test, decide which column it lives in:
 | fold labels used for merging are disjoint | an **independent** authority says test is novel |
 | the candidate-set hash matches | the **entry→split partition** matches |
 | a per-class floor was requested | the floor was met **and** the balance survived |
+| an aggregate fraction / a counter moved | the **entries that changed** are reported |
+
+**This applies to observability, not just invariants — and it is the trap this repo keeps
+falling into.** The reporting layer has failed the same way three times: `cluster_split`
+instead of `entry_split`, then `pinned_reassignments` (a registry-only counter) instead of
+entries-moved, then aggregate entry-fractions instead of entries-moved. Each claim got
+narrower and more careful and still landed on a quantity the implementation can compute
+cheaply rather than the one a reader needs. Aggregates are the worst offenders: an 80/10/10
+is *conserved by construction*, so ~10% of entries can migrate (held-out → train, under
+`hash`, the unsafe direction) while the aggregate barely moves. **Specify a diagnostic by
+what would go wrong, not by what is convenient to count** — for growth that means the
+entry-level rebuild diff (`_report_rebuild_migration`), not a fraction or a counter.
 
 If a check only ever reads the left column, it is decoration. Move it right.
 

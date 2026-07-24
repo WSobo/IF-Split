@@ -100,6 +100,59 @@ def _resolve_registry(cfg, out, registry_path, fresh) -> dict[str, str]:
     return {}
 
 
+def _report_rebuild_migration(cfg, out, entry_split) -> None:
+    """Entry-level rebuild diff: how many prior entries changed split in this ``--out``.
+
+    Reads the train/val/test lists ALREADY in ``<out>`` (before they are overwritten) and
+    reports how many entries move — and how many are absorbed INTO train — vs the new
+    assignment. This is the only faithful growth signal on the registry-free ``hash`` path:
+    aggregate fractions are conserved by construction (a merge that flips one entry
+    train<->test barely dents 80/10/10), so they hide the migration, while ``hash`` merges
+    are biased toward train (the survivor's bucket, and train owns 80% of it) — held-out
+    data erodes into train, the unsafe direction. Diagnostic only: it reads the prior
+    OUTPUT, never feeds the assignment (so ``verify``-from-config-alone is untouched) and is
+    absent from the deterministic manifest.
+    """
+    from .manifest import SPLIT_FILES, read_lock
+
+    out = Path(out)
+    prior: dict[str, str] = {}
+    for split, fname in SPLIT_FILES.items():
+        p = out / fname
+        if not p.exists():
+            continue
+        try:
+            for eid in json.loads(p.read_text(encoding="utf-8")):
+                prior[eid] = split
+        except (OSError, ValueError):
+            return  # unreadable prior split -> skip the diagnostic
+    if not prior:
+        return  # first build into this dir — nothing to diff
+    common = [e for e in entry_split if e in prior]
+    moved = [e for e in common if prior[e] != entry_split[e]]
+    into_train = sum(1 for e in moved if entry_split[e] == "train")
+    same_config = False
+    lock = out / "dataset.lock"
+    if lock.exists():
+        try:
+            same_config = read_lock(lock).get("config_hash") == cfg.config_hash()
+        except (OSError, ValueError, KeyError, TypeError):
+            same_config = False
+    if not moved:
+        print(f"  rebuild diff: all {len(common)} prior entries kept their split (stable).")
+    elif same_config:
+        print(
+            f"  rebuild diff: {len(moved)}/{len(common)} prior entries CHANGED split on this "
+            f"same-config rebuild ({into_train} absorbed INTO train — held-out→train "
+            f"contamination via merges). Pin with --registry (balanced auto-adopts), or --fresh."
+        )
+    else:
+        print(
+            f"  rebuild diff: {len(moved)}/{len(common)} prior entries differ — the config changed "
+            f"since the prior build in this dir, so a large diff is expected."
+        )
+
+
 def _run_pipeline(
     cfg, records, sha, out, *, limit, registry_path, fresh=False, source="build"
 ) -> tuple[Path, int]:
@@ -161,6 +214,7 @@ def _run_pipeline(
     check_no_leakage(splits, clusters)  # structural guarantee; raises on violation
     c = splits.counts
     print(f"  train={c['train']} val={c['val']} test={c['test']}  (no cross-split leakage)")
+    _report_rebuild_migration(cfg, out, splits.entry_split)  # entry-level growth signal
     if splits.strategy != "hash":
         note = f"  strategy={splits.strategy}: {splits.capped_folds} dominant folds -> train"
         if splits.balance_gaps:

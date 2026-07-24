@@ -7,7 +7,11 @@ follow [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 The **split is always computed from metadata + sequences only** — `build` never
 downloads structure coordinates. That invariant holds across every release below.
 
-## [Unreleased]
+## [0.6.1] — 2026-07-24
+
+Split output changes (the unclustered-chain keying below), so this **must** carry a new
+version even pre-release: two builds with the same `config_hash` but different code would
+otherwise share a version string and silently produce different splits.
 
 ### Fixed
 
@@ -21,14 +25,22 @@ downloads structure coordinates. That invariant holds across every release below
   a salt-chosen split). The gate is on sequence **length** — intrinsic and growth-stable —
   never on a snapshot-dependent occurrence count. `scripts/measure_unclustered_fanout.py`
   derives the exact knee from a `candidates.jsonl` (run during a full-PDB validation).
+- **Entry-level rebuild diff (the faithful growth signal).** An in-place `build`/`resplit`
+  now reports how many prior entries **changed split** vs the build already in `--out`, and
+  how many were **absorbed into train** — the direction registry-free `hash` merges are
+  biased toward (the survivor's bucket, and train owns 80% of it), i.e. held-out data eroding
+  into train. Aggregate fractions can't detect this (they are conserved by construction — a
+  simulation churned ~10% of entries while the 80/10/10 barely moved), so the report is at the
+  entry level. Diagnostic only: it reads the prior output, never the assignment, so
+  `verify`-from-config-alone and the deterministic manifest are untouched.
 - **Honest growth reporting.** `splits.pinned_reassignments` counts merge-overridden pins
-  only when a registry is in use; the docs no longer imply the registry-free `hash` path's
-  merge migration is counted (it surfaces as entry-fraction drift). `stats` now **warns**
-  when a `balanced` split's realized entry fractions drift from target (the
-  `test > val > train` precedence ratchets test upward across a rebuilt lineage). The
-  `examples/IF-Split-2026.07.14` README no longer claims a fresh `build` reproduces the split
-  byte-for-byte (that needs the locked `candidates.jsonl` + `dataset.lock`) and now notes the
-  example is the fold-leaky default.
+  only when a registry is in use; the docs no longer claim the registry-free `hash` path's
+  merge migration is "reported" via `pinned_reassignments` or aggregate drift (it isn't — see
+  the rebuild diff above). `stats` also warns when a `balanced` split's realized entry
+  fractions drift from target (a coarse, balanced-only signal for the `test > val > train`
+  ratchet — not a substitute for the entry-level diff). The `examples/IF-Split-2026.07.14`
+  README no longer claims a fresh `build` reproduces the split byte-for-byte (that needs the
+  locked `candidates.jsonl` + `dataset.lock`) and notes the example is the fold-leaky default.
 
 ## [0.6.0] — 2026-07-24
 
