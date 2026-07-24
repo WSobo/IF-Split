@@ -16,12 +16,16 @@ entry into **components** (connected components, union-find). The component is t
 unit Stage 6 assigns to a split, which makes cross-split sequence overlap
 impossible by construction - no heuristic, no after-the-fact audit.
 
-A component's canonical key is the lexicographically smallest entity id across all
-its members. (Equivalently the smallest raw-cluster key, since each raw key is
-itself a min-entity-id - so min-of-mins = global min.) Keying the split hash on a
-stable member id, not RCSB's volatile integer cluster id, keeps assignments
-stable as the dataset grows (PLAN.md §6). Sub-10-aa peptides that RCSB does not
-cluster become their own singleton components.
+A component's canonical key is the lexicographically smallest raw-cluster key across
+its members. (Each RCSB raw key is itself a min-entity-id; an unclustered chain's raw
+key is ``singleton:<hash of its sequence>``.) Keying the split hash on a stable,
+content-derived key rather than RCSB's volatile integer cluster id keeps assignments
+stable as the dataset grows (PLAN.md §6). Sub-10-aa peptides that RCSB does not cluster
+form singleton components keyed by a hash of the sequence, so two **fully-unclustered**
+entries carrying an identical sequence share one component and cannot straddle two splits.
+(A clustered entry's own unclustered chains ride along in its clustered component; an
+identical sequence shared *only* via such a mixed entry is a rare residual — not
+separately merged, and covered for the common case by the sequence-cluster path.)
 
 **Fold-level leakage control (opt-in via ``structural_clustering``).** Sequence
 clustering alone misses structural redundancy: two chains below the identity
@@ -36,12 +40,26 @@ edge.
 
 from __future__ import annotations
 
+import hashlib
 from dataclasses import dataclass, field
 
 from .config import Config
 from .schema import CandidateRecord
 
 SINGLETON_PREFIX = "singleton:"
+
+
+def _seq_singleton_key(seq: str) -> str:
+    """Component key for an unclustered protein chain, derived from its SEQUENCE.
+
+    Keying on a sequence hash (not the entity id) makes two entries carrying an
+    identical unclustered sequence collapse into one component, so an identical
+    sequence cannot straddle two splits — and ``check_no_leakage`` (which compares
+    raw keys) can actually see it. It is also more growth-stable than an entity-id
+    key: the same sequence always yields the same key regardless of when or under
+    what id it was deposited.
+    """
+    return SINGLETON_PREFIX + hashlib.blake2b(seq.encode("utf-8"), digest_size=16).hexdigest()
 
 
 @dataclass
@@ -111,9 +129,13 @@ def build_clusters(records: list[CandidateRecord], cfg: Config) -> ClusterResult
             continue  # defensive; Stage 3 already drops no-protein entries
         keys = sorted({raw_key[e.cluster_ids[level]] for e in proteins if level in e.cluster_ids})
         if not keys:
-            singleton = SINGLETON_PREFIX + min(e.entity_id for e in proteins)
-            keys = [singleton]
-            all_keys.add(singleton)
+            # Every protein chain is unclustered at this level (typically sub-10-aa
+            # peptides RCSB does not cluster). Key each on a hash of its SEQUENCE so
+            # identical unclustered chains co-key into one component; an entity-id key
+            # would let an identical sequence straddle splits while check_no_leakage
+            # (which only compares raw keys) stayed blind.
+            keys = sorted({_seq_singleton_key(e.seq) for e in proteins})
+            all_keys.update(keys)
             unclustered.append(r.entry_id)
         elif len(keys) > 1:
             multichain.append(r.entry_id)

@@ -64,8 +64,18 @@ def metal_symbols_in_annotation(name: str | None) -> set[str]:
 
 # Structural-classification methods for fold-level leakage control (Stage 5).
 # CATH's annotation_id IS the homologous-superfamily code (e.g. "1.10.490.10"), a
-# ready-made grouping key. ECOD/SCOP2 expose a per-domain annotation_id, so we key
-# on the (super)family *name* they carry ("Bcl-2", "Globin-like") instead.
+# ready-made STABLE grouping key. ECOD/SCOP2 expose only a PER-DOMAIN annotation_id,
+# so we key on the (super)family *name* they carry ("Bcl-2", "Globin-like") instead.
+#
+# CAVEAT (reproducibility): a free-text name is not guaranteed stable across RCSB
+# releases, so a *fresh* re-enumeration months later could merge a scop2/ecod fold
+# differently if RCSB renames a superfamily. This never corrupts a locked build —
+# candidates.jsonl stores the resolved names, so `resplit`/`verify` reproduce the split
+# exactly — and CATH is entirely unaffected. The stable fix is to key on the
+# superfamily-level id in RCSB's `annotation_lineage` (confirmed available: SCOP2/ECOD
+# carry stable numeric lineage ids); it is deferred because choosing the lineage level
+# that preserves the CURRENT merge granularity must be validated against the full PDB
+# (a wrong level would silently change how aggressively folds merge, shifting balance).
 STRUCTURAL_METHODS = ("cath", "ecod", "scop2")
 
 

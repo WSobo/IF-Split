@@ -299,6 +299,10 @@ def build_manifest(
         "splits": {
             "strategy": splits.strategy,
             "growth_stable": growth_stable,
+            # Prior registry pins a merge overrode on this rebuild (a bridging entry can
+            # fold two differently-pinned components into one split). 0 for a first or
+            # non-merging build; >0 means that many prior pins were overridden.
+            "pinned_reassignments": splits.pinned_reassignments,
             "capped_folds": splits.capped_folds,
             "balance_gaps": dict(sorted(splits.balance_gaps.items())),
             "entry_counts": dict(sorted(splits.counts.items())),
@@ -391,6 +395,7 @@ def build_fold_benchmark(
     entry_fold_labels: dict[str, list[str]],
     entry_split: dict[str, str],
     method: str,
+    merge_method: str = "off",
 ) -> dict[str, Any] | None:
     """Fold-seen vs novel-fold TEST partition for re-benchmarking existing checkpoints.
 
@@ -445,6 +450,11 @@ def build_fold_benchmark(
         "n_test_novel_fold": len(novel_fold_test),
         "n_test_distinct_folds": len(fold_groups),
         "n_test_novel_folds": n_novel_folds,
+        # True when the benchmark method equals the fold-merge method: the merge then
+        # guarantees no family straddles splits, so the novel-fold count is a
+        # tautological ~100% (measures the config, not the data). See
+        # config.warn_tautological_benchmark.
+        "tautological_with_merge": method != "off" and method == merge_method,
     }
     return {
         "summary": summary,
@@ -872,6 +882,13 @@ def summarize_manifest(manifest_path: str | Path) -> int:
                 "  growth stability: NOT pinned — a rebuild may move prior components across "
                 "splits; rebuild in place (same --out + config) or pass --registry"
             )
+    reassigned = sp.get("pinned_reassignments", 0)
+    if reassigned:
+        print(
+            f"  growth WARNING: {reassigned} prior registry pin(s) were overridden by a merge "
+            f"this rebuild (a bridging multi-chain entry united differently-pinned components); "
+            f"the most held-out split was kept (test > val > train)."
+        )
     print("  splits (entries / components):")
     total = sum(sp["entry_counts"].values()) or 1
     fracs = m.get("config", {}).get("split_fractions", {})
@@ -898,6 +915,12 @@ def summarize_manifest(manifest_path: str | Path) -> int:
             f"{fb['n_test_classified']} classified test entries are novel-fold "
             f"({fb['n_test_novel_folds']}/{fb['n_test_distinct_folds']} test folds unseen in train)"
         )
+        if fb.get("tautological_with_merge"):
+            print(
+                f"    WARNING: benchmark method == structural_clustering ({fb['method']}), so this "
+                f"~100% is tautological (the merge forbids a fold from straddling splits). Score "
+                f"novelty with a different authority, or build with structural_clustering: off."
+            )
     print("  test set by ligand class (functional tier):")
     for cls, n in sp["per_split_class_counts"].get("test", {}).items():
         print(f"    {cls}: {n}")

@@ -4,13 +4,18 @@ Each *component* (a leakage-safe group of sequence clusters joined by shared
 multi-chain entries; see cluster.py) is assigned to a split by
 ``blake2b(salt + ':' + component_key)`` mapped onto the cumulative
 ``split_fractions``. Same salt + same key -> same split, forever, independent of
-how many other components exist - so a larger snapshot only *adds* components and
-never moves existing ones.
+how many other components exist. A component whose canonical key is unchanged never
+moves as the snapshot grows. The one exception is a *merge*: a later bridging
+multi-chain entry can unite two prior components, and the absorbed one's entries then
+follow the surviving (min-key) component's split. Without a registry that reassignment
+is unavoidable (and now honestly reported); a registry makes even the merge case stable.
 
-An optional ``registry`` (component_key -> split) pins prior assignments: if a
-key is already in the registry its recorded split wins over the hash, so growth
-is stable even if a component's canonical key shifts (e.g. a smaller-id member
-joins later).
+An optional ``registry`` (component_key -> split) pins prior assignments, matched on
+ANY key a component covers — so even when a merge changes a component's canonical key,
+the prior pin still wins over the hash and a held-out component stays held out. When a
+merge unites two DIFFERENTLY-pinned components the union is forced to a single split
+(``_registry_pin`` keeps the most held-out: test > val > train) and each overridden pin
+is counted in ``SplitResult.pinned_reassignments`` rather than dropped silently.
 
 The ``balanced`` strategy (``split_strategy="balanced"``) exists because
 per-component hashing balances *components*, not *entries*: with heavy-tailed
@@ -110,6 +115,49 @@ class SplitResult:
     strategy: str = "hash"
     capped_folds: int = 0
     balance_gaps: dict[str, int] = field(default_factory=dict)
+    # Prior registry pins a merge overrode on this rebuild (a bridging entry can fold
+    # two differently-pinned components into one split). >0 means the split is not
+    # fully growth-stable — surfaced, not hidden. 0 for a registry-free/non-merging build.
+    pinned_reassignments: int = 0
+
+
+def _component_raw_keys(clusters: ClusterResult) -> dict[str, set[str]]:
+    """component key -> every raw/singleton key its entries cover.
+
+    A component's canonical key is only the smallest of these. A later snapshot can
+    merge two prior components (a bridging multi-chain entry) into one whose canonical
+    key is only ONE of the prior keys — so a growth registry keyed on the OLD component
+    keys must be matched against ALL keys a component covers, or the absorbed
+    component's pin is silently dropped.
+    """
+    comp_raw: dict[str, set[str]] = {}
+    for entry, comp in clusters.entry_to_cluster.items():
+        comp_raw.setdefault(comp, set()).update(clusters.entry_raw_clusters[entry])
+    return comp_raw
+
+
+# Precedence for a merged component that inherits CONFLICTING prior pins: keep the
+# most held-out split so held-out data is never absorbed into train on a rebuild.
+_PIN_PRECEDENCE = ("test", "val", "train")
+
+
+def _registry_pin(raw_keys: set[str], registry: dict[str, str]) -> str | None:
+    """Prior split pinned for a component, honoring a pin on ANY key it now covers.
+
+    Looking up only the surviving component key silently drops the pin of a component
+    a bridging multi-chain entry merged in (its key is no longer canonical). Honoring
+    any covered key keeps a held-out component held out across snapshots. When a merge
+    unites DIFFERENTLY-pinned components the split is unavoidably forced to one value;
+    ``_PIN_PRECEDENCE`` keeps the most held-out, and the override of the other is
+    counted in ``SplitResult.pinned_reassignments`` — never silent.
+    """
+    pins = {registry[rk] for rk in raw_keys if rk in registry}
+    if not pins:
+        return None
+    for s in _PIN_PRECEDENCE:
+        if s in pins:
+            return s
+    return None  # unreachable: pins is a subset of SPLITS
 
 
 def _enforce_test_minimums(
@@ -117,20 +165,33 @@ def _enforce_test_minimums(
     clusters: ClusterResult,
     cfg: Config,
     entry_classes: dict[str, list[str]],
-    registry: dict[str, str],
+    pinned_comps: set[str],
 ) -> tuple[dict[str, str], dict[str, int]]:
     """Recruit whole components into test until per-class floors are met.
 
-    Leakage-safe (moves components, never entries), deterministic (hash-ordered),
-    and growth-stable (never overrides a registry-pinned component). Returns the
-    updated ``cluster_split`` and a ``{class: shortfall}`` map for any floor that
-    could not be fully satisfied from the available supply.
+    Leakage-safe (moves components, never entries) and growth-stable (never overrides
+    a registry-pinned component). Components are recruited smallest-sufficient-first
+    (hash-tiebroken, so deterministic) to minimize entry overshoot; under "balanced" a
+    dominant fold already capped to train is never recruited (that would blow the entry
+    balance). Returns the updated ``cluster_split`` and a ``{class: shortfall}`` map for
+    any floor the eligible (non-capped) supply could not fully satisfy.
     """
     minimums = {c: n for c, n in cfg.test_min_per_class.items() if n > 0}
     if not minimums:
         return cluster_split, {}
 
     cluster_split = dict(cluster_split)
+    sizes = {k: len(v) for k, v in clusters.cluster_members.items()}
+    # Under "balanced", dominant folds were capped to train to protect the ENTRY
+    # balance; recruiting one into test to satisfy a small floor would blow that
+    # balance (a floor of 100 pulling in a 3000-entry fold). Exclude above-cap
+    # components from recruitment so the floor is met from the small-fold tail — or
+    # reported as a shortfall. "hash" has no entry-balance contract, so no cap.
+    cap = (
+        BALANCE_MAX_COMPONENT_FRAC * sum(sizes.values())
+        if cfg.split_strategy == "balanced"
+        else None
+    )
     # Per-component count of entries carrying each class (so test totals update O(1)).
     comp_class_counts: dict[str, dict[str, int]] = {}
     for key, entries in clusters.cluster_members.items():
@@ -154,9 +215,13 @@ def _enforce_test_minimums(
             for key in clusters.cluster_members
             if cluster_split[key] != "test"
             and comp_class_counts[key].get(cls, 0) > 0
-            and key not in registry  # respect pinned assignments (growth stability)
+            and key not in pinned_comps  # respect pinned assignments (growth stability)
+            and (cap is None or sizes[key] <= cap)  # never yank a capped dominant fold
         ]
-        eligible.sort(key=lambda k: (bucket(k, cfg.split_salt), k))
+        # Smallest sufficient component first: meet the floor with the least entry
+        # overshoot rather than whichever component sorts first by hash (which could be
+        # a large fold). Hash + key break ties, keeping it deterministic.
+        eligible.sort(key=lambda k: (sizes[k], bucket(k, cfg.split_salt), k))
         for key in eligible:
             if test_totals.get(cls, 0) >= need:
                 break
@@ -170,15 +235,18 @@ def _enforce_test_minimums(
 
 
 def _balanced_assign(
-    clusters: ClusterResult, cfg: Config, registry: dict[str, str]
+    clusters: ClusterResult,
+    cfg: Config,
+    registry: dict[str, str],
+    comp_raw: dict[str, set[str]],
 ) -> tuple[dict[str, str], int, dict[str, int]]:
     """Cap dominant folds to train; fill val/test to ENTRY targets from the tail.
 
     Leakage-safe (whole components move, never entries), deterministic (hash-ordered
-    fill), and growth-stable via ``registry`` (pinned components keep their split;
-    only new components fill the remaining budget). Returns
-    ``(cluster_split, n_capped, gaps)`` where ``gaps`` records any val/test entry
-    target the fold tail was too thin to reach.
+    fill), and growth-stable via ``registry`` — a pinned component keeps its split
+    (matched on ANY key it covers, so a bridging merge still honors the prior pin) and
+    only new components fill the remaining budget. Returns ``(cluster_split, n_capped,
+    gaps)`` where ``gaps`` records any val/test entry target the tail was too thin to reach.
     """
     sizes = {k: len(v) for k, v in clusters.cluster_members.items()}
     n_entries = sum(sizes.values())
@@ -190,11 +258,11 @@ def _balanced_assign(
     totals = {"val": 0, "test": 0}
     n_capped = 0
     for key in clusters.cluster_members:
-        if key in registry:  # pinned by a prior build (growth stability)
-            s = registry[key]
-            cluster_split[key] = s
-            if s in totals:
-                totals[s] += sizes[key]
+        pinned = _registry_pin(comp_raw.get(key, {key}), registry) if registry else None
+        if pinned is not None:  # pinned by a prior build (growth stability)
+            cluster_split[key] = pinned
+            if pinned in totals:
+                totals[pinned] += sizes[key]
         elif sizes[key] > cap:
             cluster_split[key] = "train"  # dominant fold -> train by design
             n_capped += 1
@@ -232,21 +300,41 @@ def assign_splits(
     into test to meet per-class floors (see :func:`_enforce_test_minimums`).
     """
     registry = registry or {}
+    comp_raw = _component_raw_keys(clusters) if registry else {}
+    pinned_comps = (
+        {k for k in clusters.cluster_members if _registry_pin(comp_raw.get(k, {k}), registry)}
+        if registry
+        else set()
+    )
 
     n_capped = 0
     balance_gaps: dict[str, int] = {}
     if cfg.split_strategy == "balanced":
-        cluster_split, n_capped, balance_gaps = _balanced_assign(clusters, cfg, registry)
+        cluster_split, n_capped, balance_gaps = _balanced_assign(clusters, cfg, registry, comp_raw)
     else:
-        cluster_split = {
-            key: registry.get(key, split_for_key(key, cfg)) for key in clusters.cluster_members
-        }
+        cluster_split = {}
+        for key in clusters.cluster_members:
+            pinned = _registry_pin(comp_raw.get(key, {key}), registry) if registry else None
+            cluster_split[key] = pinned if pinned is not None else split_for_key(key, cfg)
 
     shortfalls: dict[str, int] = {}
     if cfg.test_min_per_class and entry_classes is not None:
         cluster_split, shortfalls = _enforce_test_minimums(
-            cluster_split, clusters, cfg, entry_classes, registry
+            cluster_split, clusters, cfg, entry_classes, pinned_comps
         )
+
+    # Honest growth accounting: how many prior registry pins a merge overrode. A
+    # bridging multi-chain entry can fold two differently-pinned components into one,
+    # forcing a single split; _registry_pin keeps the most held-out, and each overridden
+    # pin is counted here rather than dropped silently. 0 unless a registry was used AND
+    # a merge conflicted.
+    pinned_reassignments = 0
+    if registry:
+        rawkey_to_comp = {rk: comp for comp, rks in comp_raw.items() for rk in rks}
+        for rk, prior in registry.items():
+            comp = rawkey_to_comp.get(rk)
+            if comp is not None and cluster_split[comp] != prior:
+                pinned_reassignments += 1
 
     counts = {s: 0 for s in SPLITS}
     entry_split: dict[str, str] = {}
@@ -268,6 +356,7 @@ def assign_splits(
         strategy=cfg.split_strategy,
         capped_folds=n_capped,
         balance_gaps=dict(sorted(balance_gaps.items())),
+        pinned_reassignments=pinned_reassignments,
     )
 
 
