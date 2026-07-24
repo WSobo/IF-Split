@@ -131,6 +131,7 @@ def _report_rebuild_migration(cfg, out, entry_split) -> None:
     common = [e for e in entry_split if e in prior]
     moved = [e for e in common if prior[e] != entry_split[e]]
     into_train = sum(1 for e in moved if entry_split[e] == "train")
+    out_of_train = sum(1 for e in moved if prior[e] == "train")
     same_config = False
     lock = out / "dataset.lock"
     if lock.exists():
@@ -143,8 +144,9 @@ def _report_rebuild_migration(cfg, out, entry_split) -> None:
     elif same_config:
         print(
             f"  rebuild diff: {len(moved)}/{len(common)} prior entries CHANGED split on this "
-            f"same-config rebuild ({into_train} absorbed INTO train — held-out→train "
-            f"contamination via merges). Pin with --registry (balanced auto-adopts), or --fresh."
+            f"same-config rebuild — {into_train} INTO train (contaminates a frozen test LIST), "
+            f"{out_of_train} OUT of train (contaminates a carried-forward CHECKPOINT's test set). "
+            f"Pin with --registry (balanced auto-adopts), or --fresh."
         )
     else:
         print(

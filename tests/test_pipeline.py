@@ -175,11 +175,13 @@ def test_rebuild_diff_reports_entry_moves_into_train(tmp_path, capsys):
     (tmp_path / "val.json").write_text(_json.dumps([]))
     (tmp_path / "test.json").write_text(_json.dumps(["A"]))
     (tmp_path / "dataset.lock").write_text(_json.dumps({"config_hash": cfg.config_hash()}))
-    # New assignment: A moved test -> train (held-out absorbed into train); B unchanged.
-    _report_rebuild_migration(cfg, tmp_path, {"A": "train", "B": "train"})
+    # New assignment: A moved test -> train (into train), B moved train -> test (out of train)
+    # — both directions contaminate, for different downstream users.
+    _report_rebuild_migration(cfg, tmp_path, {"A": "train", "B": "test"})
     out = capsys.readouterr().out
     assert "CHANGED split" in out
-    assert "1 absorbed INTO train" in out
+    assert "1 INTO train" in out
+    assert "1 OUT of train" in out
 
 
 def test_rebuild_diff_silent_on_first_build(tmp_path, capsys):
