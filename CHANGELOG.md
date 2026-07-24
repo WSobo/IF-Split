@@ -7,6 +7,66 @@ follow [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 The **split is always computed from metadata + sequences only** — `build` never
 downloads structure coordinates. That invariant holds across every release below.
 
+## [0.6.0] — 2026-07-24
+
+A correctness-hardening release: five confirmed silent-failure fixes (each found by
+probing the real split functions, each now guarded by a red-without-the-fix test),
+plus the `if-split init` config wizard. The default `hash` split output is unchanged
+except the singleton-keying fix below, which only affects unclustered short peptides.
+
+### Added
+
+- **`if-split init` — a config wizard.** TTY-aware; scaffolds a `config.yaml` from the
+  `default` or `fold-aware` recipe, prompts for the highest-signal knobs (snapshot date,
+  resolution, split fractions, `structural_clustering`, `fold_benchmark_method`, salt),
+  preserves every recipe comment, validates before writing, and **never runs a build**.
+  The two recipes are embedded, so it works from an installed wheel (which omits
+  `config/`); `--recipe` / `--non-interactive` / `--force` make it scriptable.
+
+### Fixed
+
+- **Growth stability across a merge (the old claim was false).** A later snapshot's
+  bridging multi-chain entry can union two prior components into one; the absorbed
+  component's entries used to silently follow the survivor's split (a held-out test entry
+  could become train), and a registry pin under the vanished key was ignored. The registry
+  now matches a pin on **any** key a component covers, so a held-out component stays held
+  out across a merge (conflicts resolve `test > val > train`); any unavoidable reassignment
+  is **counted** in `splits.pinned_reassignments` and surfaced by `stats`. Affects both
+  `hash` and `balanced`; the docs no longer claim `hash` "never moves existing" components.
+- **Identical unclustered sequences could straddle splits.** A fully-unclustered protein
+  chain was keyed on its entity id, so two entries with the same peptide sequence got
+  different singleton components and could land in different splits while `check_no_leakage`
+  stayed blind. Fully-unclustered singletons are now keyed on a **hash of the sequence**, so
+  two such entries with an identical sequence share one component (a genuine, if small,
+  default-config leak — closed for the fully-unclustered case). *Note:* this changes the
+  singleton key format, so a `splits.registry.json` from ≤ v0.5.0 does not carry over pins
+  for unclustered-peptide components on the first in-place `balanced` rebuild — they re-key
+  and may reshuffle (use `--fresh` for a clean lineage). Clustered components are unaffected.
+- **`test_min_per_class` could silently blow up a `balanced` split.** The per-class top-up
+  could recruit a dominant fold (capped to train) into test to meet a small floor, pushing
+  test far past its target with no shortfall reported. The top-up now recruits
+  **smallest-sufficient-component first** and never pulls an above-cap fold under
+  `balanced`; an unmeetable floor is reported as a shortfall.
+- **Novel-fold benchmark could be tautological.** With `fold_benchmark_method ==
+  structural_clustering`, the merge already holds every fold out of test, so the novel-fold
+  fraction is ~100% by construction. `load_config` now **warns**, the manifest records
+  `tautological_with_merge`, `stats` flags it, the wizard notes it, and
+  `config/fold-aware.yaml` suggests an independent authority (`ecod`) instead.
+- **Packaging.** Dropped the stale `mmseqs2` keyword and dependency comment (the backend
+  was removed in v0.4.0).
+
+### Changed / documented
+
+- **ECOD/SCOP2 fold keys are free-text names** (their `annotation_id` is per-domain), so a
+  *fresh* re-enumeration could merge a fold differently if RCSB renames a superfamily.
+  Documented as a fresh-rebuild caveat (a locked build reproduces exactly via
+  `candidates.jsonl`; CATH is stable); the stable-lineage-id fix is scoped for a follow-up.
+- **Honesty pass on the claims.** The README feature table now qualifies fold hold-out by
+  coverage (SCOP2 ≈ 52%); reproducibility guarantee #1 states the exact split reproduces
+  from the lock + `candidates.jsonl`, not `snapshot_date` alone; the `balanced` covariate
+  shift (val/test hold only small, rare folds — not comparable to published numbers) and
+  the `scop2`-vs-`ecod` trade-off are stated plainly.
+
 ## [0.5.0] — 2026-07-22
 
 Toward "The Novel-Fold Benchmark". No change to the default (`hash`) split output.

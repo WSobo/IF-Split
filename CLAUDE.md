@@ -67,14 +67,21 @@ Invariants that must not regress:
   (`hash` and `balanced`, which only chooses *which* split a whole component lands
   in). `check_no_leakage` is a real invariant (not a tautology) — keep it that way.
 - **Growth stability:** `hash` maps a component to `hash(salt + canonical_key)`
-  into cumulative fractions, keyed on the global-min member id (not RCSB's volatile
-  integer id) — input-independent and registry-free, so a larger snapshot only
-  *adds* components and never moves existing ones. `balanced` differs: its val/test
-  fill boundaries scale with the snapshot's total entries, so prior components move
-  unless pinned. `splits.registry.json` pins them; an in-place `balanced` rebuild
-  auto-adopts `<out>/splits.registry.json` when the prior `dataset.lock`
-  `config_hash` matches (`--fresh` opts out), and the manifest records
-  `splits.growth_stable`.
+  into cumulative fractions, keyed on the global-min member key (not RCSB's volatile
+  integer id). A component whose canonical key is unchanged never moves as the
+  snapshot grows; the exception is a **merge** — a later bridging multi-chain entry
+  (or, with `structural_clustering`, a shared fold) can unite two prior components,
+  and the absorbed one's entries then follow the survivor's split. Without a registry
+  that reassignment is unavoidable (now *reported*, not hidden — the old "hash never
+  moves existing ones" claim was false under merges). A registry pins prior
+  assignments matched on **any** key a component covers, so a held-out component stays
+  held out across a merge; a conflicting merge is resolved `test > val > train` and
+  the override is counted in `splits.pinned_reassignments`. `balanced` additionally
+  needs the registry for baseline stability (its val/test fill boundaries scale with
+  total entries): an in-place `balanced` rebuild auto-adopts
+  `<out>/splits.registry.json` when the prior `dataset.lock` `config_hash` matches
+  (`--fresh` opts out). The manifest records `splits.growth_stable` and
+  `splits.pinned_reassignments`.
 - **Annotate, never destroy:** ligand quality is a per-component *tier*
   (functional / ambiguous / artifact) in the manifest; structures are never
   dropped for ligand quality. Class labels derive from the functional tier.

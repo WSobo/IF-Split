@@ -30,18 +30,27 @@ Two mechanisms deliver this, and they must both be in from the start:
   (modulo obsoleted entries, which we track explicitly — see §6). Do not define
   the snapshot as "whatever the API returns today."
 - **Deterministic cluster→split assignment by hash.** A cluster's split is
-  decided by `hash(cluster_representative_id + salt) mod N`. New clusters added
-  in a later, larger snapshot get assigned by the same function; existing
-  clusters never move. This gives stable splits under dataset growth and is the
-  property that prevents train/test contamination when you regenerate.
+  decided by `hash(canonical_member_id + salt)` mapped onto the cumulative
+  fractions. New clusters added in a later, larger snapshot get assigned by the
+  same function; a cluster whose canonical key is unchanged never moves. This gives
+  stable splits under dataset growth and prevents train/test contamination on
+  regeneration.
 
-  > **Implementation note (Stage 6):** the "existing clusters never move"
-  > guarantee holds only if `cluster_representative_id` is *input-independent*.
-  > A clusterer's chosen representative depends on whatever is in the input set, so
-  > as the snapshot grows a cluster's representative can change and its hash with it.
-  > Hash a canonical member (the lexicographically smallest member id over the
-  > cluster's membership among current entities) and persist a cluster→split
-  > registry so growth only ever *adds* clusters.
+  > **Implementation note (Stage 6):** the "never moves" guarantee holds only if
+  > the key is *input-independent*, so we hash the lexicographically smallest member
+  > id over the cluster's membership (not a clusterer-chosen representative, which
+  > would shift as the input set changes).
+  >
+  > **The merge exception (disclosed + registry-fixed in v0.6.0).** The split unit
+  > is a *component* — clusters union-merged by shared multi-chain entries (and shared
+  > folds under `structural_clustering`). A later bridging entry can MERGE two prior
+  > components into one whose canonical key is only one of the two; the absorbed
+  > component's entries then follow the survivor. So "existing components never move"
+  > is **false across a merge**. Without a registry the reassignment is unavoidable and
+  > is now *counted* in `splits.pinned_reassignments` (not hidden). With a registry it
+  > is pinned: a component's prior split is matched on *any* key it covers, so a
+  > held-out component stays held out across a merge (conflicts resolve
+  > `test > val > train`).
 
   > **Two strategies, one guarantee (v0.5.0).** This pure-hash guarantee is what
   > makes `split_strategy: hash` input-independent and registry-free — the reason
