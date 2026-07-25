@@ -15,16 +15,19 @@ otherwise share a version string and silently produce different splits.
 
 ### Fixed
 
-- **Unclustered-chain keying, length-gated.** An unclustered protein chain is keyed by its
-  sequence hash so two entries sharing an identical such chain co-key and cannot straddle
-  splits. A *fully*-unclustered entry always keys + merges (bounded — its component holds
-  only entries that are entirely that sequence). An unclustered chain *inside an
-  otherwise-clustered entry* adds a merge edge only when it is at least
-  `MIN_UNCLUSTERED_MERGE_LEN` (40, provisional) residues, so a promiscuous short peptide/tag
-  cannot fan out into a spurious mega-component (catastrophic under `hash`, where it lands in
-  a salt-chosen split). The gate is on sequence **length** — intrinsic and growth-stable —
-  never on a snapshot-dependent occurrence count. `scripts/measure_unclustered_fanout.py`
-  derives the exact knee from a `candidates.jsonl` (run during a full-PDB validation).
+- **Unclustered-chain keying, gated by modeled content.** An unclustered protein chain is
+  keyed by its sequence hash so two entries sharing an identical such chain co-key and cannot
+  straddle splits. A *fully*-unclustered entry always keys + merges (bounded — its component
+  holds only entries that are entirely that sequence). An unclustered chain *inside an
+  otherwise-clustered entry* adds a merge edge only when it carries at least
+  `MIN_UNCLUSTERED_MERGE_MODELED` (**12**) modeled (non-'X') residues, so an unmodeled or
+  low-complexity fragment cannot fan out into a spurious mega-component (catastrophic under
+  `hash`, where it lands in a salt-chosen split). The gate is on modeled sequence **content**
+  — intrinsic and growth-stable — never on a snapshot-dependent occurrence count. **Measured
+  on the full 2026-07-22 snapshot** (`scripts/measure_unclustered_fanout.py`): the fan-out is
+  driven by unmodeled poly-'X' / low-complexity sequence, **not length** (a 72-'X' chain
+  bridges 283 clusters), and collapses from 429 to a max of 2 at ≥ 12 modeled residues — a
+  clean knee, and a finding about the PDB's unclustered tail.
 - **Entry-level rebuild diff (the faithful growth signal).** An in-place `build`/`resplit`
   now reports how many prior entries **changed split** vs the build already in `--out`, and
   how many were **absorbed into train** — the direction registry-free `hash` merges are

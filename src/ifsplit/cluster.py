@@ -23,10 +23,11 @@ content-derived key rather than RCSB's volatile integer cluster id keeps assignm
 stable as the dataset grows (PLAN.md §6). A chain RCSB does not cluster (a short peptide)
 is keyed by a hash of its sequence: a fully-unclustered entry's chains always key and merge
 (bounded — the component holds only entries that are entirely that sequence), while an
-unclustered chain inside an otherwise-clustered entry adds a merge edge only when it is long
-enough to be a real chain (``MIN_UNCLUSTERED_MERGE_LEN``), so a promiscuous short peptide
-cannot fan out into a spurious mega-component. An identical unclustered sequence that keys
-thus cannot straddle two splits (check_no_leakage, comparing raw keys, sees it).
+unclustered chain inside an otherwise-clustered entry adds a merge edge only when it carries
+enough MODELED sequence to be a real chain (``MIN_UNCLUSTERED_MERGE_MODELED``), so an
+unmodeled (poly-'X') or low-complexity fragment cannot fan out into a spurious
+mega-component. An identical unclustered sequence that keys thus cannot straddle two splits
+(check_no_leakage, comparing raw keys, sees it).
 
 **Fold-level leakage control (opt-in via ``structural_clustering``).** Sequence
 clustering alone misses structural redundancy: two chains below the identity
@@ -49,20 +50,28 @@ from .schema import CandidateRecord
 
 SINGLETON_PREFIX = "singleton:"
 
-# Minimum sequence length for an UNCLUSTERED chain *inside an otherwise-clustered entry*
-# to add a merge edge (union its entry's component with every other entry carrying that
-# exact sequence). Below this, the chain is a short peptide/tag RCSB does not cluster;
-# letting it union would fan out — one promiscuous peptide would merge every host protein
-# it appears in into a spurious mega-component (catastrophic under `hash`, where that
-# component lands in a salt-chosen split). Gating on LENGTH — intrinsic to the sequence and
-# therefore growth-stable — rather than on how many components a sequence touches (a
-# snapshot-dependent count that would make the split input-dependent) is what keeps the
-# rule deterministic. A *fully*-unclustered entry is exempt: its sequence hash is its only
-# identity, and its component can only hold entries that are entirely that sequence (no
-# fan-out). PROVISIONAL (2026-07-24): a targeted RCSB probe found 9-mer peptides unclustered
-# and the smallest clustered protein (crambin) at 46 aa. Confirm the exact knee against the
-# full snapshot with scripts/measure_unclustered_fanout.py before treating this as final.
-MIN_UNCLUSTERED_MERGE_LEN = 40
+# An UNCLUSTERED chain *inside an otherwise-clustered entry* adds a merge edge (unions its
+# entry's component with every other entry carrying that exact sequence) only if it has at
+# least this many MODELED (non-'X') residues. Below it the chain is unmodeled (poly-'X') or
+# a short/low-complexity fragment — RCSB does not cluster these, and they are exactly what
+# fans out: a shared such chain would union every host protein it appears in into a spurious
+# mega-component (catastrophic under `hash`, where it lands in a salt-chosen split). Gating
+# on modeled sequence CONTENT is intrinsic → growth-stable (unlike a snapshot-dependent
+# occurrence count, which would make the split input-dependent). A *fully*-unclustered entry
+# is exempt: its component is bounded to entries that are entirely that sequence, and all-'X'
+# fully-unclustered entries are already dropped in Stage 3.
+#
+# MEASURED (2026-07-22 full snapshot, scripts/measure_unclustered_fanout.py): among
+# unclustered partial-entry chains the max merge fan-out collapses from 429 (all-'X') / 177
+# (short real) to 2 at >= 12 modeled residues — a clean knee. RAW LENGTH does NOT separate
+# them (a 72-'X' chain still bridges 283 clusters); the driver is unmodeled/low-complexity
+# sequence, not length. See PLAN.md §5.
+MIN_UNCLUSTERED_MERGE_MODELED = 12
+
+
+def _modeled_len(seq: str) -> int:
+    """Count of MODELED (non-'X') residues — the usable sequence content of a chain."""
+    return sum(1 for c in seq if c != "X")
 
 
 def _seq_singleton_key(seq: str) -> str:
@@ -146,11 +155,14 @@ def build_clusters(records: list[CandidateRecord], cfg: Config) -> ClusterResult
         clustered = {raw_key[e.cluster_ids[level]] for e in proteins if level in e.cluster_ids}
         uncl = [e for e in proteins if level not in e.cluster_ids]
         if clustered:
-            # Already identified by its clustered chain(s); an unclustered chain adds a
-            # MERGE EDGE only if it is long enough to be a real chain, never a short peptide
-            # (which would fan out — see MIN_UNCLUSTERED_MERGE_LEN).
+            # Already identified by its clustered chain(s); an unclustered chain adds a MERGE
+            # EDGE only if it carries enough MODELED sequence to be a real chain — never an
+            # unmodeled (poly-'X') or short/low-complexity fragment, which would fan out (see
+            # MIN_UNCLUSTERED_MERGE_MODELED).
             singletons = {
-                _seq_singleton_key(e.seq) for e in uncl if len(e.seq) >= MIN_UNCLUSTERED_MERGE_LEN
+                _seq_singleton_key(e.seq)
+                for e in uncl
+                if _modeled_len(e.seq) >= MIN_UNCLUSTERED_MERGE_MODELED
             }
         else:
             # Fully unclustered: the sequence hash is the chain's ONLY identity, so it must

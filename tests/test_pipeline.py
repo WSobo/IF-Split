@@ -163,6 +163,18 @@ def test_promiscuous_short_peptide_forms_no_megacomponent():
     assert biggest <= 0.1 * n  # gate holds (biggest == 1); without it biggest == n
 
 
+def test_polyx_unmodeled_chain_never_merges_even_when_long():
+    # Full-snapshot finding (2026-07-22): unclustered fan-out is driven by UNMODELED
+    # (poly-'X') chains at ALL lengths (a 72-'X' chain bridged 283 clusters). A raw-length
+    # gate would let a long poly-'X' through and seed a mega-component; the modeled-residue
+    # gate (0 modeled) keeps them apart. Goes red if the gate reverts to raw length.
+    long_polyx = "X" * 80  # 80 residues, 0 modeled
+    cr = build_clusters(
+        [_mixed_record("EE01", 1, long_polyx), _mixed_record("EE02", 2, long_polyx)], _cfg()
+    )
+    assert cr.entry_to_cluster["EE01"] != cr.entry_to_cluster["EE02"]
+
+
 def test_rebuild_diff_reports_entry_moves_into_train(tmp_path, capsys):
     # The entry-level growth signal: a same-config rebuild reports how many prior entries
     # changed split AND how many were absorbed into train (the unsafe hash-merge direction).
