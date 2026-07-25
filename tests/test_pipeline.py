@@ -934,6 +934,25 @@ def test_structural_method_is_selectable():
     assert build_clusters(kept, _cfg(structural_clustering="ecod")).n_clusters == 1
 
 
+def test_union_merges_on_any_authority():
+    # "union" merges chains that agree under ANY of CATH/ECOD/SCOP2. Here they differ under
+    # CATH and carry no SCOP2, but share an ECOD family — cath keeps them apart, union merges.
+    recs = [
+        _fold_record("AAA1", 10, {"cath": ["1.10.1.1"], "ecod": ["Bcl-2"]}),
+        _fold_record("BBB2", 20, {"cath": ["2.20.2.2"], "ecod": ["Bcl-2"]}),
+    ]
+    kept, _ = filter_candidates(recs, _cfg())
+    assert build_clusters(kept, _cfg(structural_clustering="cath")).n_clusters == 2
+    assert build_clusters(kept, _cfg(structural_clustering="union")).n_clusters == 1
+    # Namespacing: a CATH code that equals an (unrelated) ECOD name must NOT merge under union.
+    recs2 = [
+        _fold_record("CCC1", 30, {"cath": ["shared"]}),
+        _fold_record("DDD2", 40, {"ecod": ["shared"]}),
+    ]
+    kept2, _ = filter_candidates(recs2, _cfg())
+    assert build_clusters(kept2, _cfg(structural_clustering="union")).n_clusters == 2
+
+
 def test_cath_key_is_name_stable_but_scop2_key_is_name_sensitive():
     # CATH keys on the stable superfamily code, so a display-name change does NOT change
     # the grouping key. ECOD/SCOP2 key on the free-text name (their annotation_id is

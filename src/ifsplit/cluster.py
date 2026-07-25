@@ -46,7 +46,7 @@ import hashlib
 from dataclasses import dataclass, field
 
 from .config import Config
-from .schema import CandidateRecord
+from .schema import STRUCTURAL_METHODS, CandidateRecord
 
 SINGLETON_PREFIX = "singleton:"
 
@@ -165,11 +165,16 @@ def build_clusters(records: list[CandidateRecord], cfg: Config) -> ClusterResult
                 if _modeled_len(e.seq) >= MIN_UNCLUSTERED_MERGE_MODELED
             }
         else:
-            # Fully unclustered: the sequence hash is the chain's ONLY identity, so it must
-            # always key (gating here would leave a short-peptide-only entry with no key,
-            # reopening the straddle bug). Merging is bounded (the component holds only
-            # entries that are entirely this sequence), so there is nothing to gate.
-            singletons = {_seq_singleton_key(e.seq) for e in uncl}
+            # Fully unclustered: the sequence hash is the chain's ONLY identity, so a real
+            # chain must always key (gating here would leave a short-peptide-only entry with
+            # no key, reopening the straddle bug) — merging is bounded (the component holds
+            # only entries that are entirely this sequence). But skip poly-'X' (0-modeled)
+            # chains: they carry no sequence and would merge unrelated entries through a
+            # shared unmodeled trace. A kept fully-unclustered entry always has a non-poly-'X'
+            # chain (Stage 3 drops all-'X' entries); the fallback is purely defensive.
+            singletons = {_seq_singleton_key(e.seq) for e in uncl if _modeled_len(e.seq) > 0}
+            if not singletons:
+                singletons = {_seq_singleton_key(e.seq) for e in uncl}
         keys = sorted(clustered | singletons)
         key_set = set(keys)
         all_keys.update(keys)
@@ -179,21 +184,21 @@ def build_clusters(records: list[CandidateRecord], cfg: Config) -> ClusterResult
             multichain.append(r.entry_id)
         entry_raw[r.entry_id] = keys
         if method != "off":
+            # "union" merges on ANY of the three authorities (namespaced so a CATH code
+            # can't collide with an ECOD/SCOP2 name) — the strictest metadata fold control.
+            fam_methods = STRUCTURAL_METHODS if method == "union" else (method,)
             efams: set[str] = set()
             for e in proteins:
-                fams = e.structural_families.get(method)
-                if not fams:
-                    continue
-                efams.update(fams)
                 if level in e.cluster_ids:
                     rk = raw_key[e.cluster_ids[level]]
                 else:
                     sk = _seq_singleton_key(e.seq)
-                    rk = (
-                        sk if sk in key_set else keys[0]
-                    )  # short uncl chain -> entry's own component
-                for fam in fams:
-                    family_raw.setdefault(fam, set()).add(rk)
+                    rk = sk if sk in key_set else keys[0]  # short uncl chain -> entry's component
+                for fm in fam_methods:
+                    for fam in e.structural_families.get(fm, []):
+                        fam_key = f"{fm}:{fam}" if method == "union" else fam
+                        efams.add(fam_key)
+                        family_raw.setdefault(fam_key, set()).add(rk)
             if efams:
                 entry_families[r.entry_id] = sorted(efams)
         if bench_method != "off":

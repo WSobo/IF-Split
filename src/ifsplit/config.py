@@ -129,16 +129,21 @@ class Config(BaseModel):
     # sequence clusters — so the same fold cannot straddle train/test. Metadata
     # only (RCSB's precomputed classifications; no coordinates). "cath" keys on the
     # homologous-superfamily code (e.g. 1.10.490.10); "ecod"/"scop2" key on the
-    # (super)family name. "off" = sequence-only (prior behavior). Purely additive:
-    # it can only merge components, never split them, and chains lacking the chosen
-    # classification simply add no structural edge. Off by default: fold-merging
+    # (super)family name. "union" merges on ANY of the three (namespaced) — the
+    # strictest fold control the metadata can express and the highest coverage, still
+    # metadata-only (all three are already captured per entity, so this is a Stage-5
+    # recombination, no new fetch). "off" = sequence-only (prior behavior). Purely
+    # additive: it can only merge components, never split them, and chains lacking the
+    # chosen classification simply add no structural edge. Off by default: fold-merging
     # the dominant superfamilies (antibodies, TIM barrels) collapses them into
     # mega-components that land wholesale in one split, skewing the ENTRY-level
     # train/val/test balance (~95/3/2 at superfamily grain) even though the
     # COMPONENT-level split stays ~80/10/10. Off by default; pair it with
     # split_strategy="balanced" (below) to restore entry balance — that is the
-    # "fold-aware" recipe (structural_clustering="scop2" + balanced).
-    structural_clustering: Literal["off", "cath", "ecod", "scop2"] = "off"
+    # "fold-aware" recipe (structural_clustering="scop2" + balanced). "union" is a
+    # measured-ceiling diagnostic, not a production config: it merges the most and so
+    # percolates the most, leaving too thin a tail to fill val/test.
+    structural_clustering: Literal["off", "cath", "ecod", "scop2", "union"] = "off"
     # Fold-benchmark export (opt-in, metadata-only, DECOUPLED from fold merging).
     # When set, emit per-entry fold (super)family labels and the fold-seen vs
     # novel-fold TEST partition (folds.json, novel_fold_test.json, fold_groups.json
