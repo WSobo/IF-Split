@@ -95,16 +95,24 @@ growth-stable via the registry (an in-place rebuild auto-adopts
 `balanced` also fixes the plain sequence-only skew (88/6/6 → 80/10/10) from the
 antibody mega-cluster.
 
-**Two honest caveats.** (1) *Method choice is a trade-off, not a winner:* `ecod`
-classifies more chains (≈80% vs SCOP2's ≈52% — a lower residual-leakage ceiling) but
-its heavier merging starves val on the full PDB, so `config/fold-aware.yaml` ships
-`scop2`. `if-split stats` reports each method's coverage and any gap so you can judge —
-and that ECOD cannot fill a fold-disjoint 80/10/10 is itself a finding worth reporting,
-not a reason to switch authorities silently. (2) *`balanced` shifts the val/test
-distribution by construction:* dominant folds are capped to train, so val/test hold
-**only small, rare folds**. That is the point (a hard novel-fold test), but it means
-recovery on a `balanced` test set is **not comparable** to published
-LigandMPNN/ProteinMPNN numbers or across strategies — report it as its own measurement.
+**Two honest caveats.** (1) *No fold authority is ground truth, and a "fold-disjoint"
+split is authority-relative.* The PDB's fold-similarity graph **percolates**: under any
+authority a single connected fold-component (built by multi-domain bridging) swallows most
+of the PDB — measured on the 2026-07-22 snapshot, the largest component holds **79%** under
+SCOP2, **87%** under CATH, **97% under ECOD** (their *union* percolates further still — see
+`structural_clustering: "union"`). A fold-disjoint 80/10/10 exists only by capping that
+giant component to train and holding out the small residual tail, and the tail size *is*
+the authority's percolation: ECOD (fullest coverage) percolates most, leaving too thin a
+tail to fill even one 10% holdout. `config/fold-aware.yaml` ships `scop2` because it
+percolates least and *can* fill 80/10/10 — but only because SCOP2 classifies the fewest
+chains (~52%), so a SCOP2 split is fold-disjoint over ~52% of chains, not absolutely.
+Scored with ECOD as an independent authority, a SCOP2 split is **~99% ECOD-fold-*seen* in
+test** — direct evidence that real redundancy lives in the part SCOP2 cannot see. So report
+a split as *SCOP2*-fold-disjoint with its coverage, never as fold-disjoint. (2) *`balanced`
+shifts the val/test distribution by construction:* dominant folds are capped to train, so
+val/test hold **only small, rare folds**. That is the point (a hard novel-fold test), but
+recovery on a `balanced` test set is **not comparable** to published LigandMPNN/ProteinMPNN
+numbers or across strategies — report it as its own measurement.
 
 ### The fold-aware split
 

@@ -13,6 +13,15 @@ Split output changes (the unclustered-chain keying below), so this **must** carr
 version even pre-release: two builds with the same `config_hash` but different code would
 otherwise share a version string and silently produce different splits.
 
+### Added
+
+- **`structural_clustering: "union"`** — merge on **any** of CATH/ECOD/SCOP2 (namespaced),
+  the strictest fold control the metadata can express and the highest coverage. Still
+  metadata-only: all three authorities are already captured per entity, so this is a Stage-5
+  recombination — no new fetch, no coordinates. It is a **measured-ceiling diagnostic**, not
+  a production config: it merges the most and so percolates the most (see the fold-graph
+  percolation note in the README/PLAN), leaving too thin a tail to fill val/test.
+
 ### Fixed
 
 - **Unclustered-chain keying, gated by modeled content.** An unclustered protein chain is
