@@ -368,7 +368,38 @@ classifications ride in the snapshot as metadata (`rcsb_polymer_instance_annotat
 Stage 1; **no coordinates**). CATH keys on the superfamily code (`1.10.490.10`),
 ECOD/SCOP2 on the family name. Purely additive (only merges, never splits);
 coverage is partial (CATH ~55%, ECOD ~81%, SCOP2 ~52% of chains) so unclassified
-chains fall back to sequence-only. See README "Fold-level leakage control".
+chains fall back to sequence-only. `"union"` merges on **any** of the three (namespaced) —
+the highest coverage and strictest control the metadata can express, still coordinate-free.
+See README "Fold-level leakage control".
+
+**MEASURED FINDING (2026-07-22 full snapshot): the PDB fold graph percolates.** Under every
+authority a single connected fold-component (built by multi-domain bridging — e.g. myoglobin
+and T4 lysozyme land together under ECOD) swallows most of the PDB. A fold-disjoint 80/10/10
+exists *only* by capping that giant component to train and holding out the small residual
+tail; the tail size **is** the authority's percolation, so this is not a metadata-resolution
+limit — it is a property of the data:
+
+| authority | coverage | components | largest fold-component | fold-disjoint tail |
+|---|--:|--:|--:|--:|
+| off (sequence-only) | — | 19,593 | 43.2% | 20.0% |
+| scop2 | 61.7% | 12,119 | 79.0% | 20.0% (fills 80/10/10) |
+| cath | 65.3% | 7,861 | 87.1% | 12.7% (val starved) |
+| ecod | 87.1% | 3,662 | 96.8% | 3.2% (val = 0) |
+| **union (ceiling)** | **92.3%** | **3,225** | **97.2%** | **2.8%** |
+
+The relationship is monotonic: an unclassified chain adds no merge edge, so higher coverage ⇒
+fewer components ⇒ deeper percolation ⇒ thinner tail. `scop2` is the production default only
+because it percolates *least* — i.e. it classifies fewest chains (~52%), so its split is
+**SCOP2-fold-disjoint over ~52% of chains, not fold-disjoint**. Scored with ECOD as an
+independent authority (via the decoupled `fold_benchmark_method`), a SCOP2 split is **~99%
+ECOD-fold-*seen* in test** (229/16,569 ECOD-novel) — direct evidence that real redundancy
+lives in the fraction SCOP2 cannot see. `union` is the measured metadata ceiling (2.8% tail);
+`foldseek` would have fuller coverage and so percolate *further*, deepening the collapse — it
+would confirm the finding, not rescue the split. The honest claim: **even under the field's
+own established classifications, a fold-disjoint 80/10/10 split of the PDB barely exists.** The
+one genuine metadata limit to concede: SCOP2's ~48% blind spot means full-coverage structural
+comparison (an optional external edge list, or a foldseek graph published under the snapshot
+DOI) is the *only* route to an absolute fold-disjoint claim — future work, not a prerequisite.
 
 **Fold labels are decoupled from fold merging (v0.5.0).** `structural_clustering`
 feeds union-find (it changes the split). The novel-fold benchmark instead reads a
