@@ -363,43 +363,63 @@ Sequence clustering misses *structural* redundancy: chains below the identity
 threshold can still share a fold, which a structure→sequence model leaks across
 splits. When set (`cath` | `ecod` | `scop2`), protein entities sharing an RCSB
 structural (super)family are union-merged into the same component **in addition
-to** shared sequence clusters — so a fold cannot straddle train/test. The
+to** shared sequence clusters — so a family *the configured authority classifies* cannot
+straddle train/test (families it does not classify are unconstrained). The
 classifications ride in the snapshot as metadata (`rcsb_polymer_instance_annotation`,
 Stage 1; **no coordinates**). CATH keys on the superfamily code (`1.10.490.10`),
 ECOD/SCOP2 on the family name. Purely additive (only merges, never splits);
-coverage is partial (CATH ~55%, ECOD ~81%, SCOP2 ~52% of chains) so unclassified
-chains fall back to sequence-only. `"union"` merges on **any** of the three (namespaced) —
+coverage is partial (CATH ~38%, ECOD ~72%, SCOP2 ~48% of chains; union ~78%, measured
+2026-07-22) and falls sharply with deposition recency (97% of ≤2018 entries classified vs
+42% of 2026), so unclassified chains fall back to sequence-only. `"union"` merges on **any** of the three (namespaced) —
 the highest coverage and strictest control the metadata can express, still coordinate-free.
 See README "Fold-level leakage control".
 
-**MEASURED FINDING (2026-07-22 full snapshot): the PDB fold graph percolates.** Under every
-authority a single connected fold-component (built by multi-domain bridging — e.g. myoglobin
-and T4 lysozyme land together under ECOD) swallows most of the PDB. A fold-disjoint 80/10/10
-exists *only* by capping that giant component to train and holding out the small residual
-tail; the tail size **is** the authority's percolation, so this is not a metadata-resolution
-limit — it is a property of the data:
+**MEASURED FINDING (2026-07-22 full snapshot): the PDB collapses into one giant component.**
+Two edge types build it: *co-occurrence* (shared 30% cluster, or two chains in one deposited
+assembly) and *fold-identity* (same (super)family). They act **in series**, and co-occurrence
+alone already percolates: with **no** fold edges the giant holds 43.2% of entries. Verified
+mechanism — with fold edges off, `102L` (T4 lysozyme) *heads* that giant and the anti-lysozyme
+Fabs (`1MLC`, `1DQJ`, `1FBI`, … 19 entries) plus the globin–antibody complex `9MKO` are already
+inside it; `101M` (myoglobin) sits in its **own 546-entry component** and is absorbed only when
+a *fold-identity* edge links its globin family to `9MKO`'s globin chain. One antibody complex +
+one fold edge pulls an entire unrelated family in. (The merged giant is *named* `101M_1` purely
+because that is the lexicographic min member key — a naming artifact, not a nucleus. Do **not**
+narrate it as a biological hub; that error has been made three times.)
 
-| authority | coverage | components | largest fold-component | fold-disjoint tail |
-|---|--:|--:|--:|--:|
-| off (sequence-only) | — | 19,593 | 43.2% | 20.0% |
-| scop2 | 61.7% | 12,119 | 79.0% | 20.0% (fills 80/10/10) |
-| cath | 65.3% | 7,861 | 87.1% | 12.7% (val starved) |
-| ecod | 87.1% | 3,662 | 96.8% | 3.2% (val = 0) |
-| **union (ceiling)** | **92.3%** | **3,225** | **97.2%** | **2.8%** |
+| authority | entry coverage | components | largest component | residual | held out @80/10/10 |
+|---|--:|--:|--:|--:|--:|
+| off (co-occurrence only) | — | 19,593 | 43.2% | 56.8% | 20.0% |
+| scop2 | 61.7% | 12,119 | 79.0% | 21.0% | 20.0% (fills) |
+| cath | 65.3% | 7,861 | 87.1% | 12.9% | 12.7% (val starved) |
+| ecod | 87.1% | 3,662 | 96.8% | 3.2% | 3.2% (val = 0) |
+| **union (ceiling)** | **92.3%** | **3,225** | **97.2%** | **2.8%** | **2.8%** |
 
-The relationship is monotonic: an unclassified chain adds no merge edge, so higher coverage ⇒
-fewer components ⇒ deeper percolation ⇒ thinner tail. `scop2` is the production default only
-because it percolates *least* — i.e. it classifies fewest chains (~52%), so its split is
-**SCOP2-fold-disjoint over ~52% of chains, not fold-disjoint**. Scored with ECOD as an
-independent authority (via the decoupled `fold_benchmark_method`), a SCOP2 split is **~99%
-ECOD-fold-*seen* in test** (229/16,569 ECOD-novel) — direct evidence that real redundancy
-lives in the fraction SCOP2 cannot see. `union` is the measured metadata ceiling (2.8% tail);
-`foldseek` would have fuller coverage and so percolate *further*, deepening the collapse — it
-would confirm the finding, not rescue the split. The honest claim: **even under the field's
-own established classifications, a fold-disjoint 80/10/10 split of the PDB barely exists.** The
-one genuine metadata limit to concede: SCOP2's ~48% blind spot means full-coverage structural
-comparison (an optional external edge list, or a foldseek graph published under the snapshot
-DOI) is the *only* route to an absolute fold-disjoint claim — future work, not a prerequisite.
+Held-out = min(residual, 20%) up to whole-component granularity; for `off`/`scop2` the 20.0% is
+capped by the **target**, not the collapse — only cath/ecod/union are collapse-limited. Coverage
+does not by itself predict merging: CATH classifies *fewer* chains than SCOP2 (38.1% vs 47.7%)
+yet has a *larger* giant, because what matters is how coarse each authority's families are.
+`config/fold-aware.yaml` selects `scop2` because it merges least and *can* fill 80/10/10 — not
+because it is strongest (it is the weakest of the three).
+
+**Mind the denominator.** SCOP2's 61.7% entry coverage is concentrated in **train** (73.7% of
+train entries classified); the held-out sets are the opposite — **test is only 12.2% classified**
+(2,649/21,683), val 15.1% — because classified entries are exactly the ones that merged into the
+capped giant. So the guarantee covers ~12% of test and is **silent on ~88%**. Scored with ECOD
+(decoupled `fold_benchmark_method`), a SCOP2 split is **98.6% ECOD-fold-*seen* in test**
+(229/16,569) and 98.4% in val (264/16,658) — within ~1pt of the sequence-only MPNN splits this
+project critiques. Fold-aware splitting buys **measurement, not elimination**.
+
+**The tail is the annotation frontier, not verified novelty.** The union holdout is only **3.5%
+fold-classified** (vs 94.9% of train) and **63.1% was released 2023+**; classification rate falls
+97% (≤2018) → 84.9% (2024) → 60.1% (2025) → **41.8% (2026)**. So a strict fold-disjoint holdout is
+disjoint *by ignorance* and is **unstable** — as the databases catch up, held-out entries acquire
+training folds and the residual shrinks. 2.8% is an **upper bound** on future snapshots. The honest
+claim: **even under the field's own classifications, a fold-disjoint 80/10/10 split of the PDB
+barely exists.** `foldseek` would percolate *further* (more edges ⇒ smaller tail, by monotonicity)
+— it would certify the tail, not enlarge it. An external edge-list ingestion path is the route to
+an absolute claim and is **not implemented** (future work). The durable fix is not a better
+partition but a **stratified metric**: report recovery against how much of a structure's fold the
+model has already seen.
 
 **Fold labels are decoupled from fold merging (v0.5.0).** `structural_clustering`
 feeds union-find (it changes the split). The novel-fold benchmark instead reads a

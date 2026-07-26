@@ -74,9 +74,11 @@ with no classification simply contributes no structural edge. `if-split stats`
 reports how many components the structural pass folded together, so the effect is
 always measurable (`scripts/eval_structural_clustering.py` compares the methods).
 
-Coverage is partial by nature: CATH ≈ 55%, ECOD ≈ 80%, SCOP2 ≈ 52% of protein
-chains are classified (measured on the full 2026-07-14 snapshot); the rest fall
-back to sequence-only. Chains with no classification are held out by sequence
+Coverage is partial by nature: CATH ≈ 38%, ECOD ≈ 72%, SCOP2 ≈ 48% of protein
+chains are classified (77.8% for their union; measured on the full 2026-07-22
+snapshot), and coverage falls sharply for recent depositions — 97% of entries
+released through 2018 are classified, but only 60% of 2025 and 42% of 2026 ones.
+The rest fall back to sequence-only. Chains with no classification are held out by sequence
 only, so their fold-level hold-out is not guaranteed — the unclassified fraction
 is a residual-leakage *ceiling* (an upper bound), which `if-split stats` reports
 per split. It is a bound, not a measured number: IF-Split never measures fold
@@ -104,11 +106,17 @@ SCOP2, **87%** under CATH, **97% under ECOD** (their *union* percolates further 
 giant component to train and holding out the small residual tail, and the tail size *is*
 the authority's percolation: ECOD (fullest coverage) percolates most, leaving too thin a
 tail to fill even one 10% holdout. `config/fold-aware.yaml` ships `scop2` because it
-percolates least and *can* fill 80/10/10 — but only because SCOP2 classifies the fewest
-chains (~52%), so a SCOP2 split is fold-disjoint over ~52% of chains, not absolutely.
-Scored with ECOD as an independent authority, a SCOP2 split is **~99% ECOD-fold-*seen* in
-test** — direct evidence that real redundancy lives in the part SCOP2 cannot see. So report
-a split as *SCOP2*-fold-disjoint with its coverage, never as fold-disjoint. (2) *`balanced`
+percolates least and *can* fill 80/10/10 — i.e. because it merges least, not because it is
+the strongest criterion. **Mind the denominator:** SCOP2's ~62% entry coverage is
+concentrated in *train* (73.7% of train entries classified); the held-out sets are the
+opposite — only **12.2% of test** entries (2,649/21,683) and 15.1% of val carry a SCOP2
+assignment, because classified entries are exactly the ones that merged into the capped
+giant. So the guarantee covers ~12% of test and is silent on the other ~88%. Scored with
+ECOD as an independent authority, a SCOP2 split is **98.6% ECOD-fold-*seen* in test**
+(98.4% in val) — barely better than the sequence-only splits this critiques. Report a split
+as *SCOP2*-fold-disjoint **with its per-split coverage**, never as fold-disjoint; and score
+it with an authority you did *not* split on (`fold_benchmark_method`), since scoring with
+the merge criterion is circular and will certify a leaky set as clean. (2) *`balanced`
 shifts the val/test distribution by construction:* dominant folds are capped to train, so
 val/test hold **only small, rare folds**. That is the point (a hard novel-fold test), but
 recovery on a `balanced` test set is **not comparable** to published LigandMPNN/ProteinMPNN

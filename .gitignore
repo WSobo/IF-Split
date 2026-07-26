@@ -15,7 +15,7 @@ data/cache/*
 # Full-build / measurement run trees + their configs (large; regenerable). The split
 # lists that ARE meant to ship live under examples/, not here.
 data/run-*/
-data/rs-*/
+data/rs*/
 data/*.yaml
 
 # Build artifacts. The split itself is tiny (train/val/test.json + per-class test
