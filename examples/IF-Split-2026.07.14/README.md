@@ -4,7 +4,7 @@ A full-PDB split at a **today's-date cutoff** (snapshot `2026-07-14`), produced
 entirely from RCSB metadata — **no structure coordinates downloaded**. This is the
 project's **default** split (`hash` + `structural_clustering: off`): it prevents
 sequence-cluster leakage but is **fold-leaky** (folds are not held out of test — for a
-fold-honest split use `config/fold-aware.yaml`).
+fold-aware split use `config/fold-aware.yaml`).
 
 The split itself is committed here: plain lists of PDB ids, KB-to-MB in size. To
 **re-derive it byte-for-byte** you need the locked snapshot — the (uncommitted)

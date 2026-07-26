@@ -37,7 +37,7 @@ wsl -d ubuntu bash -lc 'cd ~/projects/IF-Split && export PATH="$HOME/.local/bin:
 uv run ruff check .      # lint (must pass)
 uv run ruff format .     # format
 uv run if-split build --limit 50 --out /tmp/ifs   # dev build (small, live RCSB)
-uv run if-split build --config config/fold-aware.yaml --out /tmp/mc  # fold-honest split (scop2 + balanced)
+uv run if-split build --config config/fold-aware.yaml --out /tmp/mc  # fold-aware split (scop2 + balanced)
 uv run if-split resplit --candidates data/out/candidates.jsonl --config X.yaml --out /tmp/rs  # re-derive Stages 3-7 offline (no RCSB)
 ```
 
@@ -66,6 +66,9 @@ Invariants that must not regress:
   overlap is impossible by construction. This holds for both split strategies
   (`hash` and `balanced`, which only chooses *which* split a whole component lands
   in). `check_no_leakage` is a real invariant (not a tautology) — keep it that way.
+  NB the *fold* half of this reaches only chains the **configured** authority
+  classifies: a `scop2` build leaves ~88% of test entries fold-unconstrained and is
+  still 98.6% ECOD-fold-seen. Never state the fold guarantee without its denominator.
 - **Growth stability:** `hash` maps a component to `hash(salt + canonical_key)`
   into cumulative fractions, keyed on the global-min member key (not RCSB's volatile
   integer id). A component whose canonical key is unchanged never moves as the

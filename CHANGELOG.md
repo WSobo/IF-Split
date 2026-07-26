@@ -7,7 +7,7 @@ follow [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 The **split is always computed from metadata + sequences only** — `build` never
 downloads structure coordinates. That invariant holds across every release below.
 
-## [0.6.1] — 2026-07-24
+## [0.6.1] — unreleased (prepared 2026-07-24; not yet tagged)
 
 Split output changes (the unclustered-chain keying below), so this **must** carry a new
 version even pre-release: two builds with the same `config_hash` but different code would
@@ -109,9 +109,11 @@ except the singleton-keying fix below, which only affects unclustered short pept
   Documented as a fresh-rebuild caveat (a locked build reproduces exactly via
   `candidates.jsonl`; CATH is stable); the stable-lineage-id fix is scoped for a follow-up.
 - **Honesty pass on the claims.** The README feature table now qualifies fold hold-out by
-  coverage (SCOP2 ≈ 52%); reproducibility guarantee #1 states the exact split reproduces
+  coverage (SCOP2 covers 47.7% of chains / 61.7% of entries corpus-wide, but only ~12% of
+  *test* entries in a fold-aware run — mind the denominator); reproducibility guarantee #1 states the exact split reproduces
   from the lock + `candidates.jsonl`, not `snapshot_date` alone; the `balanced` covariate
-  shift (val/test hold only small, rare folds — not comparable to published numbers) and
+  shift (val/test hold small, rare folds plus a majority of fold-unclassified chains — not
+  comparable to published numbers) and
   the `scop2`-vs-`ecod` trade-off are stated plainly.
 
 ## [0.5.0] — 2026-07-22
@@ -154,8 +156,9 @@ default split output.
 ### Added
 
 - **Fold-level leakage guard.** `check_no_leakage` now also asserts that no
-  structural (super)family straddles two splits (not just sequence clusters) when
-  `structural_clustering` is on — matching the fold-leakage guarantee. Backed by
+  structural (super)family *the configured authority classifies* straddles two splits (not
+  just sequence clusters) when `structural_clustering` is on. It is blind to unclassified
+  chains, which are the majority of a fold-aware val/test. Backed by
   new *negative* tests that construct leaky partitions and prove the guard fires.
 - **`single_chain_only`** filter (opt-in): keep only single-protein-entity
   structures — a metadata proxy for the single-chain CATH setup.
@@ -163,7 +166,7 @@ default split output.
   Search API call) before committing to a full build.
 - **Manifest observability**: a ligand tier-reason histogram and per-split fold
   coverage — distinct held-out folds *and* the unclassified fraction per split (the
-  **residual-leakage ceiling**: entries no CATH/ECOD/SCOP2 taxonomy classifies are
+  **residual-leakage ceiling**, set by the *configured* authority: entries it does not classify are
   held out by sequence only, so fold-level hold-out is not guaranteed for them).
   `stats` prints it whenever fold-aware clustering is on.
 - **CLI test suite** (`tests/test_cli.py`) covering exit codes and error paths.
@@ -192,20 +195,22 @@ default split output.
 
 ## [0.3.0] — 2026-07-14
 
-A large release: fold-honest splitting, split-output certification, a two-corpus
+A large release: fold-aware splitting, split-output certification, a two-corpus
 training model, a metadata-only curation overhaul, and offline re-derivability.
 
 ### Added
 
 - **Fold-level structural leakage control** (opt-in `structural_clustering`:
   `off` | `cath` | `ecod` | `scop2`). Same-fold protein chains are union-merged into
-  one leakage-safe component in addition to shared sequence clusters, so a fold cannot
-  straddle train/test — using RCSB's precomputed CATH/ECOD/SCOP2 classifications
+  one leakage-safe component in addition to shared sequence clusters, so a family the
+  configured authority names cannot straddle train/test (families it does not classify are
+  unconstrained) — using RCSB's precomputed CATH/ECOD/SCOP2 classifications
   (metadata only, no coordinates).
 - **Balance-aware split strategy** (`split_strategy: balanced`). Caps dominant folds
   to train and fills val/test to their *entry* targets from the fold tail, restoring
-  ~80/10/10 by entries with thousands of held-out folds. `config/fold-aware.yaml`
-  ships the fold-honest recipe (`scop2` + `balanced`).
+  ~80/10/10 by entries, holding 992 distinct SCOP2 families out of train. `config/fold-aware.yaml`
+  ships the fold-aware recipe (`scop2` + `balanced`) — fold *measurement* over the classified
+  fraction, not fold-clean: its test set is still 98.6% ECOD-fold-seen.
 - **Split-output certification.** The `@2` `dataset.lock` records `split_sha256` (a
   hash of the entry→split partition); `verify` re-derives Stages 3–6 and certifies the
   split *output* reproduced, not just the Stage-1 candidate set.

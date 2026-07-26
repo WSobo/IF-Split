@@ -27,7 +27,7 @@ records and sequences. Coordinates are an optional, downstream concern.
 | **Reproducible** | A `dataset.lock` pins the snapshot **and the split output**; `verify` re-derives both and certifies they reproduced byte-for-byte (or reports exactly what drifted). |
 | **Cheap** | Metadata-only — a split is megabytes of JSON, not a terabyte of mmCIF. |
 | **Honest about quality** | Every ligand is tiered (`functional` / `ambiguous` / `artifact`) with a reason; nothing is silently dropped. |
-| **Fold-aware** | Controls *structural* leakage, not just sequence: for chains a fold taxonomy classifies (SCOP2 ≈ 52%), same-fold chains can't straddle train/test — the leak that matters most for structure→sequence models. Unclassified chains are held out by sequence only (a disclosed residual-leakage *ceiling*). |
+| **Fold-aware** | *Reduces and measures* structural leakage, not just sequence: for chains the chosen taxonomy classifies, same-family chains can't straddle train/test. Measured effect (controlled, ECOD-scored): +50% novel-fold test entries vs a sequence-only split, but the test set is still 98.6% ECOD-fold-*seen*. Unclassified chains are held out by sequence only — a disclosed residual-leakage *ceiling*, not elimination. |
 
 ### Two reproducibility guarantees
 
@@ -63,12 +63,15 @@ Sequence clustering alone is not enough for inverse folding. A model learns
 **structure → sequence**, so two chains below the 30% identity threshold that
 nonetheless share a **fold** (TIM barrels, Rossmann folds, globins…) leak
 structural information across the split — the model has effectively seen the test
-backbone during training. `structural_clustering` closes this: protein entities
-sharing a structural **(super)family** are union-merged into the same component in
-addition to shared sequence clusters, so a fold cannot straddle train/test.
+backbone during training. `structural_clustering` **narrows** this: protein entities
+sharing a structural **(super)family** *in the chosen authority* are union-merged into
+the same component in addition to shared sequence clusters, so a family that authority
+names cannot straddle train/test. It does not eliminate structural leakage — scored with
+ECOD as an independent authority, a SCOP2 fold-aware test set is still 98.6%
+ECOD-fold-*seen*. It reduces and, more usefully, **measures** the leak.
 
 It uses RCSB's precomputed **CATH / ECOD / SCOP2** classifications — still metadata
-only, no coordinates — selectable per build (`off | cath | ecod | scop2`). It is
+only, no coordinates — selectable per build (`off | cath | ecod | scop2 | union`). It is
 **purely additive**: it can only merge components, never split them, and a chain
 with no classification simply contributes no structural edge. `if-split stats`
 reports how many components the structural pass folded together, so the effect is
@@ -89,8 +92,11 @@ dominant superfamilies (antibodies, TIM barrels) into mega-components that land
 wholesale in one split, skewing the *entry* balance to ~95/3/2 (the *component*
 split stays ~80/10/10). `split_strategy: "balanced"` fixes this: it **caps the
 dominant folds to train and fills val/test to their entry targets from the tail of
-smaller folds** — restoring ~80/10/10 by entries with thousands of distinct,
-held-out folds per split. It stays leakage-safe (whole components) and
+smaller folds** — restoring ~80/10/10 by entries. Be precise about what lands there:
+in the shipped fold-aware run only 12.2% of test and 15.1% of val entries carry a SCOP2
+label at all (473 and 519 distinct families, ~992 held entirely out of train), so val/test
+are a minority of genuinely held-out folds plus a majority of *unclassified* chains held
+out by sequence alone. It stays leakage-safe (whole components) and
 growth-stable via the registry (an in-place rebuild auto-adopts
 `<out>/splits.registry.json` when its config matches; `--fresh` opts out — see
 [Quickstart](#quickstart)), and reports a gap if a method's tail is too thin.
@@ -118,7 +124,8 @@ as *SCOP2*-fold-disjoint **with its per-split coverage**, never as fold-disjoint
 it with an authority you did *not* split on (`fold_benchmark_method`), since scoring with
 the merge criterion is circular and will certify a leaky set as clean. (2) *`balanced`
 shifts the val/test distribution by construction:* dominant folds are capped to train, so
-val/test hold **only small, rare folds**. That is the point (a hard novel-fold test), but
+val/test hold small, rare folds *and* — mostly — chains the authority never classified. That
+is still a harder test than a sequence split, but
 recovery on a `balanced` test set is **not comparable** to published LigandMPNN/ProteinMPNN
 numbers or across strategies — report it as its own measurement.
 
@@ -128,12 +135,12 @@ numbers or across strategies — report it as its own measurement.
 uv run if-split build --config config/fold-aware.yaml --out data/mc
 ```
 
-`config/fold-aware.yaml` = default **+ `structural_clustering: scop2` + `split_strategy: balanced`**: a fold-honest ~80/10/10 split whose val/test are thousands of folds held entirely out of train — the truest generalization measure the tool can produce, still from metadata alone.
+`config/fold-aware.yaml` = default **+ `structural_clustering: scop2` + `split_strategy: balanced`**: a fold-aware ~80/10/10 split holding 992 distinct SCOP2 families entirely out of train (473 test + 519 val). It is the strongest fold control the tool can produce from metadata — *not* a fold-clean split: scored with ECOD it is still 98.6% fold-seen in test.
 
 | split | strategy | structural | entry balance | val/test |
 |---|---|---|--:|---|
 | default | hash | off | 88 / 6 / 6 | sequence-clustered |
-| fold-aware | balanced | scop2 | 80 / 10 / 10 | thousands of held-out folds |
+| fold-aware | balanced | scop2 | 80 / 10 / 10 | 992 held-out SCOP2 families; still 98.6% ECOD-fold-seen |
 
 ### Novel-fold benchmark (fold-seen vs novel-fold)
 
@@ -588,7 +595,7 @@ doubles as a shareable **split spec** — see [Sharing a split spec](#sharing-a-
 | `exclude_purification_artifacts` | `true` | Demote His-tag metals to `artifact`; lone uncorroborated Ni/Co → `ambiguous`. |
 | `identity_threshold` | `0.30` | Clustering cutoff (RCSB levels: 30/50/70/90/95/100). |
 | `clustering_backend` | `precomputed` | Reuse RCSB's published 30% clusters (the only backend; locked via the snapshot). |
-| `structural_clustering` | `off` | Fold-level leakage control: `off` \| `cath` \| `ecod` \| `scop2`. Union-merges same-(super)family protein chains so a fold can't straddle train/test — see [Fold-level leakage control](#fold-level-leakage-control). Additive: only merges, never splits. |
+| `structural_clustering` | `off` | Fold-level leakage control: `off` \| `cath` \| `ecod` \| `scop2` \| `union`. Union-merges same-(super)family protein chains so a family *that authority classifies* can't straddle train/test (it reduces and measures fold leakage; it does not eliminate it) — see [Fold-level leakage control](#fold-level-leakage-control). Additive: only merges, never splits. |
 | `split_fractions` | 0.80 / 0.10 / 0.10 | train / val / test. |
 | `split_strategy` | `hash` | `hash` (balance components; input-independent and registry-free) or `balanced` (balance *entries*: cap dominant folds to train, fill val/test from the fold tail). |
 | `fold_benchmark_method` | `off` | Novel-fold benchmark export: `off` \| `cath` \| `ecod` \| `scop2`. When set, emits `folds.json` / `fold_groups.json` / `novel_fold_test.json`; fold *labels* are decoupled from fold *merging*, so it never changes the split or `check_no_leakage`. Omitted from the config hash when `off`. |
@@ -638,7 +645,7 @@ If you use IF-Split, please cite it — see [CITATION.cff](CITATION.cff).
 
 ## Changelog
 
-Release history is in [CHANGELOG.md](CHANGELOG.md). The current release is **0.5.0**
+Release history is in [CHANGELOG.md](CHANGELOG.md). The latest tagged release is **0.6.0**; **0.6.1** is prepared but not yet tagged. Previously **0.5.0**
 (the novel-fold benchmark: a fold-seen vs novel-fold export for re-benchmarking existing
 checkpoints, a growth-stability fix for the balanced split, and an entry-skew stats view).
 

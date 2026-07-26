@@ -32,8 +32,10 @@ Two mechanisms deliver this, and they must both be in from the start:
 - **Deterministic cluster→split assignment by hash.** A cluster's split is
   decided by `hash(canonical_member_id + salt)` mapped onto the cumulative
   fractions. New clusters added in a later, larger snapshot get assigned by the
-  same function; a cluster whose canonical key is unchanged never moves. This gives
-  stable splits under dataset growth and prevents train/test contamination on
+  same function; a cluster whose canonical key is unchanged never moves *unless it is
+  merged* — a later bridging multi-chain entry (or a shared fold) can unite two prior
+  components and the absorbed one follows the survivor's split. This gives
+  stable splits under dataset growth and bounds train/test contamination on
   regeneration.
 
   > **Implementation note (Stage 6):** the "never moves" guarantee holds only if
@@ -47,7 +49,8 @@ Two mechanisms deliver this, and they must both be in from the start:
   > components into one whose canonical key is only one of the two; the absorbed
   > component's entries then follow the survivor. So "existing components never move"
   > is **false across a merge**. Without a registry the reassignment is unavoidable and
-  > is now *counted* in `splits.pinned_reassignments` (not hidden). With a registry it
+  > is **not** counted (`pinned_reassignments` is computed only when a registry is used —
+  > an in-place rebuild instead reports it at the entry level). With a registry it
   > is pinned: a component's prior split is matched on *any* key it covers, so a
   > held-out component stays held out across a merge (conflicts resolve
   > `test > val > train`).
@@ -451,7 +454,7 @@ novel-fold export below.
   independent and registry-free, so `verify` still certifies it. The manifest
   carries `splits.growth_stable` and `stats` prints the pinned / NOT-pinned status.
   The "fold-aware" recipe `structural_clustering: scop2` + `split_strategy: balanced`
-  (`config/fold-aware.yaml`) yields ~80/10/10 by entries with thousands of folds
+  (`config/fold-aware.yaml`) yields ~80/10/10 by entries with 992 distinct SCOP2 families
   held entirely out of train.
 - Stratify the test set by ligand class so SM/metal/nucleotide are all
   represented (LigandMPNN's test sets are deliberately ligand-containing).
