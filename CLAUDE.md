@@ -69,6 +69,12 @@ Invariants that must not regress:
   NB the *fold* half of this reaches only chains the **configured** authority
   classifies: a `scop2` build leaves ~88% of test entries fold-unconstrained and is
   still 98.6% ECOD-fold-seen. Never state the fold guarantee without its denominator.
+  The *sequence* half is guaranteed at the level users care about (identical protein
+  chains, not just shared cluster ids) only because every chain with ≥
+  `MIN_UNCLUSTERED_MERGE_MODELED` modeled residues keys by its sequence hash: RCSB's
+  cluster file is **not** identity-complete (identical sequences can carry different
+  cluster ids — this leaked 74 sequences / 497 entries before v0.6.1). Below that gate
+  it is deliberately not guaranteed. Don't "simplify" clustered chains back to cluster-id-only keying.
 - **Growth stability:** `hash` maps a component to `hash(salt + canonical_key)`
   into cumulative fractions, keyed on the global-min member key (not RCSB's volatile
   integer id). A component whose canonical key is unchanged never moves as the

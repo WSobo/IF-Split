@@ -29,6 +29,18 @@ unmodeled (poly-'X') or low-complexity fragment cannot fan out into a spurious
 mega-component. An identical unclustered sequence that keys thus cannot straddle two splits
 (check_no_leakage, comparing raw keys, sees it).
 
+**Exact-sequence identity is keyed independently of RCSB's clustering.** RCSB's cluster
+file is *not* identity-complete: byte-identical sequences can be assigned DIFFERENT 30%
+cluster ids (measured on the 2026-07-22 snapshot: 69 protein sequences across 497 entries,
+including a 621-residue chain that landed in test *and* val, and a 532-residue chain in test
+*and* train). A cluster id alone is therefore not a sound identity key, so every protein
+chain carrying real modeled sequence also keys by its sequence hash. This is safe by
+construction — exact identity is a strict subset of 30% identity, so the edge can only merge
+what a correct 30% clustering would already have merged (measured: 19,593 -> 19,395
+components, largest 43.2% -> 44.1%). Chains below ``MIN_UNCLUSTERED_MERGE_MODELED`` modeled
+residues are excluded, so leakage of *identical* protein chains is eliminated above that
+bound and explicitly not guaranteed below it.
+
 **Fold-level leakage control (opt-in via ``structural_clustering``).** Sequence
 clustering alone misses structural redundancy: two chains below the identity
 threshold can be the same fold, which an inverse-folding model (structure ->
@@ -175,12 +187,25 @@ def build_clusters(records: list[CandidateRecord], cfg: Config) -> ClusterResult
             singletons = {_seq_singleton_key(e.seq) for e in uncl if _modeled_len(e.seq) > 0}
             if not singletons:
                 singletons = {_seq_singleton_key(e.seq) for e in uncl}
-        keys = sorted(clustered | singletons)
+        # RCSB's cluster file is not identity-complete (see the module docstring): identical
+        # sequences can carry different 30% cluster ids, and a cluster id alone would then let
+        # the SAME protein straddle two splits. Key every clustered chain by its sequence too,
+        # so exact identity always merges regardless of what the cluster file says. Purely
+        # additive, and bounded by the same modeled-length gate that guards fan-out.
+        identity = {
+            _seq_singleton_key(e.seq)
+            for e in proteins
+            if level in e.cluster_ids and _modeled_len(e.seq) >= MIN_UNCLUSTERED_MERGE_MODELED
+        }
+        # NB `multichain` counts entries that *bridge* clusters, so it is computed BEFORE the
+        # identity keys are folded in — otherwise every single-chain entry would look bridging.
+        bridging = clustered | singletons
+        keys = sorted(bridging | identity)
         key_set = set(keys)
         all_keys.update(keys)
         if not clustered:
             unclustered.append(r.entry_id)  # every protein chain is unclustered
-        if len(keys) > 1:
+        if len(bridging) > 1:
             multichain.append(r.entry_id)
         entry_raw[r.entry_id] = keys
         if method != "off":

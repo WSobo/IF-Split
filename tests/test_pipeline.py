@@ -90,12 +90,83 @@ def test_identical_unclustered_sequences_share_one_component():
         assert splits.entry_split["1PEP"] == splits.entry_split["2PEP"]
 
 
+def _clustered_record(entry_id: str, cid: int, seq: str) -> CandidateRecord:
+    """An entry whose single protein chain RCSB DID cluster, under cluster id `cid`."""
+    return CandidateRecord(
+        entry_id=entry_id,
+        methods=["X-RAY DIFFRACTION"],
+        resolution_A=2.0,
+        release_date="2020-01-01",
+        deposited_residues=len(seq),
+        assemblies={f"{entry_id}-1": len(seq)},
+        polymer_entities=[
+            PolymerEntity(
+                entity_id=f"{entry_id}_1",
+                polymer_type="Protein",
+                seq_len=len(seq),
+                seq=seq,
+                cluster_ids={30: cid},
+            )
+        ],
+        nonpolymer_comps=[],
+        bound_components=[],
+        affinity_comp_ids=[],
+    )
+
+
+def test_identical_sequences_merge_despite_different_cluster_ids():
+    # RCSB's cluster file is not identity-complete: byte-identical sequences can carry
+    # DIFFERENT 30% cluster ids (measured on the 2026-07-22 snapshot: 69 sequences across
+    # 497 entries, incl. a 621-residue chain in test AND val). Keying a clustered chain by
+    # its cluster id alone (the bug) let the SAME protein straddle two splits. Exact
+    # sequence identity must merge regardless of what the cluster file says.
+    seq = "MKTAYIAKQRQISFVKSHFSRQLEERLGHKLMNPQRSTVWY"  # 41 aa, well above the modeled gate
+    clusters = build_clusters(
+        [_clustered_record("1AAA", 111, seq), _clustered_record("2AAA", 222, seq)], _cfg()
+    )
+    assert clusters.n_clusters == 1
+    assert clusters.entry_to_cluster["1AAA"] == clusters.entry_to_cluster["2AAA"]
+    for salt in ("s1", "s2", "s3", "s4", "s5"):
+        splits = assign_splits(clusters, _cfg(split_salt=salt))
+        check_no_leakage(splits, clusters)
+        assert splits.entry_split["1AAA"] == splits.entry_split["2AAA"]
+
+
+def test_identity_keying_does_not_inflate_multichain_count():
+    # The identity key is added to every clustered chain, so a SINGLE-chain entry now
+    # carries two keys. `multichain` counts entries that BRIDGE clusters, so it must be
+    # computed before identity keys fold in — otherwise every entry looks bridging.
+    clusters = build_clusters(
+        [
+            _clustered_record("1AAA", 111, "M" + "A" * 40),
+            _clustered_record("2AAA", 222, "M" + "C" * 40),
+        ],
+        _cfg(),
+    )
+    assert clusters.multichain_entries == []
+
+
 def test_distinct_unclustered_sequences_stay_separate():
     clusters = build_clusters(
         [_unclustered_record("1PEP", "GSHMWYPQRT"), _unclustered_record("2PEP", "AAAKKKDDEE")],
         _cfg(),
     )
     assert clusters.n_clusters == 2  # different sequences -> different components
+
+
+_AA = "ACDEFGHIKLMNPQRSTVWY"
+
+
+def _seq_for(cid: int, length: int = 100) -> str:
+    """A deterministic dummy protein sequence unique to raw cluster ``cid``.
+
+    Distinct clusters must get distinct sequences: an exact-sequence identity edge merges
+    byte-identical chains regardless of their cluster id, so a single shared constant
+    sequence would collapse clusters a fixture means to keep apart (and would not resemble
+    real data, where different clusters never share a byte-identical chain).
+    """
+    tag = "".join(_AA[(cid // (20**i)) % 20] for i in range(4))
+    return (tag + _AA)[:length].ljust(length, "G")
 
 
 def _mixed_record(entry_id: str, cid: int, uncl_seq: str) -> CandidateRecord:
@@ -112,7 +183,7 @@ def _mixed_record(entry_id: str, cid: int, uncl_seq: str) -> CandidateRecord:
                 entity_id=f"{entry_id}_1",
                 polymer_type="Protein",
                 seq_len=60,
-                seq="A" * 60,
+                seq=_seq_for(cid, 60),
                 cluster_ids={30: cid},
             ),
             PolymerEntity(
@@ -826,7 +897,7 @@ def _protein_record(entry_id: str, cluster30_ids: list[int]) -> CandidateRecord:
             entity_id=f"{entry_id}_{i + 1}",
             polymer_type="Protein",
             seq_len=100,
-            seq="A" * 100,
+            seq=_seq_for(cid),
             cluster_ids={30: cid},
         )
         for i, cid in enumerate(cluster30_ids)
@@ -881,7 +952,7 @@ def _fold_record(entry_id: str, cluster30: int, families: dict[str, list[str]]) 
         entity_id=f"{entry_id}_1",
         polymer_type="Protein",
         seq_len=100,
-        seq="A" * 100,
+        seq=_seq_for(cluster30),
         cluster_ids={30: cluster30},
         structural_families=families,
     )

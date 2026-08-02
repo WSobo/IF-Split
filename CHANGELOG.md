@@ -24,6 +24,22 @@ otherwise share a version string and silently produce different splits.
 
 ### Fixed
 
+- **Exact-sequence identity now merges, regardless of RCSB's cluster ids** (real leak, found
+  by measurement). A *clustered* chain was identified **solely** by its RCSB 30% cluster id,
+  and RCSB's cluster file turns out not to be identity-complete: byte-identical sequences can
+  carry **different** cluster ids. The same protein could therefore straddle two splits.
+  Measured on the 2026-07-22 snapshot: **74 protein sequences across 497 entries** straddled,
+  **38 of them contaminating train**, including a **621-residue** chain in test *and* val and
+  a 532-residue chain in test *and* train. Every protein chain with at least
+  `MIN_UNCLUSTERED_MERGE_MODELED` modeled residues now also keys by its sequence hash, so
+  identical chains always co-key. Safe by construction — exact identity is a strict subset of
+  30% identity, so the edge can only merge what a correct 30% clustering would already have
+  merged; measured effect on the sequence-only build is 19,593 → 19,395 components and a
+  43.2% → 44.1% largest component. **After the fix the straddle count is 0.** This is the
+  project's own recurring failure mode (asserting an invariant at the level the code makes
+  true by construction — cluster ids — rather than the level users depend on: sequences), so
+  `check_no_leakage`'s guarantee is now stated over *sequences* above the modeled gate, and
+  explicitly not guaranteed below it.
 - **Unclustered-chain keying, gated by modeled content.** An unclustered protein chain is
   keyed by its sequence hash so two entries sharing an identical such chain co-key and cannot
   straddle splits. A *fully*-unclustered entry always keys + merges (bounded — its component
