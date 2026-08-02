@@ -71,7 +71,7 @@ def _resolve_registry(cfg, out, registry_path, fresh) -> dict[str, str]:
 
     if registry_path:
         return read_registry(registry_path)
-    if fresh or cfg.split_strategy != "balanced":
+    if fresh or cfg.split_strategy not in ("balanced", "maximal"):
         return {}
     reg_file = Path(out) / "splits.registry.json"
     if not reg_file.exists():
@@ -210,7 +210,7 @@ def _run_pipeline(
 
     print("Stage 6 - assign splits (deterministic hash):")
     registry = _resolve_registry(cfg, out, registry_path, fresh)
-    growth_stable = cfg.split_strategy != "balanced" or bool(registry)
+    growth_stable = cfg.split_strategy not in ("balanced", "maximal") or bool(registry)
     entry_classes = {eid: info["classes"] for eid, info in class_map.items()}
     splits = assign_splits(clusters, cfg, registry=registry, entry_classes=entry_classes)
     check_no_leakage(splits, clusters)  # structural guarantee; raises on violation

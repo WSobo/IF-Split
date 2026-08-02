@@ -58,7 +58,7 @@ import hashlib
 from dataclasses import dataclass, field
 
 from .config import Config
-from .schema import STRUCTURAL_METHODS, CandidateRecord
+from .schema import MERGE_METHODS, STRUCTURAL_METHODS, CandidateRecord
 
 SINGLETON_PREFIX = "singleton:"
 
@@ -209,9 +209,17 @@ def build_clusters(records: list[CandidateRecord], cfg: Config) -> ClusterResult
             multichain.append(r.entry_id)
         entry_raw[r.entry_id] = keys
         if method != "off":
-            # "union" merges on ANY of the three authorities (namespaced so a CATH code
-            # can't collide with an ECOD/SCOP2 name) — the strictest metadata fold control.
-            fam_methods = STRUCTURAL_METHODS if method == "union" else (method,)
+            # "union" merges on ANY of the three STRUCTURAL authorities; "all" additionally
+            # merges on the HMM domain families (Pfam/InterPro), which is the strictest
+            # control the metadata can express — and the only one not distorted by
+            # classification lag (see DOMAIN_METHODS). Family keys are namespaced so a CATH
+            # code cannot collide with an ECOD/SCOP2 name or a Pfam/InterPro accession.
+            if method == "union":
+                fam_methods = STRUCTURAL_METHODS
+            elif method == "all":
+                fam_methods = MERGE_METHODS
+            else:
+                fam_methods = (method,)
             efams: set[str] = set()
             for e in proteins:
                 if level in e.cluster_ids:
@@ -219,9 +227,10 @@ def build_clusters(records: list[CandidateRecord], cfg: Config) -> ClusterResult
                 else:
                     sk = _seq_singleton_key(e.seq)
                     rk = sk if sk in key_set else keys[0]  # short uncl chain -> entry's component
+                multi = method in ("union", "all")
                 for fm in fam_methods:
-                    for fam in e.structural_families.get(fm, []):
-                        fam_key = f"{fm}:{fam}" if method == "union" else fam
+                    for fam in e.families(fm):
+                        fam_key = f"{fm}:{fam}" if multi else fam
                         efams.add(fam_key)
                         family_raw.setdefault(fam_key, set()).add(rk)
             if efams:
@@ -229,7 +238,7 @@ def build_clusters(records: list[CandidateRecord], cfg: Config) -> ClusterResult
         if bench_method != "off":
             bfams: set[str] = set()
             for e in proteins:
-                fams = e.structural_families.get(bench_method)
+                fams = e.families(bench_method)
                 if fams:
                     bfams.update(fams)
             if bfams:

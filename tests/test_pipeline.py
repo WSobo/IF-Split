@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import collections
 from pathlib import Path
 
 import pytest
@@ -144,6 +145,90 @@ def test_identity_keying_does_not_inflate_multichain_count():
         _cfg(),
     )
     assert clusters.multichain_entries == []
+
+
+def _domain_record(entry_id: str, cid: int, domains: dict[str, list[str]]) -> CandidateRecord:
+    """Single-chain record in raw cluster ``cid`` carrying Pfam/InterPro ``domains``."""
+    rec = _clustered_record(entry_id, cid, _seq_for(cid))
+    rec.polymer_entities[0].domain_families = domains
+    return rec
+
+
+def test_domain_families_merge_under_pfam_and_all_but_not_structural():
+    # Pfam/InterPro are HMM families over SEQUENCE, so they carry no classification lag
+    # and catch homology CATH/ECOD/SCOP2 have not annotated yet. Two entries in different
+    # sequence clusters sharing a Pfam family must merge under "pfam" and under "all",
+    # and must NOT merge under a structural-only method that cannot see them.
+    recs = [
+        _domain_record("1AAA", 11, {"pfam": ["PF00042"]}),
+        _domain_record("2AAA", 22, {"pfam": ["PF00042"]}),
+    ]
+    assert build_clusters(recs, _cfg(structural_clustering="pfam")).n_clusters == 1
+    assert build_clusters(recs, _cfg(structural_clustering="all")).n_clusters == 1
+    assert build_clusters(recs, _cfg(structural_clustering="scop2")).n_clusters == 2
+    assert build_clusters(recs, _cfg(structural_clustering="union")).n_clusters == 2
+    assert build_clusters(recs, _cfg(structural_clustering="off")).n_clusters == 2
+
+
+def test_all_merges_on_any_authority_and_namespaces_keys():
+    # "all" must merge on a structural OR a domain family, and must not confuse the two:
+    # a CATH code and a Pfam accession that happen to collide as strings stay distinct.
+    struct = [
+        _fold_record("AAA1", 10, {"cath": ["1.10.490.10"]}),
+        _fold_record("BBB2", 20, {"cath": ["1.10.490.10"]}),
+    ]
+    assert build_clusters(struct, _cfg(structural_clustering="all")).n_clusters == 1
+    collide = [
+        _domain_record("1AAA", 11, {"pfam": ["X1"]}),
+        _fold_record("BBB2", 22, {"cath": ["X1"]}),
+    ]
+    # same raw string, different authority -> namespaced -> no merge
+    assert build_clusters(collide, _cfg(structural_clustering="all")).n_clusters == 2
+
+
+def _many_records(n_giant: int, n_tail: int) -> list[CandidateRecord]:
+    """A dominant component of ``n_giant`` entries plus ``n_tail`` singleton components."""
+    recs = [_clustered_record(f"G{i:03d}", 1, _seq_for(1)) for i in range(n_giant)]
+    recs += [_clustered_record(f"T{i:03d}", 100 + i, _seq_for(100 + i)) for i in range(n_tail)]
+    return recs
+
+
+def test_maximal_holds_out_the_whole_tail_and_never_starves_val():
+    # The case `balanced` cannot serve: the tail is far thinner than a 10/10 target, so
+    # balanced fills test first and leaves val EMPTY. `maximal` treats the fractions as a
+    # ceiling and splits whatever tail exists evenly, so both held-out sets are non-empty.
+    recs = _many_records(n_giant=200, n_tail=20)
+    clusters = build_clusters(recs, _cfg())
+    bal = assign_splits(clusters, _cfg(split_strategy="balanced"))
+    mx = assign_splits(clusters, _cfg(split_strategy="maximal"))
+    counts = lambda r: collections.Counter(r.entry_split.values())  # noqa: E731
+    assert counts(bal)["val"] == 0  # the starvation this strategy exists to fix
+    cm = counts(mx)
+    assert cm["val"] > 0 and cm["test"] > 0
+    assert cm["val"] + cm["test"] == 20  # the entire tail is held out
+    assert cm["train"] == 200  # the dominant component stays in train
+    assert abs(cm["val"] - cm["test"]) <= 1  # filled toward the smaller side
+    check_no_leakage(mx, clusters)
+
+
+def test_maximal_respects_the_fraction_ceiling_when_the_tail_is_large():
+    # With no merging the tail can be most of the snapshot; the ceiling stops it from
+    # starving train. 100 singleton components, ceiling val+test = 20% -> 20 entries.
+    recs = _many_records(n_giant=0, n_tail=100)
+    clusters = build_clusters(recs, _cfg())
+    mx = assign_splits(clusters, _cfg(split_strategy="maximal"))
+    cm = collections.Counter(mx.entry_split.values())
+    assert cm["val"] + cm["test"] <= 20
+    assert cm["train"] >= 80
+    check_no_leakage(mx, clusters)
+
+
+def test_maximal_reports_no_gap_when_the_tail_is_thin():
+    # A thin tail is an OUTCOME for `maximal`, not a missed target, so it must not be
+    # reported as a shortfall the way `balanced` does.
+    clusters = build_clusters(_many_records(n_giant=200, n_tail=6), _cfg())
+    assert assign_splits(clusters, _cfg(split_strategy="balanced")).balance_gaps
+    assert assign_splits(clusters, _cfg(split_strategy="maximal")).balance_gaps == {}
 
 
 def test_distinct_unclustered_sequences_stay_separate():

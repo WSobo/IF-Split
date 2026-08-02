@@ -78,6 +78,38 @@ def metal_symbols_in_annotation(name: str | None) -> set[str]:
 # (a wrong level would silently change how aggressively folds merge, shifting balance).
 STRUCTURAL_METHODS = ("cath", "ecod", "scop2")
 
+# HMM-based domain families (Pfam / InterPro). These differ from the structural methods
+# above in the way that matters for leakage: CATH/ECOD/SCOP2 are curated retrospectively
+# from structures, so their coverage LAGS deposition badly (measured on 2026-07-22: 0.8%
+# of pre-2020 entries unclassified, but 36.5% of 2025 and 55.3% of 2026 releases), which
+# makes a "fold-disjoint" holdout built from them disjoint largely because the databases
+# have not caught up. Pfam/InterPro are HMMs applied to SEQUENCE, so they are current on
+# arrival (InterPro covers 89.8% of protein entities, more than all three structural
+# authorities combined) and they detect remote homology far below the 30% identity a
+# sequence clusterer can see. Merging on them is what makes a holdout trustworthy rather
+# than merely un-annotated.
+DOMAIN_METHODS = ("pfam", "interpro")
+
+# Everything Stage 5 can union on. Keys are disjoint across the two dicts, so a single
+# lookup namespace is unambiguous.
+MERGE_METHODS = STRUCTURAL_METHODS + DOMAIN_METHODS
+
+_DOMAIN_ANNOTATION_TYPES = {"Pfam": "pfam", "InterPro": "interpro"}
+
+
+def domain_families_from_annotations(annotations) -> dict[str, list[str]]:
+    """Pfam/InterPro family accessions from an entity's ``rcsb_polymer_entity_annotation``.
+
+    Returns e.g. ``{"pfam": ["PF00042"], "interpro": ["IPR002335"]}``; only non-empty
+    methods are included. A multi-domain chain contributes several accessions.
+    """
+    fams: dict[str, set[str]] = {m: set() for m in DOMAIN_METHODS}
+    for ann in annotations or []:
+        key = _DOMAIN_ANNOTATION_TYPES.get(ann.get("type"))
+        if key and ann.get("annotation_id"):
+            fams[key].add(ann["annotation_id"])
+    return {m: sorted(v) for m, v in fams.items() if v}
+
 
 def structural_families_from_instances(instances) -> dict[str, list[str]]:
     """Per-method structural (super)family keys across an entity's chain instances.
@@ -120,6 +152,19 @@ class PolymerEntity(BaseModel):
     # share a fold. A multi-domain chain carries several families (one per domain).
     # Only non-empty methods are stored; empty for non-protein / unclassified chains.
     structural_families: dict[str, list[str]] = {}
+    # HMM domain-family accessions per method, e.g.
+    # {"pfam": ["PF00042"], "interpro": ["IPR002335"]}. Same role as
+    # ``structural_families`` for Stage 5 merging, but sequence-derived and therefore
+    # free of the classification lag that makes recent entries look novel (see
+    # DOMAIN_METHODS). Empty for non-protein chains and for entities RCSB has no
+    # Pfam/InterPro hit for.
+    domain_families: dict[str, list[str]] = {}
+
+    def families(self, method: str) -> list[str]:
+        """Merge families for ``method``, whichever namespace it lives in."""
+        if method in DOMAIN_METHODS:
+            return self.domain_families.get(method, [])
+        return self.structural_families.get(method, [])
 
     @property
     def is_protein(self) -> bool:
@@ -257,10 +302,12 @@ class CandidateRecord(BaseModel):
                 cid = cm.get("cluster_id")
                 if ident is not None and cid is not None:
                     cluster_ids[int(ident)] = int(cid)
+            entity_annotations = p.get("rcsb_polymer_entity_annotation") or []
             metal_annots: set[str] = set()
-            for ann in p.get("rcsb_polymer_entity_annotation") or []:
+            for ann in entity_annotations:
                 metal_annots |= metal_symbols_in_annotation(ann.get("name"))
             structural = structural_families_from_instances(p.get("polymer_entity_instances"))
+            domains = domain_families_from_annotations(entity_annotations)
             polymers.append(
                 PolymerEntity(
                     entity_id=p["rcsb_id"],  # verbatim
@@ -270,6 +317,7 @@ class CandidateRecord(BaseModel):
                     cluster_ids=cluster_ids,
                     metal_annotations=sorted(metal_annots),
                     structural_families=structural,
+                    domain_families=domains,
                 )
             )
         polymers.sort(key=lambda e: e.entity_id)

@@ -182,14 +182,15 @@ def _enforce_test_minimums(
 
     cluster_split = dict(cluster_split)
     sizes = {k: len(v) for k, v in clusters.cluster_members.items()}
-    # Under "balanced", dominant folds were capped to train to protect the ENTRY
-    # balance; recruiting one into test to satisfy a small floor would blow that
-    # balance (a floor of 100 pulling in a 3000-entry fold). Exclude above-cap
-    # components from recruitment so the floor is met from the small-fold tail — or
+    # Under "balanced"/"maximal", dominant components were capped to train — to protect
+    # the ENTRY balance and, for "maximal", because the whole point is that the giant
+    # belongs in train. Recruiting one into test to satisfy a small floor would blow that
+    # (a floor of 100 pulling in a 3000-entry fold, or the 98%-of-the-PDB giant). Exclude
+    # above-cap components from recruitment so the floor is met from the tail — or
     # reported as a shortfall. "hash" has no entry-balance contract, so no cap.
     cap = (
         BALANCE_MAX_COMPONENT_FRAC * sum(sizes.values())
-        if cfg.split_strategy == "balanced"
+        if cfg.split_strategy in ("balanced", "maximal")
         else None
     )
     # Per-component count of entries carrying each class (so test totals update O(1)).
@@ -285,6 +286,66 @@ def _balanced_assign(
     return cluster_split, n_capped, gaps
 
 
+def _maximal_assign(
+    clusters: ClusterResult,
+    cfg: Config,
+    registry: dict[str, str],
+    comp_raw: dict[str, set[str]],
+) -> tuple[dict[str, str], int, dict[str, int]]:
+    """Size the holdout from the DATA rather than from a fixed ratio.
+
+    Leakage-safety forces a whole component into one split, so the dominant component
+    (under strong merging it is most of the PDB) must go somewhere: putting it in train
+    both maximizes train and leaves every *other* component free to be held out. The
+    largest leakage-safe holdout is therefore exactly the tail, and this strategy takes
+    it instead of demanding a fraction the data may be unable to supply.
+
+    ``split_fractions`` is reinterpreted as a *ceiling* (``val + test``), not a target:
+    it stops a weakly-merged snapshot -- where the tail can be half the PDB -- from
+    starving train, but it never forces the holdout larger than the tail. Under
+    ``structural_clustering: all`` on 2026-07-22 the tail is 1.35% of entries, so the
+    holdout is 1.35% and train keeps 98.6%.
+
+    val and test are filled toward whichever is currently smaller, so a thin tail splits
+    evenly instead of emptying val (``balanced`` fills test first, which yields val=0 the
+    moment the tail is smaller than the test target).
+    """
+    sizes = {k: len(v) for k, v in clusters.cluster_members.items()}
+    n_entries = sum(sizes.values())
+    sf = cfg.split_fractions
+    holdout_ceiling = (sf.val + sf.test) * n_entries
+
+    cluster_split: dict[str, str] = {}
+    totals = {"val": 0, "test": 0}
+    for key in clusters.cluster_members:
+        pinned = _registry_pin(comp_raw.get(key, {key}), registry) if registry else None
+        if pinned is not None:
+            cluster_split[key] = pinned
+            if pinned in totals:
+                totals[pinned] += sizes[key]
+
+    # Dominance needs no separate threshold here: a component is capped to train exactly
+    # when it cannot fit the holdout budget. That is self-scaling (the giant is ~98% of
+    # entries and never fits) and, unlike a fixed fraction, does not misbehave on small
+    # inputs where a fixed 0.2% would fall below a single entry.
+    eligible = sorted(
+        (k for k in clusters.cluster_members if k not in cluster_split),
+        key=lambda k: (bucket(k, cfg.split_salt), k),
+    )
+    n_capped = 0
+    for key in eligible:
+        if totals["val"] + totals["test"] + sizes[key] > holdout_ceiling:
+            cluster_split[key] = "train"  # too large for the holdout -> train, by design
+            n_capped += 1
+            continue
+        target = "val" if totals["val"] <= totals["test"] else "test"
+        cluster_split[key] = target
+        totals[target] += sizes[key]
+    # No gaps by construction: the holdout is whatever the tail allows, so a thin tail is
+    # a reported outcome, not a missed target.
+    return cluster_split, n_capped, {}
+
+
 def assign_splits(
     clusters: ClusterResult,
     cfg: Config,
@@ -311,6 +372,8 @@ def assign_splits(
     balance_gaps: dict[str, int] = {}
     if cfg.split_strategy == "balanced":
         cluster_split, n_capped, balance_gaps = _balanced_assign(clusters, cfg, registry, comp_raw)
+    elif cfg.split_strategy == "maximal":
+        cluster_split, n_capped, balance_gaps = _maximal_assign(clusters, cfg, registry, comp_raw)
     else:
         cluster_split = {}
         for key in clusters.cluster_members:

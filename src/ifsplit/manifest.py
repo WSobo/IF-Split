@@ -874,7 +874,7 @@ def summarize_manifest(manifest_path: str | Path) -> int:
         if gaps:
             extra += f"; TAIL TOO THIN, val/test short by {gaps}"
         print(f"  split strategy: {strat}{extra}")
-    if strat == "balanced":
+    if strat in ("balanced", "maximal"):
         if sp.get("growth_stable", True):
             print("  growth stability: pinned — prior component splits preserved on rebuild")
         else:
@@ -892,12 +892,17 @@ def summarize_manifest(manifest_path: str | Path) -> int:
     print("  splits (entries / components):")
     total = sum(sp["entry_counts"].values()) or 1
     fracs = m.get("config", {}).get("split_fractions", {})
+    # "maximal" sizes the holdout from the data, so split_fractions is a ceiling it is
+    # expected to undershoot — calling that a "target" would read as a miss.
+    label = "ceiling" if strat == "maximal" else "target"
     for s in ("train", "val", "test"):
         ec = sp["entry_counts"].get(s, 0)
         cc = sp["cluster_counts"].get(s, 0)
         pct = 100.0 * ec / total
         tgt = 100.0 * fracs.get(s, 0)
-        print(f"    {s:5s}: {ec:>7} entries ({pct:4.1f}% / target {tgt:4.1f}%)  {cc:>7} components")
+        print(
+            f"    {s:5s}: {ec:>7} entries ({pct:4.1f}% / {label} {tgt:4.1f}%)  {cc:>7} components"
+        )
     if strat == "balanced":
         # `balanced` targets ENTRY fractions, so a realized deviation is meaningful drift —
         # over a registry lineage the test>val>train merge precedence ratchets test upward.

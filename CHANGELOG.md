@@ -15,6 +15,31 @@ otherwise share a version string and silently produce different splits.
 
 ### Added
 
+- **Pfam/InterPro as merge authorities** (`structural_clustering: pfam | interpro | all`,
+  and `fold_benchmark_method` likewise). CATH/ECOD/SCOP2 are curated retrospectively, so
+  their coverage lags deposition badly — 0.8% of pre-2020 entries are unclassified versus
+  36.5% of 2025 and **55.3% of 2026** releases — which means a holdout built from them alone
+  is "fold-disjoint" largely because the databases have not caught up. Measured: **75.9% of
+  such held-out entries share a Pfam/InterPro family with train**, leakage entirely invisible
+  to the structural authorities, and **no cutoff avoids it** (60–87% in every chain-length and
+  release-year stratum, *rising* with length). Pfam/InterPro are HMMs over sequence, so they
+  carry no lag and see homology below 30% identity: InterPro alone covers **94.9%** of entries
+  against 92.3% for all three structural authorities combined. Costs one extra field
+  (`annotation_id`) on a Data API request already made — still metadata-only, no coordinates.
+  `scripts/fetch_domain_annotations.py --apply` back-fills an existing `candidates.jsonl`, so
+  adopting this needs no Stage-1 re-enumeration.
+- **`split_strategy: "maximal"`** — size the holdout from the data instead of demanding a
+  ratio. Leakage-safety forces the giant component into one split; putting it in train
+  maximizes train and leaves the tail free, so the largest leakage-safe holdout *is* the tail.
+  `split_fractions` becomes a **ceiling**, never a target, and val/test fill toward whichever
+  is smaller — fixing the `balanced` failure where a thin tail empties val entirely (measured:
+  `all` + `balanced` gives val=0, test=2,932). A component is capped to train exactly when it
+  cannot fit the holdout budget, which is self-scaling and needs no fixed dominance threshold.
+- **`config/certified.yaml`** — `all` + `maximal`, the most trustworthy holdout the metadata
+  supports. On 2026-07-22: **train 213,890 (98.6%) / val 1,467 / test 1,465**, with 888
+  held-out entries certified novel under all five authorities and **0% domain-family leakage
+  into train** (down from 75.9%). The holdout is ~1.35% because that is how much genuinely
+  novel structure the PDB contains, not a tuning choice.
 - **`structural_clustering: "union"`** — merge on **any** of CATH/ECOD/SCOP2 (namespaced),
   the strictest fold control the metadata can express and the highest coverage. Still
   metadata-only: all three authorities are already captured per entity, so this is a Stage-5

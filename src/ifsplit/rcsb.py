@@ -52,6 +52,12 @@ _RETRY_STATUS = {429, 500, 502, 503, 504}
 #     says the PROTEIN is a native Ni/Co metalloenzyme — a positive gate that rescues
 #     a lone Ni/Co the His-tag heuristic would otherwise demote (Stage 4). All from
 #     RCSB, so no separate UniProt dependency and it rides in the locked snapshot.
+#     Its `annotation_id` additionally carries the Pfam (PF…) / InterPro (IPR…) family
+#     accessions, which Stage 5 can merge on. These are HMMs over SEQUENCE, so unlike
+#     CATH/ECOD/SCOP2 they carry no curation lag — measured on 2026-07-22, InterPro
+#     covers 89.8% of protein entities against 38.1/71.8/47.7% for CATH/ECOD/SCOP2 —
+#     and they see remote homology below the 30% identity a sequence clusterer can.
+#     Fetching the id costs one extra field on a request we already make.
 #   - rcsb_polymer_instance_annotation (CATH/ECOD/SCOP2, per chain): RCSB's
 #     precomputed structural classification. The homologous-superfamily key it
 #     carries lets Stage 5 union same-fold entities across sequence clusters for
@@ -87,7 +93,7 @@ query($ids: [String!]!) {
         pdbx_seq_one_letter_code_can
       }
       rcsb_cluster_membership { cluster_id identity }
-      rcsb_polymer_entity_annotation { type name }
+      rcsb_polymer_entity_annotation { type annotation_id name }
       polymer_entity_instances {
         rcsb_polymer_instance_annotation { type annotation_id name }
       }

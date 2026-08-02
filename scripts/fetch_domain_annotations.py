@@ -21,8 +21,12 @@ snapshot from Stage 1. It is metadata-only and downloads no coordinates.
 Usage
 -----
     python scripts/fetch_domain_annotations.py CANDIDATES.jsonl OUT_CACHE.jsonl
+    python scripts/fetch_domain_annotations.py CANDIDATES.jsonl CACHE.jsonl --apply OUT.jsonl
 
-Resumable: re-running skips entities already present in OUT_CACHE.jsonl.
+Resumable: re-running skips entities already present in OUT_CACHE.jsonl. With ``--apply`` the
+cache is folded into a copy of CANDIDATES as each entity's ``domain_families``, which is the
+migration path for an existing snapshot -- adopting ``structural_clustering: pfam|interpro|all``
+then needs no Stage-1 re-enumeration.
 """
 
 from __future__ import annotations
@@ -74,7 +78,32 @@ def fetch(batch: list[str], attempts: int = 4) -> list[dict]:
     return []
 
 
+def apply_cache(candidates: Path, cache: Path, dest: Path) -> None:
+    """Write a copy of ``candidates`` with each entity's ``domain_families`` filled in."""
+    dom: dict[str, dict[str, list[str]]] = {}
+    with cache.open() as fh:
+        for line in fh:
+            rec = json.loads(line)
+            fams = {k: rec[k] for k in ("pfam", "interpro") if rec.get(k)}
+            if fams:
+                dom[rec["entity_id"]] = fams
+    n_ent = 0
+    with candidates.open() as src, dest.open("w") as out:
+        for line in src:
+            rec = json.loads(line)
+            for pe in rec.get("polymer_entities", []):
+                fams = dom.get(pe.get("entity_id"))
+                if fams:
+                    pe["domain_families"] = fams
+                    n_ent += 1
+            out.write(json.dumps(rec) + "\n")
+    print(f"applied domain families to {n_ent} entities -> {dest}", flush=True)
+
+
 def main() -> int:
+    if len(sys.argv) == 5 and sys.argv[3] == "--apply":
+        apply_cache(Path(sys.argv[1]), Path(sys.argv[2]), Path(sys.argv[4]))
+        return 0
     if len(sys.argv) != 3:
         print(__doc__)
         return 2
