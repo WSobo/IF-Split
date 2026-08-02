@@ -389,13 +389,23 @@ one fold edge pulls an entire unrelated family in. (The merged giant is *named* 
 because that is the lexicographic min member key — a naming artifact, not a nucleus. Do **not**
 narrate it as a biological hub; that error has been made three times.)
 
-| authority | entry coverage | components | largest component | residual | held out @80/10/10 |
-|---|--:|--:|--:|--:|--:|
-| off (co-occurrence only) | — | 19,593 | 43.2% | 56.8% | 20.0% |
-| scop2 | 61.7% | 12,119 | 79.0% | 21.0% | 20.0% (fills) |
-| cath | 65.3% | 7,861 | 87.1% | 12.9% | 12.7% (val starved) |
-| ecod | 87.1% | 3,662 | 96.8% | 3.2% | 3.2% (val = 0) |
-| **union (ceiling)** | **92.3%** | **3,225** | **97.2%** | **2.8%** | **2.8%** |
+| authority | entry coverage | components | largest component | residual |
+|---|--:|--:|--:|--:|
+| off (co-occurrence only) | — | 19,395 | 44.1% | 55.93% |
+| *curated from structure* | | | | |
+| scop2 | 61.7% | 11,976 | 79.1% | 20.87% |
+| cath | 65.3% | 7,745 | 87.1% | 12.90% |
+| ecod | 87.1% | 3,560 | 96.8% | 3.15% |
+| union (CATH∪ECOD∪SCOP2) | 92.3% | 3,124 | 97.2% | 2.83% |
+| *HMMs over sequence (no lag)* | | | | |
+| pfam | 66.5% | 9,593 | 76.6% | 23.40% |
+| interpro | 94.9% | 3,544 | 94.7% | 5.28% |
+| **all five (ceiling)** | **98.4%** | **1,678** | **98.6%** | **1.35%** |
+
+Coverage does NOT by itself predict the giant: pfam covers MORE entries than scop2 (66.5 vs
+61.7) yet leaves a SMALLER giant (76.6 vs 79.1) — what matters is how coarse each authority's
+families are. InterPro alone covers more of the PDB (94.9%) than all three structural
+authorities combined (92.3%).
 
 Held-out = min(residual, 20%) up to whole-component granularity; for `off`/`scop2` the 20.0% is
 capped by the **target**, not the collapse — only cath/ecod/union are collapse-limited. Coverage
@@ -406,10 +416,10 @@ because it is strongest (it is the weakest of the three).
 
 **Mind the denominator.** SCOP2's 61.7% entry coverage is concentrated in **train** (73.7% of
 train entries classified); the held-out sets are the opposite — **test is only 12.2% classified**
-(2,649/21,683), val 15.1% — because classified entries are exactly the ones that merged into the
+(2,656/21,691), val 15.0% — because classified entries are exactly the ones that merged into the
 capped giant. So the guarantee covers ~12% of test and is **silent on ~88%**. Scored with ECOD
 (decoupled `fold_benchmark_method`), a SCOP2 split is **98.6% ECOD-fold-*seen* in test**
-(229/16,569) and 98.4% in val (264/16,658) — within ~1pt of the sequence-only MPNN splits this
+(229/16,576) and 98.4% in val (264/16,653) — within ~1pt of the sequence-only MPNN splits this
 project critiques. Fold-aware splitting buys **measurement, not elimination**.
 
 **The tail is the annotation frontier, not verified novelty.** The union holdout is only **3.5%

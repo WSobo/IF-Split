@@ -602,11 +602,14 @@ def test_test_minimums_recruit_components_no_leakage(sample_entries, artifact_en
     # 1A1F carries a functional metal (bound Zn). With the pure hash it may not be
     # in test; a metal floor of 1 must pull its whole component into test.
     recs = _records(sample_entries, artifact_entry)
-    kept, _ = filter_candidates(recs, _cfg())
-    class_map = {r.entry_id: classify_components(r, _cfg()) for r in kept}
+    base = _cfg(structural_clustering="off", split_strategy="hash")
+    kept, _ = filter_candidates(recs, base)
+    class_map = {r.entry_id: classify_components(r, base) for r in kept}
     entry_classes = {eid: info["classes"] for eid, info in class_map.items()}
-    cr = build_clusters(kept, _cfg())
-    cfg_min = _cfg(test_min_per_class={"metal": 1})
+    cr = build_clusters(kept, base)
+    cfg_min = _cfg(
+        structural_clustering="off", split_strategy="hash", test_min_per_class={"metal": 1}
+    )
     res = assign_splits(cr, cfg_min, entry_classes=entry_classes)
     # The floor is met and the structural no-leakage invariant still holds.
     metal_in_test = sum(
@@ -789,8 +792,14 @@ def test_growth_bridging_merge_is_honest_and_registry_stable():
     b = _protein_record("BBBB", [2])
     c = _protein_record("CCCC", [1, 2])  # bridges clusters 1 and 2 -> merges the components
 
+    # hash: this test is about registry pinning across a merge, which is the hash path
+    # (maximal/balanced pin via the registry too, but their fill is size-driven, so a
+    # 2-entry synthetic set has no holdout budget at all).
+    def _cfg_g(**kw):
+        return _cfg(structural_clustering="off", split_strategy="hash", **kw)
+
     def _v1_entry_split(s):
-        c = _cfg(split_salt=s)
+        c = _cfg_g(split_salt=s)
         return assign_splits(build_clusters(filter_candidates([a, b], c)[0], c), c).entry_split
 
     # A salt that, in the v1 (two-component) build, holds B out in test and puts A elsewhere.
@@ -801,7 +810,7 @@ def test_growth_bridging_merge_is_honest_and_registry_stable():
             salt = s
             break
     assert salt is not None, "no salt placed B in test and A elsewhere"
-    cfg = _cfg(split_salt=salt)
+    cfg = _cfg_g(split_salt=salt)
 
     v1_clusters = build_clusters(filter_candidates([a, b], cfg)[0], cfg)
     v1 = assign_splits(v1_clusters, cfg)
@@ -897,7 +906,7 @@ def test_hash_rebuild_stays_registry_free(tmp_path, sample_entries, artifact_ent
     from ifsplit.cli import _run_pipeline
     from ifsplit.manifest import read_lock, read_manifest
 
-    cfg = _cfg()  # hash (default)
+    cfg = _cfg(split_strategy="hash")  # hash is registry-free by design
     recs = _records(sample_entries, artifact_entry)
     out = tmp_path / "d"
     _run_pipeline(cfg, recs, "sha", out, limit=None, registry_path=None)
@@ -930,8 +939,8 @@ def test_fold_benchmark_decoupled_from_split():
         _fold_record("AAA1", 10, {"cath": ["1.10.1.1"]}),
         _fold_record("BBB2", 20, {"cath": ["1.10.1.1"]}),  # same fold, different seq cluster
     ]
-    base = _cfg()  # off / off
-    bench = _cfg(fold_benchmark_method="cath")  # off clustering, cath benchmark labels
+    base = _cfg(structural_clustering="off")  # off / off
+    bench = _cfg(structural_clustering="off", fold_benchmark_method="cath")
 
     cr_base = build_clusters(filter_candidates(recs, base)[0], base)
     cr_bench = build_clusters(filter_candidates(recs, bench)[0], bench)

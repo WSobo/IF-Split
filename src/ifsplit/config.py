@@ -152,7 +152,7 @@ class Config(BaseModel):
     # instead of demanding a fixed fraction it cannot fill.
     structural_clustering: Literal[
         "off", "cath", "ecod", "scop2", "pfam", "interpro", "union", "all"
-    ] = "off"
+    ] = "all"
     # Fold-benchmark export (opt-in, metadata-only, DECOUPLED from fold merging).
     # When set, emit per-entry fold (super)family labels and the fold-seen vs
     # novel-fold TEST partition (folds.json, novel_fold_test.json, fold_groups.json
@@ -186,7 +186,7 @@ class Config(BaseModel):
     #     which "balanced" cannot fill (it empties val), but which is exactly the largest
     #     leakage-safe holdout that exists. Like "balanced" it needs the registry for
     #     growth stability.
-    split_strategy: Literal["hash", "balanced", "maximal"] = "hash"
+    split_strategy: Literal["hash", "balanced", "maximal"] = "maximal"
     split_salt: str = Field(min_length=1)
     seed: int = Field(ge=0)
 
