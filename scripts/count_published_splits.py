@@ -29,6 +29,7 @@ from __future__ import annotations
 import argparse
 import csv
 import io
+import itertools
 import json
 import tarfile
 from collections import Counter
@@ -38,7 +39,10 @@ from typing import Any
 import httpx
 
 LMPNN_RAW = "https://raw.githubusercontent.com/dauparas/LigandMPNN/main/training"
-LMPNN_FILES = [
+LMPNN_API = "https://api.github.com/repos/dauparas/LigandMPNN/contents/training"
+# Fallback only. The directory is listed at run time so that a list added upstream
+# is scanned too, rather than silently skipped by a hardcoded set of five names.
+LMPNN_FILES_FALLBACK = [
     "train.json",
     "valid.json",
     "test_small_molecule.json",
@@ -46,20 +50,36 @@ LMPNN_FILES = [
     "test_metal.json",
 ]
 PMPNN_TAR = "https://files.ipd.uw.edu/pub/training_sets/pdb_2021aug02_sample.tar.gz"
-# Held-out lists take precedence when an id is listed twice, which is what makes a
-# train/test double-listing a leak rather than a bookkeeping quirk.
+# Which lists are training rather than held out. Used only to label an overlap: a
+# train/held-out pair is a leak, a held-out/held-out pair is double-counting.
 TRAIN_LISTS = {"train.json", "valid.json"}
+
+
+def _list_lmpnn_files(client: httpx.Client) -> list[str]:
+    try:
+        r = client.get(LMPNN_API)
+        r.raise_for_status()
+        names = sorted(e["name"] for e in r.json() if e["type"] == "file")
+    except (httpx.HTTPError, KeyError, ValueError):
+        return LMPNN_FILES_FALLBACK
+    found = [n for n in names if n.endswith(".json")]
+    return found or LMPNN_FILES_FALLBACK
 
 
 def _load_lmpnn(local: Path | None) -> dict[str, list[str]]:
     if local is not None:
-        return {f: json.loads((local / f).read_text()) for f in LMPNN_FILES}
+        found = sorted(p.name for p in local.glob("*.json"))
+        if not found:
+            raise SystemExit(f"no .json files in {local}")
+        return {f: json.loads((local / f).read_text()) for f in found}
     out: dict[str, list[str]] = {}
     with httpx.Client(timeout=120, follow_redirects=True) as client:
-        for fname in LMPNN_FILES:
+        for fname in _list_lmpnn_files(client):
             r = client.get(f"{LMPNN_RAW}/{fname}")
             r.raise_for_status()
-            out[fname] = r.json()
+            payload = r.json()
+            if isinstance(payload, list):
+                out[fname] = payload
     return out
 
 
@@ -68,17 +88,26 @@ def count_lmpnn(local: Path | None) -> dict[str, Any]:
     sizes = {f: len(v) for f, v in lists.items()}
     all_ids = [i for v in lists.values() for i in v]
     counts = Counter(all_ids)
+    as_sets = {f: set(v) for f, v in lists.items()}
+
+    # Every pair, not just the ones we expected to collide.
+    pairwise = []
+    for a, b in itertools.combinations(sorted(as_sets), 2):
+        shared = sorted(as_sets[a] & as_sets[b])
+        leak = (a in TRAIN_LISTS) != (b in TRAIN_LISTS)
+        pairwise.append({"a": a, "b": b, "n": len(shared), "shared": shared, "leak": leak})
 
     overlaps = []
     for entry_id in sorted(k for k, n in counts.items() if n > 1):
-        where = sorted(f for f, v in lists.items() if entry_id in set(v))
-        held_out = [f for f in where if f not in TRAIN_LISTS]
+        where = sorted(f for f, v in as_sets.items() if entry_id in v)
+        in_train = [f for f in where if f in TRAIN_LISTS]
+        in_heldout = [f for f in where if f not in TRAIN_LISTS]
         overlaps.append(
             {
                 "entry_id": entry_id,
                 "lists": where,
-                # a train/test straddle is a leak; test/test is double-counting
-                "train_test_straddle": bool(held_out) and len(held_out) < len(where),
+                # trained on AND tested on; the held-out/held-out case is harmless
+                "train_test_straddle": bool(in_train) and bool(in_heldout),
             }
         )
 
@@ -86,6 +115,7 @@ def count_lmpnn(local: Path | None) -> dict[str, Any]:
         "sizes": sizes,
         "total_ids": len(all_ids),
         "distinct_ids": len(counts),
+        "pairwise": pairwise,
         "overlaps": overlaps,
         "straddles": [o["entry_id"] for o in overlaps if o["train_test_straddle"]],
         # ids are lowercase in the released files; the audit upper-cases before
@@ -162,7 +192,7 @@ def main() -> None:
     ap = argparse.ArgumentParser(
         description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter
     )
-    ap.add_argument("--lmpnn-dir", type=Path, default=None, help="local dir with the 5 JSONs")
+    ap.add_argument("--lmpnn-dir", type=Path, default=None, help="local dir of split JSONs")
     ap.add_argument("--pmpnn-tar", type=Path, default=None, help="local pdb_2021aug02 tarball")
     ap.add_argument("--skip-pmpnn", action="store_true", help="skip the 47 MB download")
     ap.add_argument("--json", type=Path, default=None, help="also write the counts here")
@@ -172,16 +202,29 @@ def main() -> None:
 
     lm = count_lmpnn(args.lmpnn_dir)
     report["ligandmpnn"] = lm
-    print("LigandMPNN (github.com/dauparas/LigandMPNN/training)")
-    for fname in LMPNN_FILES:
+    print(f"LigandMPNN ({LMPNN_RAW.split('//')[1]}) -- {len(lm['sizes'])} lists")
+    for fname in sorted(lm["sizes"]):
         print(f"  {fname:<28} {lm['sizes'][fname]:>7,}")
     print(f"  {'total ids':<28} {lm['total_ids']:>7,}")
     print(f"  {'distinct ids':<28} {lm['distinct_ids']:>7,}")
-    if lm["overlaps"]:
-        print(f"  ids in more than one list:   {len(lm['overlaps'])}")
-        for o in lm["overlaps"]:
-            flag = "  <-- TRAIN/TEST STRADDLE" if o["train_test_straddle"] else ""
-            print(f"    {o['entry_id']}  {', '.join(o['lists'])}{flag}")
+
+    print("\n  every pair of lists:")
+    for p in lm["pairwise"]:
+        if p["n"] == 0:
+            verdict = "clean"
+        elif p["leak"]:
+            verdict = "TRAINED ON AND TESTED ON: " + ", ".join(p["shared"])
+        else:
+            verdict = "double-counted: " + ", ".join(p["shared"])
+        print(f"    {p['a']:<26} n {p['b']:<26} {p['n']:>3}  {verdict}")
+
+    straddles = lm["straddles"]
+    print(
+        f"\n  {len(straddles)} id(s) in both a training and a held-out list"
+        + (f": {', '.join(straddles)}" if straddles else "")
+    )
+    if not lm["ids_are_lowercase"]:
+        print("  note: ids are not uniformly lowercase in this copy")
 
     if not args.skip_pmpnn:
         pm = count_pmpnn(args.pmpnn_tar)
