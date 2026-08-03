@@ -20,12 +20,26 @@ A component's canonical key is the lexicographically smallest raw-cluster key ac
 its members. (Each RCSB raw key is itself a min-entity-id; an unclustered chain's raw
 key is ``singleton:<hash of its sequence>``.) Keying the split hash on a stable,
 content-derived key rather than RCSB's volatile integer cluster id keeps assignments
-stable as the dataset grows (PLAN.md §6). Sub-10-aa peptides that RCSB does not cluster
-form singleton components keyed by a hash of the sequence, so two **fully-unclustered**
-entries carrying an identical sequence share one component and cannot straddle two splits.
-(A clustered entry's own unclustered chains ride along in its clustered component; an
-identical sequence shared *only* via such a mixed entry is a rare residual — not
-separately merged, and covered for the common case by the sequence-cluster path.)
+stable as the dataset grows (PLAN.md §6). A chain RCSB does not cluster (a short peptide)
+is keyed by a hash of its sequence: a fully-unclustered entry's chains always key and merge
+(bounded — the component holds only entries that are entirely that sequence), while an
+unclustered chain inside an otherwise-clustered entry adds a merge edge only when it carries
+enough MODELED sequence to be a real chain (``MIN_UNCLUSTERED_MERGE_MODELED``), so an
+unmodeled (poly-'X') or low-complexity fragment cannot fan out into a spurious
+mega-component. An identical unclustered sequence that keys thus cannot straddle two splits
+(check_no_leakage, comparing raw keys, sees it).
+
+**Exact-sequence identity is keyed independently of RCSB's clustering.** RCSB's cluster
+file is *not* identity-complete: byte-identical sequences can be assigned DIFFERENT 30%
+cluster ids (measured on the 2026-07-22 snapshot: 69 protein sequences across 497 entries,
+including a 621-residue chain that landed in test *and* val, and a 532-residue chain in test
+*and* train). A cluster id alone is therefore not a sound identity key, so every protein
+chain carrying real modeled sequence also keys by its sequence hash. This is safe by
+construction — exact identity is a strict subset of 30% identity, so the edge can only merge
+what a correct 30% clustering would already have merged (measured: 19,593 -> 19,395
+components, largest 43.2% -> 44.1%). Chains below ``MIN_UNCLUSTERED_MERGE_MODELED`` modeled
+residues are excluded, so leakage of *identical* protein chains is eliminated above that
+bound and explicitly not guaranteed below it.
 
 **Fold-level leakage control (opt-in via ``structural_clustering``).** Sequence
 clustering alone misses structural redundancy: two chains below the identity
@@ -44,9 +58,32 @@ import hashlib
 from dataclasses import dataclass, field
 
 from .config import Config
-from .schema import CandidateRecord
+from .schema import MERGE_METHODS, STRUCTURAL_METHODS, CandidateRecord
 
 SINGLETON_PREFIX = "singleton:"
+
+# An UNCLUSTERED chain *inside an otherwise-clustered entry* adds a merge edge (unions its
+# entry's component with every other entry carrying that exact sequence) only if it has at
+# least this many MODELED (non-'X') residues. Below it the chain is unmodeled (poly-'X') or
+# a short/low-complexity fragment — RCSB does not cluster these, and they are exactly what
+# fans out: a shared such chain would union every host protein it appears in into a spurious
+# mega-component (catastrophic under `hash`, where it lands in a salt-chosen split). Gating
+# on modeled sequence CONTENT is intrinsic → growth-stable (unlike a snapshot-dependent
+# occurrence count, which would make the split input-dependent). A *fully*-unclustered entry
+# is exempt: its component is bounded to entries that are entirely that sequence, and all-'X'
+# fully-unclustered entries are already dropped in Stage 3.
+#
+# MEASURED (2026-07-22 full snapshot, scripts/measure_unclustered_fanout.py): among
+# unclustered partial-entry chains the max merge fan-out collapses from 429 (all-'X') / 177
+# (short real) to 2 at >= 12 modeled residues — a clean knee. RAW LENGTH does NOT separate
+# them (a 72-'X' chain still bridges 283 clusters); the driver is unmodeled/low-complexity
+# sequence, not length. See PLAN.md §5.
+MIN_UNCLUSTERED_MERGE_MODELED = 12
+
+
+def _modeled_len(seq: str) -> int:
+    """Count of MODELED (non-'X') residues — the usable sequence content of a chain."""
+    return sum(1 for c in seq if c != "X")
 
 
 def _seq_singleton_key(seq: str) -> str:
@@ -127,35 +164,81 @@ def build_clusters(records: list[CandidateRecord], cfg: Config) -> ClusterResult
         proteins = [e for e in r.polymer_entities if e.is_protein]
         if not proteins:
             continue  # defensive; Stage 3 already drops no-protein entries
-        keys = sorted({raw_key[e.cluster_ids[level]] for e in proteins if level in e.cluster_ids})
-        if not keys:
-            # Every protein chain is unclustered at this level (typically sub-10-aa
-            # peptides RCSB does not cluster). Key each on a hash of its SEQUENCE so
-            # identical unclustered chains co-key into one component; an entity-id key
-            # would let an identical sequence straddle splits while check_no_leakage
-            # (which only compares raw keys) stayed blind.
-            keys = sorted({_seq_singleton_key(e.seq) for e in proteins})
-            all_keys.update(keys)
-            unclustered.append(r.entry_id)
-        elif len(keys) > 1:
+        clustered = {raw_key[e.cluster_ids[level]] for e in proteins if level in e.cluster_ids}
+        uncl = [e for e in proteins if level not in e.cluster_ids]
+        if clustered:
+            # Already identified by its clustered chain(s); an unclustered chain adds a MERGE
+            # EDGE only if it carries enough MODELED sequence to be a real chain — never an
+            # unmodeled (poly-'X') or short/low-complexity fragment, which would fan out (see
+            # MIN_UNCLUSTERED_MERGE_MODELED).
+            singletons = {
+                _seq_singleton_key(e.seq)
+                for e in uncl
+                if _modeled_len(e.seq) >= MIN_UNCLUSTERED_MERGE_MODELED
+            }
+        else:
+            # Fully unclustered: the sequence hash is the chain's ONLY identity, so a real
+            # chain must always key (gating here would leave a short-peptide-only entry with
+            # no key, reopening the straddle bug) — merging is bounded (the component holds
+            # only entries that are entirely this sequence). But skip poly-'X' (0-modeled)
+            # chains: they carry no sequence and would merge unrelated entries through a
+            # shared unmodeled trace. A kept fully-unclustered entry always has a non-poly-'X'
+            # chain (Stage 3 drops all-'X' entries); the fallback is purely defensive.
+            singletons = {_seq_singleton_key(e.seq) for e in uncl if _modeled_len(e.seq) > 0}
+            if not singletons:
+                singletons = {_seq_singleton_key(e.seq) for e in uncl}
+        # RCSB's cluster file is not identity-complete (see the module docstring): identical
+        # sequences can carry different 30% cluster ids, and a cluster id alone would then let
+        # the SAME protein straddle two splits. Key every clustered chain by its sequence too,
+        # so exact identity always merges regardless of what the cluster file says. Purely
+        # additive, and bounded by the same modeled-length gate that guards fan-out.
+        identity = {
+            _seq_singleton_key(e.seq)
+            for e in proteins
+            if level in e.cluster_ids and _modeled_len(e.seq) >= MIN_UNCLUSTERED_MERGE_MODELED
+        }
+        # NB `multichain` counts entries that *bridge* clusters, so it is computed BEFORE the
+        # identity keys are folded in — otherwise every single-chain entry would look bridging.
+        bridging = clustered | singletons
+        keys = sorted(bridging | identity)
+        key_set = set(keys)
+        all_keys.update(keys)
+        if not clustered:
+            unclustered.append(r.entry_id)  # every protein chain is unclustered
+        if len(bridging) > 1:
             multichain.append(r.entry_id)
         entry_raw[r.entry_id] = keys
         if method != "off":
+            # "union" merges on ANY of the three STRUCTURAL authorities; "all" additionally
+            # merges on the HMM domain families (Pfam/InterPro), which is the strictest
+            # control the metadata can express — and the only one not distorted by
+            # classification lag (see DOMAIN_METHODS). Family keys are namespaced so a CATH
+            # code cannot collide with an ECOD/SCOP2 name or a Pfam/InterPro accession.
+            if method == "union":
+                fam_methods = STRUCTURAL_METHODS
+            elif method == "all":
+                fam_methods = MERGE_METHODS
+            else:
+                fam_methods = (method,)
             efams: set[str] = set()
             for e in proteins:
-                fams = e.structural_families.get(method)
-                if not fams:
-                    continue
-                efams.update(fams)
-                rk = raw_key[e.cluster_ids[level]] if level in e.cluster_ids else keys[0]
-                for fam in fams:
-                    family_raw.setdefault(fam, set()).add(rk)
+                if level in e.cluster_ids:
+                    rk = raw_key[e.cluster_ids[level]]
+                else:
+                    sk = _seq_singleton_key(e.seq)
+                    rk = sk if sk in key_set else keys[0]  # short uncl chain -> entry's component
+                multi = method in ("union", "all")
+                for fm in fam_methods:
+                    for fam in e.families(fm):
+                        fam_key = f"{fm}:{fam}" if multi else fam
+                        efams.add(fam_key)
+                        family_raw.setdefault(fam_key, set()).add(rk)
             if efams:
                 entry_families[r.entry_id] = sorted(efams)
         if bench_method != "off":
             bfams: set[str] = set()
             for e in proteins:
-                fams = e.structural_families.get(bench_method)
+                fams = e.families(bench_method)
                 if fams:
                     bfams.update(fams)
             if bfams:

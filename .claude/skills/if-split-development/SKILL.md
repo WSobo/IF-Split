@@ -38,6 +38,18 @@ test, decide which column it lives in:
 | fold labels used for merging are disjoint | an **independent** authority says test is novel |
 | the candidate-set hash matches | the **entry→split partition** matches |
 | a per-class floor was requested | the floor was met **and** the balance survived |
+| an aggregate fraction / a counter moved | the **entries that changed** are reported |
+
+**This applies to observability, not just invariants — and it is the trap this repo keeps
+falling into.** The reporting layer has failed the same way three times: `cluster_split`
+instead of `entry_split`, then `pinned_reassignments` (a registry-only counter) instead of
+entries-moved, then aggregate entry-fractions instead of entries-moved. Each claim got
+narrower and more careful and still landed on a quantity the implementation can compute
+cheaply rather than the one a reader needs. Aggregates are the worst offenders: an 80/10/10
+is *conserved by construction*, so ~10% of entries can migrate (held-out → train, under
+`hash`, the unsafe direction) while the aggregate barely moves. **Specify a diagnostic by
+what would go wrong, not by what is convenient to count** — for growth that means the
+entry-level rebuild diff (`_report_rebuild_migration`), not a fraction or a counter.
 
 If a check only ever reads the left column, it is decoration. Move it right.
 
@@ -53,9 +65,9 @@ If a check only ever reads the left column, it is decoration. Move it right.
   No wall-clock, no set-iteration order, no float formatting in anything hashed.
 - **PDB ids verbatim.** Never slice, length-validate, or case-fold `rcsb_id`.
 
-## The failure taxonomy (verified; all fixed in v0.6.0)
+## The failure taxonomy (verified; #1-#5 fixed in v0.6.0, **#6 still live**)
 
-Check every change against these five patterns. Severities are the *verified* ones —
+Check every change against these six patterns. Severities are the *verified* ones —
 several were narrower than a first read suggests.
 
 1. **Component merge under growth.** A later snapshot's bridging multi-chain entry unites
@@ -83,9 +95,12 @@ several were narrower than a first read suggests.
    recruit smallest-sufficient-first, exclude above-cap folds under balanced, report the
    shortfall. **Every new knob needs a test against each existing knob it can interact
    with** — the single-knob test never catches this.
-5. **Coverage ceilings quoted as guarantees.** SCOP2 classifies ≈52% of chains (CATH ≈55,
-   ECOD ≈80). Fold hold-out is guaranteed only for the classified fraction. **Never state
-   a fold guarantee without its denominator in the same sentence.**
+5. **Coverage ceilings quoted as guarantees.** On the 2026-07-22 snapshot SCOP2 classifies
+   47.7% of chains (CATH 38.1, ECOD 71.8, union 77.8); by *entries* 61.7/65.3/87.1/92.3.
+   And the corpus rate is the WRONG denominator for a hold-out claim: in the fold-aware run
+   only **12.2% of TEST entries** carry a SCOP2 label (train is 73.7%), because classified
+   entries are exactly the ones that merged into the capped giant. **Never state a fold
+   guarantee without the denominator that matches the set you are describing.**
 6. **Keys on mutable strings.** ECOD/SCOP2 fold-merge keys on free-text names (their
    `annotation_id` is per-domain), so a *fresh* rebuild can merge differently if RCSB
    renames a superfamily. A locked build reproduces exactly via `candidates.jsonl`; CATH
@@ -117,8 +132,8 @@ Sort every claim into a bucket and use the matching verb:
 | Bucket | Verb | Example |
 |---|---|---|
 | Guaranteed by construction | "cannot" / "never" | a sequence cluster cannot straddle two splits |
-| Bounded by coverage | "bounded by" / "ceiling of" — **with the denominator** | residual fold leakage is bounded by the ~48% SCOP2-unclassified fraction |
-| Measured | "measured at X on the \<snapshot\>" | 0.2% novel folds on the 2026-07-14 snapshot |
+| Bounded by coverage | "bounded by" / "ceiling of" — **with the denominator that matches the set** | in a fold-aware build, 87.8% of *test* entries carry no SCOP2 label, so fold hold-out is guaranteed for ~12% of test |
+| Measured | "measured at X on the \<snapshot\>, by \<authority\>, on \<which set\>" | LigandMPNN's *published* test set is 0.2% novel-fold; IF-Split's own fold-aware test set is 1.4% ECOD-novel (229/16,569) on 2026-07-22 |
 
 - **Reproducibility = lock + `candidates.jsonl`, not config/`snapshot_date` alone.** RCSB
   recomputes clusters and CATH/ECOD/SCOP2 annotations over time with no public history.

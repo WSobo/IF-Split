@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import collections
 from pathlib import Path
 
 import pytest
@@ -90,12 +91,272 @@ def test_identical_unclustered_sequences_share_one_component():
         assert splits.entry_split["1PEP"] == splits.entry_split["2PEP"]
 
 
+def _clustered_record(entry_id: str, cid: int, seq: str) -> CandidateRecord:
+    """An entry whose single protein chain RCSB DID cluster, under cluster id `cid`."""
+    return CandidateRecord(
+        entry_id=entry_id,
+        methods=["X-RAY DIFFRACTION"],
+        resolution_A=2.0,
+        release_date="2020-01-01",
+        deposited_residues=len(seq),
+        assemblies={f"{entry_id}-1": len(seq)},
+        polymer_entities=[
+            PolymerEntity(
+                entity_id=f"{entry_id}_1",
+                polymer_type="Protein",
+                seq_len=len(seq),
+                seq=seq,
+                cluster_ids={30: cid},
+            )
+        ],
+        nonpolymer_comps=[],
+        bound_components=[],
+        affinity_comp_ids=[],
+    )
+
+
+def test_identical_sequences_merge_despite_different_cluster_ids():
+    # RCSB's cluster file is not identity-complete: byte-identical sequences can carry
+    # DIFFERENT 30% cluster ids (measured on the 2026-07-22 snapshot: 69 sequences across
+    # 497 entries, incl. a 621-residue chain in test AND val). Keying a clustered chain by
+    # its cluster id alone (the bug) let the SAME protein straddle two splits. Exact
+    # sequence identity must merge regardless of what the cluster file says.
+    seq = "MKTAYIAKQRQISFVKSHFSRQLEERLGHKLMNPQRSTVWY"  # 41 aa, well above the modeled gate
+    clusters = build_clusters(
+        [_clustered_record("1AAA", 111, seq), _clustered_record("2AAA", 222, seq)], _cfg()
+    )
+    assert clusters.n_clusters == 1
+    assert clusters.entry_to_cluster["1AAA"] == clusters.entry_to_cluster["2AAA"]
+    for salt in ("s1", "s2", "s3", "s4", "s5"):
+        splits = assign_splits(clusters, _cfg(split_salt=salt))
+        check_no_leakage(splits, clusters)
+        assert splits.entry_split["1AAA"] == splits.entry_split["2AAA"]
+
+
+def test_identity_keying_does_not_inflate_multichain_count():
+    # The identity key is added to every clustered chain, so a SINGLE-chain entry now
+    # carries two keys. `multichain` counts entries that BRIDGE clusters, so it must be
+    # computed before identity keys fold in — otherwise every entry looks bridging.
+    clusters = build_clusters(
+        [
+            _clustered_record("1AAA", 111, "M" + "A" * 40),
+            _clustered_record("2AAA", 222, "M" + "C" * 40),
+        ],
+        _cfg(),
+    )
+    assert clusters.multichain_entries == []
+
+
+def _domain_record(entry_id: str, cid: int, domains: dict[str, list[str]]) -> CandidateRecord:
+    """Single-chain record in raw cluster ``cid`` carrying Pfam/InterPro ``domains``."""
+    rec = _clustered_record(entry_id, cid, _seq_for(cid))
+    rec.polymer_entities[0].domain_families = domains
+    return rec
+
+
+def test_domain_families_merge_under_pfam_and_all_but_not_structural():
+    # Pfam/InterPro are HMM families over SEQUENCE, so they carry no classification lag
+    # and catch homology CATH/ECOD/SCOP2 have not annotated yet. Two entries in different
+    # sequence clusters sharing a Pfam family must merge under "pfam" and under "all",
+    # and must NOT merge under a structural-only method that cannot see them.
+    recs = [
+        _domain_record("1AAA", 11, {"pfam": ["PF00042"]}),
+        _domain_record("2AAA", 22, {"pfam": ["PF00042"]}),
+    ]
+    assert build_clusters(recs, _cfg(structural_clustering="pfam")).n_clusters == 1
+    assert build_clusters(recs, _cfg(structural_clustering="all")).n_clusters == 1
+    assert build_clusters(recs, _cfg(structural_clustering="scop2")).n_clusters == 2
+    assert build_clusters(recs, _cfg(structural_clustering="union")).n_clusters == 2
+    assert build_clusters(recs, _cfg(structural_clustering="off")).n_clusters == 2
+
+
+def test_all_merges_on_any_authority_and_namespaces_keys():
+    # "all" must merge on a structural OR a domain family, and must not confuse the two:
+    # a CATH code and a Pfam accession that happen to collide as strings stay distinct.
+    struct = [
+        _fold_record("AAA1", 10, {"cath": ["1.10.490.10"]}),
+        _fold_record("BBB2", 20, {"cath": ["1.10.490.10"]}),
+    ]
+    assert build_clusters(struct, _cfg(structural_clustering="all")).n_clusters == 1
+    collide = [
+        _domain_record("1AAA", 11, {"pfam": ["X1"]}),
+        _fold_record("BBB2", 22, {"cath": ["X1"]}),
+    ]
+    # same raw string, different authority -> namespaced -> no merge
+    assert build_clusters(collide, _cfg(structural_clustering="all")).n_clusters == 2
+
+
+def _many_records(n_giant: int, n_tail: int) -> list[CandidateRecord]:
+    """A dominant component of ``n_giant`` entries plus ``n_tail`` singleton components."""
+    recs = [_clustered_record(f"G{i:03d}", 1, _seq_for(1)) for i in range(n_giant)]
+    recs += [_clustered_record(f"T{i:03d}", 100 + i, _seq_for(100 + i)) for i in range(n_tail)]
+    return recs
+
+
+def test_maximal_holds_out_the_whole_tail_and_never_starves_val():
+    # The case `balanced` cannot serve: the tail is far thinner than a 10/10 target, so
+    # balanced fills test first and leaves val EMPTY. `maximal` treats the fractions as a
+    # ceiling and splits whatever tail exists evenly, so both held-out sets are non-empty.
+    recs = _many_records(n_giant=200, n_tail=20)
+    clusters = build_clusters(recs, _cfg())
+    bal = assign_splits(clusters, _cfg(split_strategy="balanced"))
+    mx = assign_splits(clusters, _cfg(split_strategy="maximal"))
+    counts = lambda r: collections.Counter(r.entry_split.values())  # noqa: E731
+    assert counts(bal)["val"] == 0  # the starvation this strategy exists to fix
+    cm = counts(mx)
+    assert cm["val"] > 0 and cm["test"] > 0
+    assert cm["val"] + cm["test"] == 20  # the entire tail is held out
+    assert cm["train"] == 200  # the dominant component stays in train
+    assert abs(cm["val"] - cm["test"]) <= 1  # filled toward the smaller side
+    check_no_leakage(mx, clusters)
+
+
+def test_maximal_respects_the_fraction_ceiling_when_the_tail_is_large():
+    # With no merging the tail can be most of the snapshot; the ceiling stops it from
+    # starving train. 100 singleton components, ceiling val+test = 20% -> 20 entries.
+    recs = _many_records(n_giant=0, n_tail=100)
+    clusters = build_clusters(recs, _cfg())
+    mx = assign_splits(clusters, _cfg(split_strategy="maximal"))
+    cm = collections.Counter(mx.entry_split.values())
+    assert cm["val"] + cm["test"] <= 20
+    assert cm["train"] >= 80
+    check_no_leakage(mx, clusters)
+
+
+def test_maximal_reports_no_gap_when_the_tail_is_thin():
+    # A thin tail is an OUTCOME for `maximal`, not a missed target, so it must not be
+    # reported as a shortfall the way `balanced` does.
+    clusters = build_clusters(_many_records(n_giant=200, n_tail=6), _cfg())
+    assert assign_splits(clusters, _cfg(split_strategy="balanced")).balance_gaps
+    assert assign_splits(clusters, _cfg(split_strategy="maximal")).balance_gaps == {}
+
+
 def test_distinct_unclustered_sequences_stay_separate():
     clusters = build_clusters(
         [_unclustered_record("1PEP", "GSHMWYPQRT"), _unclustered_record("2PEP", "AAAKKKDDEE")],
         _cfg(),
     )
     assert clusters.n_clusters == 2  # different sequences -> different components
+
+
+_AA = "ACDEFGHIKLMNPQRSTVWY"
+
+
+def _seq_for(cid: int, length: int = 100) -> str:
+    """A deterministic dummy protein sequence unique to raw cluster ``cid``.
+
+    Distinct clusters must get distinct sequences: an exact-sequence identity edge merges
+    byte-identical chains regardless of their cluster id, so a single shared constant
+    sequence would collapse clusters a fixture means to keep apart (and would not resemble
+    real data, where different clusters never share a byte-identical chain).
+    """
+    tag = "".join(_AA[(cid // (20**i)) % 20] for i in range(4))
+    return (tag + _AA)[:length].ljust(length, "G")
+
+
+def _mixed_record(entry_id: str, cid: int, uncl_seq: str) -> CandidateRecord:
+    """An entry with one CLUSTERED protein chain (cluster `cid`) + one UNCLUSTERED chain."""
+    return CandidateRecord(
+        entry_id=entry_id,
+        methods=["X-RAY DIFFRACTION"],
+        resolution_A=2.0,
+        release_date="2020-01-01",
+        deposited_residues=100,
+        assemblies={f"{entry_id}-1": 100},
+        polymer_entities=[
+            PolymerEntity(
+                entity_id=f"{entry_id}_1",
+                polymer_type="Protein",
+                seq_len=60,
+                seq=_seq_for(cid, 60),
+                cluster_ids={30: cid},
+            ),
+            PolymerEntity(
+                entity_id=f"{entry_id}_2",
+                polymer_type="Protein",
+                seq_len=len(uncl_seq),
+                seq=uncl_seq,
+                cluster_ids={},
+            ),
+        ],
+        nonpolymer_comps=[],
+        bound_components=[],
+        affinity_comp_ids=[],
+    )
+
+
+_LONG_UNCL = "MKTAYIAKQRQISFVKSHFSRQLEERLGHKLMNPQRSTVWY"  # 41 aa >= MIN_UNCLUSTERED_MERGE_LEN
+_SHORT_PEP = "GSHMWYPQR"  # 9 aa, below the merge gate
+
+
+def test_partial_entries_merge_via_long_unclustered_chain():
+    # Two entries with DISTINCT clustered chains but the SAME long unclustered chain must
+    # merge — a long shared sequence is a real leak signal, keeping them apart would leak it.
+    cr = build_clusters(
+        [_mixed_record("EE01", 1, _LONG_UNCL), _mixed_record("EE02", 2, _LONG_UNCL)], _cfg()
+    )
+    assert cr.entry_to_cluster["EE01"] == cr.entry_to_cluster["EE02"]
+
+
+def test_short_shared_peptide_does_not_merge_partial_entries():
+    # The SAME short peptide as a second chain must NOT union two otherwise-unrelated
+    # proteins (a peptide ligand/tag is not a homology signal, and would fan out).
+    cr = build_clusters(
+        [_mixed_record("EE01", 1, _SHORT_PEP), _mixed_record("EE02", 2, _SHORT_PEP)], _cfg()
+    )
+    assert cr.entry_to_cluster["EE01"] != cr.entry_to_cluster["EE02"]
+
+
+def test_promiscuous_short_peptide_forms_no_megacomponent():
+    # 50 unrelated proteins each carry the SAME short peptide as a second chain. The gate
+    # keeps them 50 components; WITHOUT it they collapse into ONE mega-component (== every
+    # entry), which under `hash` would land wholesale in a salt-chosen split. Goes red if
+    # someone removes the gate.
+    recs = [_mixed_record(f"P{i:03d}", 100 + i, _SHORT_PEP) for i in range(50)]
+    cr = build_clusters(recs, _cfg())
+    n = sum(len(m) for m in cr.cluster_members.values())
+    biggest = max(len(m) for m in cr.cluster_members.values())
+    assert biggest <= 0.1 * n  # gate holds (biggest == 1); without it biggest == n
+
+
+def test_polyx_unmodeled_chain_never_merges_even_when_long():
+    # Full-snapshot finding (2026-07-22): unclustered fan-out is driven by UNMODELED
+    # (poly-'X') chains at ALL lengths (a 72-'X' chain bridged 283 clusters). A raw-length
+    # gate would let a long poly-'X' through and seed a mega-component; the modeled-residue
+    # gate (0 modeled) keeps them apart. Goes red if the gate reverts to raw length.
+    long_polyx = "X" * 80  # 80 residues, 0 modeled
+    cr = build_clusters(
+        [_mixed_record("EE01", 1, long_polyx), _mixed_record("EE02", 2, long_polyx)], _cfg()
+    )
+    assert cr.entry_to_cluster["EE01"] != cr.entry_to_cluster["EE02"]
+
+
+def test_rebuild_diff_reports_entry_moves_into_train(tmp_path, capsys):
+    # The entry-level growth signal: a same-config rebuild reports how many prior entries
+    # changed split AND how many were absorbed into train (the unsafe hash-merge direction).
+    import json as _json
+
+    from ifsplit.cli import _report_rebuild_migration
+
+    cfg = _cfg()
+    (tmp_path / "train.json").write_text(_json.dumps(["B"]))
+    (tmp_path / "val.json").write_text(_json.dumps([]))
+    (tmp_path / "test.json").write_text(_json.dumps(["A"]))
+    (tmp_path / "dataset.lock").write_text(_json.dumps({"config_hash": cfg.config_hash()}))
+    # New assignment: A moved test -> train (into train), B moved train -> test (out of train)
+    # — both directions contaminate, for different downstream users.
+    _report_rebuild_migration(cfg, tmp_path, {"A": "train", "B": "test"})
+    out = capsys.readouterr().out
+    assert "CHANGED split" in out
+    assert "1 INTO train" in out
+    assert "1 OUT of train" in out
+
+
+def test_rebuild_diff_silent_on_first_build(tmp_path, capsys):
+    from ifsplit.cli import _report_rebuild_migration
+
+    _report_rebuild_migration(_cfg(), tmp_path, {"A": "train"})  # no prior split in the dir
+    assert capsys.readouterr().out == ""
 
 
 # ----------------------------- Stage 3: filter ----------------------------- #
@@ -341,11 +602,14 @@ def test_test_minimums_recruit_components_no_leakage(sample_entries, artifact_en
     # 1A1F carries a functional metal (bound Zn). With the pure hash it may not be
     # in test; a metal floor of 1 must pull its whole component into test.
     recs = _records(sample_entries, artifact_entry)
-    kept, _ = filter_candidates(recs, _cfg())
-    class_map = {r.entry_id: classify_components(r, _cfg()) for r in kept}
+    base = _cfg(structural_clustering="off", split_strategy="hash")
+    kept, _ = filter_candidates(recs, base)
+    class_map = {r.entry_id: classify_components(r, base) for r in kept}
     entry_classes = {eid: info["classes"] for eid, info in class_map.items()}
-    cr = build_clusters(kept, _cfg())
-    cfg_min = _cfg(test_min_per_class={"metal": 1})
+    cr = build_clusters(kept, base)
+    cfg_min = _cfg(
+        structural_clustering="off", split_strategy="hash", test_min_per_class={"metal": 1}
+    )
     res = assign_splits(cr, cfg_min, entry_classes=entry_classes)
     # The floor is met and the structural no-leakage invariant still holds.
     metal_in_test = sum(
@@ -528,8 +792,14 @@ def test_growth_bridging_merge_is_honest_and_registry_stable():
     b = _protein_record("BBBB", [2])
     c = _protein_record("CCCC", [1, 2])  # bridges clusters 1 and 2 -> merges the components
 
+    # hash: this test is about registry pinning across a merge, which is the hash path
+    # (maximal/balanced pin via the registry too, but their fill is size-driven, so a
+    # 2-entry synthetic set has no holdout budget at all).
+    def _cfg_g(**kw):
+        return _cfg(structural_clustering="off", split_strategy="hash", **kw)
+
     def _v1_entry_split(s):
-        c = _cfg(split_salt=s)
+        c = _cfg_g(split_salt=s)
         return assign_splits(build_clusters(filter_candidates([a, b], c)[0], c), c).entry_split
 
     # A salt that, in the v1 (two-component) build, holds B out in test and puts A elsewhere.
@@ -540,7 +810,7 @@ def test_growth_bridging_merge_is_honest_and_registry_stable():
             salt = s
             break
     assert salt is not None, "no salt placed B in test and A elsewhere"
-    cfg = _cfg(split_salt=salt)
+    cfg = _cfg_g(split_salt=salt)
 
     v1_clusters = build_clusters(filter_candidates([a, b], cfg)[0], cfg)
     v1 = assign_splits(v1_clusters, cfg)
@@ -636,7 +906,7 @@ def test_hash_rebuild_stays_registry_free(tmp_path, sample_entries, artifact_ent
     from ifsplit.cli import _run_pipeline
     from ifsplit.manifest import read_lock, read_manifest
 
-    cfg = _cfg()  # hash (default)
+    cfg = _cfg(split_strategy="hash")  # hash is registry-free by design
     recs = _records(sample_entries, artifact_entry)
     out = tmp_path / "d"
     _run_pipeline(cfg, recs, "sha", out, limit=None, registry_path=None)
@@ -669,8 +939,8 @@ def test_fold_benchmark_decoupled_from_split():
         _fold_record("AAA1", 10, {"cath": ["1.10.1.1"]}),
         _fold_record("BBB2", 20, {"cath": ["1.10.1.1"]}),  # same fold, different seq cluster
     ]
-    base = _cfg()  # off / off
-    bench = _cfg(fold_benchmark_method="cath")  # off clustering, cath benchmark labels
+    base = _cfg(structural_clustering="off")  # off / off
+    bench = _cfg(structural_clustering="off", fold_benchmark_method="cath")
 
     cr_base = build_clusters(filter_candidates(recs, base)[0], base)
     cr_bench = build_clusters(filter_candidates(recs, bench)[0], bench)
@@ -721,7 +991,7 @@ def _protein_record(entry_id: str, cluster30_ids: list[int]) -> CandidateRecord:
             entity_id=f"{entry_id}_{i + 1}",
             polymer_type="Protein",
             seq_len=100,
-            seq="A" * 100,
+            seq=_seq_for(cid),
             cluster_ids={30: cid},
         )
         for i, cid in enumerate(cluster30_ids)
@@ -776,7 +1046,7 @@ def _fold_record(entry_id: str, cluster30: int, families: dict[str, list[str]]) 
         entity_id=f"{entry_id}_1",
         polymer_type="Protein",
         seq_len=100,
-        seq="A" * 100,
+        seq=_seq_for(cluster30),
         cluster_ids={30: cluster30},
         structural_families=families,
     )
@@ -827,6 +1097,25 @@ def test_structural_method_is_selectable():
     kept, _ = filter_candidates(recs, _cfg())
     assert build_clusters(kept, _cfg(structural_clustering="cath")).n_clusters == 2
     assert build_clusters(kept, _cfg(structural_clustering="ecod")).n_clusters == 1
+
+
+def test_union_merges_on_any_authority():
+    # "union" merges chains that agree under ANY of CATH/ECOD/SCOP2. Here they differ under
+    # CATH and carry no SCOP2, but share an ECOD family — cath keeps them apart, union merges.
+    recs = [
+        _fold_record("AAA1", 10, {"cath": ["1.10.1.1"], "ecod": ["Bcl-2"]}),
+        _fold_record("BBB2", 20, {"cath": ["2.20.2.2"], "ecod": ["Bcl-2"]}),
+    ]
+    kept, _ = filter_candidates(recs, _cfg())
+    assert build_clusters(kept, _cfg(structural_clustering="cath")).n_clusters == 2
+    assert build_clusters(kept, _cfg(structural_clustering="union")).n_clusters == 1
+    # Namespacing: a CATH code that equals an (unrelated) ECOD name must NOT merge under union.
+    recs2 = [
+        _fold_record("CCC1", 30, {"cath": ["shared"]}),
+        _fold_record("DDD2", 40, {"ecod": ["shared"]}),
+    ]
+    kept2, _ = filter_candidates(recs2, _cfg())
+    assert build_clusters(kept2, _cfg(structural_clustering="union")).n_clusters == 2
 
 
 def test_cath_key_is_name_stable_but_scop2_key_is_name_sensitive():

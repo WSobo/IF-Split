@@ -116,7 +116,7 @@ def test_interactive_blank_keeps_recipe_defaults(tmp_path):
     cfg = load_config(out)
     sf = cfg.split_fractions
     assert (sf.train, sf.val, sf.test) == (0.9, 0.05, 0.05)
-    assert cfg.structural_clustering == "off"  # untouched default
+    assert cfg.structural_clustering == "all"  # untouched default
     assert cfg.split_salt == "snapsplit-v1"  # untouched default
     # The unchanged snapshot_date line still carries its explanatory comment.
     snap = next(ln for ln in text.splitlines() if ln.startswith("snapshot_date:"))

@@ -7,6 +7,94 @@ follow [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 The **split is always computed from metadata + sequences only** — `build` never
 downloads structure coordinates. That invariant holds across every release below.
 
+## [0.6.1] — unreleased (prepared 2026-07-24; not yet tagged)
+
+Split output changes (the unclustered-chain keying below), so this **must** carry a new
+version even pre-release: two builds with the same `config_hash` but different code would
+otherwise share a version string and silently produce different splits.
+
+### Added
+
+- **Pfam/InterPro as merge authorities** (`structural_clustering: pfam | interpro | all`,
+  and `fold_benchmark_method` likewise). CATH/ECOD/SCOP2 are curated retrospectively, so
+  their coverage lags deposition badly — 0.8% of pre-2020 entries are unclassified versus
+  36.5% of 2025 and **55.3% of 2026** releases — which means a holdout built from them alone
+  is "fold-disjoint" largely because the databases have not caught up. Measured: **75.9% of
+  such held-out entries share a Pfam/InterPro family with train**, leakage entirely invisible
+  to the structural authorities, and **no cutoff avoids it** (60–87% in every chain-length and
+  release-year stratum, *rising* with length). Pfam/InterPro are HMMs over sequence, so they
+  carry no lag and see homology below 30% identity: InterPro alone covers **94.9%** of entries
+  against 92.3% for all three structural authorities combined. Costs one extra field
+  (`annotation_id`) on a Data API request already made — still metadata-only, no coordinates.
+  `scripts/fetch_domain_annotations.py --apply` back-fills an existing `candidates.jsonl`, so
+  adopting this needs no Stage-1 re-enumeration.
+- **`split_strategy: "maximal"`** — size the holdout from the data instead of demanding a
+  ratio. Leakage-safety forces the giant component into one split; putting it in train
+  maximizes train and leaves the tail free, so the largest leakage-safe holdout *is* the tail.
+  `split_fractions` becomes a **ceiling**, never a target, and val/test fill toward whichever
+  is smaller — fixing the `balanced` failure where a thin tail empties val entirely (measured:
+  `all` + `balanced` gives val=0, test=2,932). A component is capped to train exactly when it
+  cannot fit the holdout budget, which is self-scaling and needs no fixed dominance threshold.
+- **`config/certified.yaml`** — `all` + `maximal`, the most trustworthy holdout the metadata
+  supports. On 2026-07-22: **train 213,890 (98.6%) / val 1,467 / test 1,465**, with 888
+  held-out entries certified novel under all five authorities and **0% domain-family leakage
+  into train** (down from 75.9%). The holdout is ~1.35% because that is how much genuinely
+  novel structure the PDB contains, not a tuning choice.
+- **`structural_clustering: "union"`** — merge on **any** of CATH/ECOD/SCOP2 (namespaced),
+  the strictest fold control the metadata can express and the highest coverage. Still
+  metadata-only: all three authorities are already captured per entity, so this is a Stage-5
+  recombination — no new fetch, no coordinates. It is a **measured-ceiling diagnostic**, not
+  a production config: it merges the most and so percolates the most (see the fold-graph
+  percolation note in the README/PLAN), leaving too thin a tail to fill val/test.
+
+### Fixed
+
+- **Exact-sequence identity now merges, regardless of RCSB's cluster ids** (real leak, found
+  by measurement). A *clustered* chain was identified **solely** by its RCSB 30% cluster id,
+  and RCSB's cluster file turns out not to be identity-complete: byte-identical sequences can
+  carry **different** cluster ids. The same protein could therefore straddle two splits.
+  Measured on the 2026-07-22 snapshot: **74 protein sequences across 497 entries** straddled,
+  **38 of them contaminating train**, including a **621-residue** chain in test *and* val and
+  a 532-residue chain in test *and* train. Every protein chain with at least
+  `MIN_UNCLUSTERED_MERGE_MODELED` modeled residues now also keys by its sequence hash, so
+  identical chains always co-key. Safe by construction — exact identity is a strict subset of
+  30% identity, so the edge can only merge what a correct 30% clustering would already have
+  merged; measured effect on the sequence-only build is 19,593 → 19,395 components and a
+  43.2% → 44.1% largest component. **After the fix the straddle count is 0.** This is the
+  project's own recurring failure mode (asserting an invariant at the level the code makes
+  true by construction — cluster ids — rather than the level users depend on: sequences), so
+  `check_no_leakage`'s guarantee is now stated over *sequences* above the modeled gate, and
+  explicitly not guaranteed below it.
+- **Unclustered-chain keying, gated by modeled content.** An unclustered protein chain is
+  keyed by its sequence hash so two entries sharing an identical such chain co-key and cannot
+  straddle splits. A *fully*-unclustered entry always keys + merges (bounded — its component
+  holds only entries that are entirely that sequence). An unclustered chain *inside an
+  otherwise-clustered entry* adds a merge edge only when it carries at least
+  `MIN_UNCLUSTERED_MERGE_MODELED` (**12**) modeled (non-'X') residues, so an unmodeled or
+  low-complexity fragment cannot fan out into a spurious mega-component (catastrophic under
+  `hash`, where it lands in a salt-chosen split). The gate is on modeled sequence **content**
+  — intrinsic and growth-stable — never on a snapshot-dependent occurrence count. **Measured
+  on the full 2026-07-22 snapshot** (`scripts/measure_unclustered_fanout.py`): the fan-out is
+  driven by unmodeled poly-'X' / low-complexity sequence, **not length** (a 72-'X' chain
+  bridges 283 clusters), and collapses from 429 to a max of 2 at ≥ 12 modeled residues — a
+  clean knee, and a finding about the PDB's unclustered tail.
+- **Entry-level rebuild diff (the faithful growth signal).** An in-place `build`/`resplit`
+  now reports how many prior entries **changed split** vs the build already in `--out`, and
+  how many were **absorbed into train** — the direction registry-free `hash` merges are
+  biased toward (the survivor's bucket, and train owns 80% of it), i.e. held-out data eroding
+  into train. Aggregate fractions can't detect this (they are conserved by construction — a
+  simulation churned ~10% of entries while the 80/10/10 barely moved), so the report is at the
+  entry level. Diagnostic only: it reads the prior output, never the assignment, so
+  `verify`-from-config-alone and the deterministic manifest are untouched.
+- **Honest growth reporting.** `splits.pinned_reassignments` counts merge-overridden pins
+  only when a registry is in use; the docs no longer claim the registry-free `hash` path's
+  merge migration is "reported" via `pinned_reassignments` or aggregate drift (it isn't — see
+  the rebuild diff above). `stats` also warns when a `balanced` split's realized entry
+  fractions drift from target (a coarse, balanced-only signal for the `test > val > train`
+  ratchet — not a substitute for the entry-level diff). The `examples/IF-Split-2026.07.14`
+  README no longer claims a fresh `build` reproduces the split byte-for-byte (that needs the
+  locked `candidates.jsonl` + `dataset.lock`) and notes the example is the fold-leaky default.
+
 ## [0.6.0] — 2026-07-24
 
 A correctness-hardening release: five confirmed silent-failure fixes (each found by
@@ -62,9 +150,11 @@ except the singleton-keying fix below, which only affects unclustered short pept
   Documented as a fresh-rebuild caveat (a locked build reproduces exactly via
   `candidates.jsonl`; CATH is stable); the stable-lineage-id fix is scoped for a follow-up.
 - **Honesty pass on the claims.** The README feature table now qualifies fold hold-out by
-  coverage (SCOP2 ≈ 52%); reproducibility guarantee #1 states the exact split reproduces
+  coverage (SCOP2 covers 47.7% of chains / 61.7% of entries corpus-wide, but only ~12% of
+  *test* entries in a fold-aware run — mind the denominator); reproducibility guarantee #1 states the exact split reproduces
   from the lock + `candidates.jsonl`, not `snapshot_date` alone; the `balanced` covariate
-  shift (val/test hold only small, rare folds — not comparable to published numbers) and
+  shift (val/test hold small, rare folds plus a majority of fold-unclassified chains — not
+  comparable to published numbers) and
   the `scop2`-vs-`ecod` trade-off are stated plainly.
 
 ## [0.5.0] — 2026-07-22
@@ -107,8 +197,9 @@ default split output.
 ### Added
 
 - **Fold-level leakage guard.** `check_no_leakage` now also asserts that no
-  structural (super)family straddles two splits (not just sequence clusters) when
-  `structural_clustering` is on — matching the fold-leakage guarantee. Backed by
+  structural (super)family *the configured authority classifies* straddles two splits (not
+  just sequence clusters) when `structural_clustering` is on. It is blind to unclassified
+  chains, which are the majority of a fold-aware val/test. Backed by
   new *negative* tests that construct leaky partitions and prove the guard fires.
 - **`single_chain_only`** filter (opt-in): keep only single-protein-entity
   structures — a metadata proxy for the single-chain CATH setup.
@@ -116,7 +207,7 @@ default split output.
   Search API call) before committing to a full build.
 - **Manifest observability**: a ligand tier-reason histogram and per-split fold
   coverage — distinct held-out folds *and* the unclassified fraction per split (the
-  **residual-leakage ceiling**: entries no CATH/ECOD/SCOP2 taxonomy classifies are
+  **residual-leakage ceiling**, set by the *configured* authority: entries it does not classify are
   held out by sequence only, so fold-level hold-out is not guaranteed for them).
   `stats` prints it whenever fold-aware clustering is on.
 - **CLI test suite** (`tests/test_cli.py`) covering exit codes and error paths.
@@ -145,20 +236,22 @@ default split output.
 
 ## [0.3.0] — 2026-07-14
 
-A large release: fold-honest splitting, split-output certification, a two-corpus
+A large release: fold-aware splitting, split-output certification, a two-corpus
 training model, a metadata-only curation overhaul, and offline re-derivability.
 
 ### Added
 
 - **Fold-level structural leakage control** (opt-in `structural_clustering`:
   `off` | `cath` | `ecod` | `scop2`). Same-fold protein chains are union-merged into
-  one leakage-safe component in addition to shared sequence clusters, so a fold cannot
-  straddle train/test — using RCSB's precomputed CATH/ECOD/SCOP2 classifications
+  one leakage-safe component in addition to shared sequence clusters, so a family the
+  configured authority names cannot straddle train/test (families it does not classify are
+  unconstrained) — using RCSB's precomputed CATH/ECOD/SCOP2 classifications
   (metadata only, no coordinates).
 - **Balance-aware split strategy** (`split_strategy: balanced`). Caps dominant folds
   to train and fills val/test to their *entry* targets from the fold tail, restoring
-  ~80/10/10 by entries with thousands of held-out folds. `config/fold-aware.yaml`
-  ships the fold-honest recipe (`scop2` + `balanced`).
+  ~80/10/10 by entries, holding 992 distinct SCOP2 families out of train. `config/fold-aware.yaml`
+  ships the fold-aware recipe (`scop2` + `balanced`) — fold *measurement* over the classified
+  fraction, not fold-clean: its test set is still 98.6% ECOD-fold-seen.
 - **Split-output certification.** The `@2` `dataset.lock` records `split_sha256` (a
   hash of the entry→split partition); `verify` re-derives Stages 3–6 and certifies the
   split *output* reproduced, not just the Stage-1 candidate set.

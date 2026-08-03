@@ -129,16 +129,30 @@ class Config(BaseModel):
     # sequence clusters — so the same fold cannot straddle train/test. Metadata
     # only (RCSB's precomputed classifications; no coordinates). "cath" keys on the
     # homologous-superfamily code (e.g. 1.10.490.10); "ecod"/"scop2" key on the
-    # (super)family name. "off" = sequence-only (prior behavior). Purely additive:
-    # it can only merge components, never split them, and chains lacking the chosen
-    # classification simply add no structural edge. Off by default: fold-merging
+    # (super)family name. "union" merges on ANY of the three (namespaced) — the
+    # strictest fold control the metadata can express and the highest coverage, still
+    # metadata-only (all three are already captured per entity, so this is a Stage-5
+    # recombination, no new fetch). "off" = sequence-only (prior behavior). Purely
+    # additive: it can only merge components, never split them, and chains lacking the
+    # chosen classification simply add no structural edge. Off by default: fold-merging
     # the dominant superfamilies (antibodies, TIM barrels) collapses them into
     # mega-components that land wholesale in one split, skewing the ENTRY-level
     # train/val/test balance (~95/3/2 at superfamily grain) even though the
     # COMPONENT-level split stays ~80/10/10. Off by default; pair it with
     # split_strategy="balanced" (below) to restore entry balance — that is the
     # "fold-aware" recipe (structural_clustering="scop2" + balanced).
-    structural_clustering: Literal["off", "cath", "ecod", "scop2"] = "off"
+    #   "union" merges on any of CATH/ECOD/SCOP2 — the structural ceiling.
+    #   "pfam" / "interpro" merge on HMM domain families instead. These are derived from
+    #     SEQUENCE, so they carry no classification lag: on 2026-07-22 InterPro covers
+    #     89.8% of protein entities vs 38.1/71.8/47.7% for CATH/ECOD/SCOP2.
+    #   "all" merges on all five — the true metadata ceiling, and the only setting under
+    #     which a holdout is disjoint by evidence rather than by missing annotation.
+    # Note "union"/"all" leave a thin tail (2.83% / 1.35% of entries on 2026-07-22), so
+    # pair them with split_strategy="maximal", which sizes the holdout from that tail
+    # instead of demanding a fixed fraction it cannot fill.
+    structural_clustering: Literal[
+        "off", "cath", "ecod", "scop2", "pfam", "interpro", "union", "all"
+    ] = "all"
     # Fold-benchmark export (opt-in, metadata-only, DECOUPLED from fold merging).
     # When set, emit per-entry fold (super)family labels and the fold-seen vs
     # novel-fold TEST partition (folds.json, novel_fold_test.json, fold_groups.json
@@ -147,7 +161,7 @@ class Config(BaseModel):
     # structural_clustering it never feeds the union-find, so labels attach even to a
     # fold-LEAKY split (the split an existing checkpoint was trained on). "off"
     # (default) emits nothing and is omitted from the config hash (legacy-stable).
-    fold_benchmark_method: Literal["off", "cath", "ecod", "scop2"] = "off"
+    fold_benchmark_method: Literal["off", "cath", "ecod", "scop2", "pfam", "interpro"] = "off"
     split_fractions: SplitFractions
     # Component -> split assignment strategy.
     #   "hash": each component hashed onto the cumulative fractions (balances
@@ -163,7 +177,16 @@ class Config(BaseModel):
     #     an in-place rebuild auto-adopts <out>/splits.registry.json when the prior
     #     dataset.lock config_hash matches (--fresh opts out). "hash" is
     #     input-independent and registry-free, so verify still certifies it.
-    split_strategy: Literal["hash", "balanced"] = "hash"
+    #   "maximal": derive the holdout SIZE from the data instead of demanding a ratio.
+    #     Caps the dominant component(s) to train (maximizing train) and holds out the
+    #     whole remaining tail, filling val/test toward whichever is smaller. Here
+    #     split_fractions is a CEILING (val+test), never a target, so a thin tail is a
+    #     reported outcome rather than a shortfall. This is the strategy to pair with
+    #     structural_clustering="all": under strong merging the tail is ~1% of entries,
+    #     which "balanced" cannot fill (it empties val), but which is exactly the largest
+    #     leakage-safe holdout that exists. Like "balanced" it needs the registry for
+    #     growth stability.
+    split_strategy: Literal["hash", "balanced", "maximal"] = "maximal"
     split_salt: str = Field(min_length=1)
     seed: int = Field(ge=0)
 

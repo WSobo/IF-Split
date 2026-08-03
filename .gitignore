@@ -12,6 +12,13 @@ venv/
 data/cache/*
 !data/cache/.gitkeep
 
+# Full-build / measurement run trees + their configs (large; regenerable). The split
+# lists that ARE meant to ship live under examples/, not here.
+data/run-*/
+data/rs*/
+data/*.yaml
+data/domain-annotations-*.jsonl
+
 # Build artifacts. The split itself is tiny (train/val/test.json + per-class test
 # lists + the KB-scale manifest.json) and IS committed under examples/. Only the
 # BULKY, regenerable companions are ignored — they belong in a GitHub Release:

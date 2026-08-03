@@ -874,7 +874,7 @@ def summarize_manifest(manifest_path: str | Path) -> int:
         if gaps:
             extra += f"; TAIL TOO THIN, val/test short by {gaps}"
         print(f"  split strategy: {strat}{extra}")
-    if strat == "balanced":
+    if strat in ("balanced", "maximal"):
         if sp.get("growth_stable", True):
             print("  growth stability: pinned — prior component splits preserved on rebuild")
         else:
@@ -892,12 +892,35 @@ def summarize_manifest(manifest_path: str | Path) -> int:
     print("  splits (entries / components):")
     total = sum(sp["entry_counts"].values()) or 1
     fracs = m.get("config", {}).get("split_fractions", {})
+    # "maximal" sizes the holdout from the data, so split_fractions is a ceiling it is
+    # expected to undershoot — calling that a "target" would read as a miss.
+    label = "ceiling" if strat == "maximal" else "target"
     for s in ("train", "val", "test"):
         ec = sp["entry_counts"].get(s, 0)
         cc = sp["cluster_counts"].get(s, 0)
         pct = 100.0 * ec / total
         tgt = 100.0 * fracs.get(s, 0)
-        print(f"    {s:5s}: {ec:>7} entries ({pct:4.1f}% / target {tgt:4.1f}%)  {cc:>7} components")
+        print(
+            f"    {s:5s}: {ec:>7} entries ({pct:4.1f}% / {label} {tgt:4.1f}%)  {cc:>7} components"
+        )
+    if strat == "balanced":
+        # `balanced` targets ENTRY fractions, so a realized deviation is meaningful drift —
+        # over a registry lineage the test>val>train merge precedence ratchets test upward.
+        # (For `hash` the entry skew is expected — it balances components — so no warning.)
+        drift = {
+            s: 100.0 * sp["entry_counts"].get(s, 0) / total - 100.0 * fracs.get(s, 0)
+            for s in ("train", "val", "test")
+        }
+        worst = max(abs(d) for d in drift.values())
+        if worst > 3.0:
+            off = ", ".join(
+                f"{s} {drift[s]:+.1f}pp" for s in ("train", "val", "test") if abs(drift[s]) >= 3.0
+            )
+            print(
+                f"  balance WARNING: realized entry fractions drift from target by up to "
+                f"{worst:.1f}pp ({off}) — a growing lineage's merges ratchet test upward; "
+                f"rebuild with --fresh to recenter, or accept the drift as reported."
+            )
     if smethod != "off":
         cov = sp.get("per_split_fold_coverage", {})
         print("  fold coverage (unclassified % = residual-leakage ceiling, not fold-held-out):")

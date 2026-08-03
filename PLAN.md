@@ -32,8 +32,10 @@ Two mechanisms deliver this, and they must both be in from the start:
 - **Deterministic cluster→split assignment by hash.** A cluster's split is
   decided by `hash(canonical_member_id + salt)` mapped onto the cumulative
   fractions. New clusters added in a later, larger snapshot get assigned by the
-  same function; a cluster whose canonical key is unchanged never moves. This gives
-  stable splits under dataset growth and prevents train/test contamination on
+  same function; a cluster whose canonical key is unchanged never moves *unless it is
+  merged* — a later bridging multi-chain entry (or a shared fold) can unite two prior
+  components and the absorbed one follows the survivor's split. This gives
+  stable splits under dataset growth and bounds train/test contamination on
   regeneration.
 
   > **Implementation note (Stage 6):** the "never moves" guarantee holds only if
@@ -47,7 +49,8 @@ Two mechanisms deliver this, and they must both be in from the start:
   > components into one whose canonical key is only one of the two; the absorbed
   > component's entries then follow the survivor. So "existing components never move"
   > is **false across a merge**. Without a registry the reassignment is unavoidable and
-  > is now *counted* in `splits.pinned_reassignments` (not hidden). With a registry it
+  > is **not** counted (`pinned_reassignments` is computed only when a registry is used —
+  > an in-place rebuild instead reports it at the entry level). With a registry it
   > is pinned: a component's prior split is matched on *any* key it covers, so a
   > held-out component stays held out across a merge (conflicts resolve
   > `test > val > train`).
@@ -336,17 +339,100 @@ may touch multiple clusters via different chains; all are recorded and union-fin
 merges them into one leakage-safe component (see Stage 5) so split assignment is
 unambiguous.
 
+**Unclustered chains — keyed by sequence, merge-gated by modeled content.** RCSB does not
+cluster very short or unmodeled sequences (a probe found 9-mer peptides unclustered). Such a
+chain is keyed by a hash of its *sequence* (not its entity id) so two entries sharing an
+identical unclustered chain co-key and cannot straddle splits. A *fully*-unclustered entry
+always keys and merges — bounded, since its component can only hold entries that are entirely
+that sequence. But an unclustered chain *inside an otherwise-clustered entry* adds a merge
+edge only when it carries ≥ `MIN_UNCLUSTERED_MERGE_MODELED` **modeled (non-'X')** residues:
+otherwise a promiscuous chain would union every host protein it appears in into a spurious
+mega-component — catastrophic under `hash`, where it lands in a salt-chosen split. The gate
+is on modeled sequence **content** (intrinsic → growth-stable), never on how many components
+a sequence touches (a snapshot-dependent count → would make the split input-dependent).
+
+**MEASURED (2026-07-22 full snapshot, `scripts/measure_unclustered_fanout.py`).** The merge
+fan-out among unclustered partial-entry chains is driven by **unmodeled poly-'X' and
+low-complexity sequence, not length**: the worst seeds are all-'X' chains (max fan-out 429)
+and short/low-complexity runs (`MF`, poly-A: ~120–180), and raw length does **not** separate
+them — a 72-'X' chain still bridges 283 clusters. On the modeled-residue axis there is a
+clean knee: max fan-out collapses **429 / 177 → 2 at ≥ 12 modeled residues** and stays there
+through ≥ 50. So `MIN_UNCLUSTERED_MERGE_MODELED = 12`. (This is a paper finding about the
+PDB's unclustered tail — the promiscuous chains are exactly the ones with no usable
+sequence — not merely a tuning constant.)
+
 **Fold-level structural clustering (`structural_clustering`, opt-in ← *implemented***).
 Sequence clustering misses *structural* redundancy: chains below the identity
 threshold can still share a fold, which a structure→sequence model leaks across
 splits. When set (`cath` | `ecod` | `scop2`), protein entities sharing an RCSB
 structural (super)family are union-merged into the same component **in addition
-to** shared sequence clusters — so a fold cannot straddle train/test. The
+to** shared sequence clusters — so a family *the configured authority classifies* cannot
+straddle train/test (families it does not classify are unconstrained). The
 classifications ride in the snapshot as metadata (`rcsb_polymer_instance_annotation`,
 Stage 1; **no coordinates**). CATH keys on the superfamily code (`1.10.490.10`),
 ECOD/SCOP2 on the family name. Purely additive (only merges, never splits);
-coverage is partial (CATH ~55%, ECOD ~81%, SCOP2 ~52% of chains) so unclassified
-chains fall back to sequence-only. See README "Fold-level leakage control".
+coverage is partial (CATH ~38%, ECOD ~72%, SCOP2 ~48% of chains; union ~78%, measured
+2026-07-22) and falls sharply with deposition recency (97% of ≤2018 entries classified vs
+42% of 2026), so unclassified chains fall back to sequence-only. `"union"` merges on **any** of the three (namespaced) —
+the highest coverage and strictest control the metadata can express, still coordinate-free.
+See README "Fold-level leakage control".
+
+**MEASURED FINDING (2026-07-22 full snapshot): the PDB collapses into one giant component.**
+Two edge types build it: *co-occurrence* (shared 30% cluster, or two chains in one deposited
+assembly) and *fold-identity* (same (super)family). They act **in series**, and co-occurrence
+alone already percolates: with **no** fold edges the giant holds 43.2% of entries. Verified
+mechanism — with fold edges off, `102L` (T4 lysozyme) *heads* that giant and the anti-lysozyme
+Fabs (`1MLC`, `1DQJ`, `1FBI`, … 19 entries) plus the globin–antibody complex `9MKO` are already
+inside it; `101M` (myoglobin) sits in its **own 546-entry component** and is absorbed only when
+a *fold-identity* edge links its globin family to `9MKO`'s globin chain. One antibody complex +
+one fold edge pulls an entire unrelated family in. (The merged giant is *named* `101M_1` purely
+because that is the lexicographic min member key — a naming artifact, not a nucleus. Do **not**
+narrate it as a biological hub; that error has been made three times.)
+
+| authority | entry coverage | components | largest component | residual |
+|---|--:|--:|--:|--:|
+| off (co-occurrence only) | — | 19,395 | 44.1% | 55.93% |
+| *curated from structure* | | | | |
+| scop2 | 61.7% | 11,976 | 79.1% | 20.87% |
+| cath | 65.3% | 7,745 | 87.1% | 12.90% |
+| ecod | 87.1% | 3,560 | 96.8% | 3.15% |
+| union (CATH∪ECOD∪SCOP2) | 92.3% | 3,124 | 97.2% | 2.83% |
+| *HMMs over sequence (no lag)* | | | | |
+| pfam | 66.5% | 9,593 | 76.6% | 23.40% |
+| interpro | 94.9% | 3,544 | 94.7% | 5.28% |
+| **all five (ceiling)** | **98.4%** | **1,678** | **98.6%** | **1.35%** |
+
+Coverage does NOT by itself predict the giant: pfam covers MORE entries than scop2 (66.5 vs
+61.7) yet leaves a SMALLER giant (76.6 vs 79.1) — what matters is how coarse each authority's
+families are. InterPro alone covers more of the PDB (94.9%) than all three structural
+authorities combined (92.3%).
+
+Held-out = min(residual, 20%) up to whole-component granularity; for `off`/`scop2` the 20.0% is
+capped by the **target**, not the collapse — only cath/ecod/union are collapse-limited. Coverage
+does not by itself predict merging: CATH classifies *fewer* chains than SCOP2 (38.1% vs 47.7%)
+yet has a *larger* giant, because what matters is how coarse each authority's families are.
+`config/fold-aware.yaml` selects `scop2` because it merges least and *can* fill 80/10/10 — not
+because it is strongest (it is the weakest of the three).
+
+**Mind the denominator.** SCOP2's 61.7% entry coverage is concentrated in **train** (73.7% of
+train entries classified); the held-out sets are the opposite — **test is only 12.2% classified**
+(2,656/21,691), val 15.0% — because classified entries are exactly the ones that merged into the
+capped giant. So the guarantee covers ~12% of test and is **silent on ~88%**. Scored with ECOD
+(decoupled `fold_benchmark_method`), a SCOP2 split is **98.6% ECOD-fold-*seen* in test**
+(229/16,576) and 98.4% in val (264/16,653) — within ~1pt of the sequence-only MPNN splits this
+project critiques. Fold-aware splitting buys **measurement, not elimination**.
+
+**The tail is the annotation frontier, not verified novelty.** The union holdout is only **3.5%
+fold-classified** (vs 94.9% of train) and **63.1% was released 2023+**; classification rate falls
+97% (≤2018) → 84.9% (2024) → 60.1% (2025) → **41.8% (2026)**. So a strict fold-disjoint holdout is
+disjoint *by ignorance* and is **unstable** — as the databases catch up, held-out entries acquire
+training folds and the residual shrinks. 2.8% is an **upper bound** on future snapshots. The honest
+claim: **even under the field's own classifications, a fold-disjoint 80/10/10 split of the PDB
+barely exists.** `foldseek` would percolate *further* (more edges ⇒ smaller tail, by monotonicity)
+— it would certify the tail, not enlarge it. An external edge-list ingestion path is the route to
+an absolute claim and is **not implemented** (future work). The durable fix is not a better
+partition but a **stratified metric**: report recovery against how much of a structure's fold the
+model has already seen.
 
 **Fold labels are decoupled from fold merging (v0.5.0).** `structural_clustering`
 feeds union-find (it changes the split). The novel-fold benchmark instead reads a
@@ -378,7 +464,7 @@ novel-fold export below.
   independent and registry-free, so `verify` still certifies it. The manifest
   carries `splits.growth_stable` and `stats` prints the pinned / NOT-pinned status.
   The "fold-aware" recipe `structural_clustering: scop2` + `split_strategy: balanced`
-  (`config/fold-aware.yaml`) yields ~80/10/10 by entries with thousands of folds
+  (`config/fold-aware.yaml`) yields ~80/10/10 by entries with 992 distinct SCOP2 families
   held entirely out of train.
 - Stratify the test set by ligand class so SM/metal/nucleotide are all
   represented (LigandMPNN's test sets are deliberately ligand-containing).

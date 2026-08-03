@@ -37,7 +37,7 @@ wsl -d ubuntu bash -lc 'cd ~/projects/IF-Split && export PATH="$HOME/.local/bin:
 uv run ruff check .      # lint (must pass)
 uv run ruff format .     # format
 uv run if-split build --limit 50 --out /tmp/ifs   # dev build (small, live RCSB)
-uv run if-split build --config config/fold-aware.yaml --out /tmp/mc  # fold-honest split (scop2 + balanced)
+uv run if-split build --config config/fold-aware.yaml --out /tmp/mc  # fold-aware split (scop2 + balanced)
 uv run if-split resplit --candidates data/out/candidates.jsonl --config X.yaml --out /tmp/rs  # re-derive Stages 3-7 offline (no RCSB)
 ```
 
@@ -66,17 +66,32 @@ Invariants that must not regress:
   overlap is impossible by construction. This holds for both split strategies
   (`hash` and `balanced`, which only chooses *which* split a whole component lands
   in). `check_no_leakage` is a real invariant (not a tautology) — keep it that way.
+  NB the *fold* half of this reaches only chains the **configured** authority
+  classifies: a `scop2` build leaves ~88% of test entries fold-unconstrained and is
+  still 98.6% ECOD-fold-seen. Never state the fold guarantee without its denominator.
+  The *sequence* half is guaranteed at the level users care about (identical protein
+  chains, not just shared cluster ids) only because every chain with ≥
+  `MIN_UNCLUSTERED_MERGE_MODELED` modeled residues keys by its sequence hash: RCSB's
+  cluster file is **not** identity-complete (identical sequences can carry different
+  cluster ids — this leaked 74 sequences / 497 entries before v0.6.1). Below that gate
+  it is deliberately not guaranteed. Don't "simplify" clustered chains back to cluster-id-only keying.
 - **Growth stability:** `hash` maps a component to `hash(salt + canonical_key)`
   into cumulative fractions, keyed on the global-min member key (not RCSB's volatile
   integer id). A component whose canonical key is unchanged never moves as the
   snapshot grows; the exception is a **merge** — a later bridging multi-chain entry
   (or, with `structural_clustering`, a shared fold) can unite two prior components,
-  and the absorbed one's entries then follow the survivor's split. Without a registry
-  that reassignment is unavoidable (now *reported*, not hidden — the old "hash never
-  moves existing ones" claim was false under merges). A registry pins prior
-  assignments matched on **any** key a component covers, so a held-out component stays
-  held out across a merge; a conflicting merge is resolved `test > val > train` and
-  the override is counted in `splits.pinned_reassignments`. `balanced` additionally
+  and the absorbed one's entries then follow the survivor's split (the old "hash never
+  moves existing ones" claim was false under merges). With a registry this is prevented
+  and reported: it pins prior assignments matched on **any** key a component covers, so a
+  held-out component stays held out across a merge; a conflicting merge is resolved
+  `test > val > train` and each overridden pin is counted in `splits.pinned_reassignments`.
+  Without a registry (the default `hash` path) the reassignment still happens and is NOT
+  counted (`pinned_reassignments` needs a registry). An in-place rebuild instead reports it
+  at the ENTRY level — `_report_rebuild_migration` prints how many prior entries changed
+  split and how many were absorbed into train (hash merges are train-biased: the survivor's
+  bucket, train owns 80%). Aggregate fractions cannot detect it (conserved by construction —
+  ~10% of entries can churn while 80/10/10 barely moves), so the balanced drift warning is a
+  coarse balanced-only signal, NOT the hash-path detector. `balanced` additionally
   needs the registry for baseline stability (its val/test fill boundaries scale with
   total entries): an in-place `balanced` rebuild auto-adopts
   `<out>/splits.registry.json` when the prior `dataset.lock` `config_hash` matches
