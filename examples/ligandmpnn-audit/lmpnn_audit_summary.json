@@ -1,0 +1,272 @@
+{
+  "bridge_leakage": {
+    "off": {
+      "test": {
+        "bridged": 221,
+        "n": 469
+      },
+      "val": {
+        "bridged": 1695,
+        "n": 7205
+      }
+    },
+    "scop2": {
+      "test": {
+        "bridged": 425,
+        "n": 469
+      },
+      "val": {
+        "bridged": 4836,
+        "n": 7205
+      }
+    }
+  },
+  "fold_leakage_test": {
+    "cath": {
+      "classified": 436,
+      "fold_seen": 421,
+      "novel": 15
+    },
+    "combined": {
+      "fold_seen": 467,
+      "n": 469,
+      "novel": 1,
+      "novel_ids": [
+        "1I3J"
+      ],
+      "unclassified": 1
+    },
+    "ecod": {
+      "classified": 451,
+      "fold_seen": 448,
+      "novel": 3
+    },
+    "scop2": {
+      "classified": 398,
+      "fold_seen": 387,
+      "novel": 11
+    }
+  },
+  "fold_leakage_val": {
+    "cath": {
+      "classified": 5370,
+      "fold_seen": 5007,
+      "novel": 363
+    },
+    "combined": {
+      "fold_seen": 6864,
+      "n": 7495,
+      "novel": 57,
+      "novel_ids": [
+        "1CHD",
+        "1G2R",
+        "1IBV",
+        "1NO1",
+        "1Q5Z",
+        "1R8O",
+        "1S2X",
+        "1SR8",
+        "1UJ8",
+        "1UW1",
+        "1XAK",
+        "1XAW",
+        "2APL",
+        "2B1Y",
+        "2D9R",
+        "2ETD",
+        "2FZT",
+        "2P05",
+        "2P09",
+        "2PWW",
+        "2QKD",
+        "2R18",
+        "2XZ2",
+        "3BTP",
+        "3C0F",
+        "3DGL",
+        "3DGM",
+        "3DGN",
+        "3DGO",
+        "3G7C",
+        "3H0N",
+        "3IV1",
+        "3KLU",
+        "3LT8",
+        "3LT9",
+        "3LTA",
+        "3LTB",
+        "3LTC",
+        "3LTD",
+        "3LWT",
+        "3NR5",
+        "3RX6",
+        "4BKW",
+        "4CHE",
+        "4HTE",
+        "4JJA",
+        "4L9U",
+        "4OK9",
+        "4OKQ",
+        "4R7Q",
+        "4RL9",
+        "4RLB",
+        "4YD8",
+        "5M11",
+        "5M1M",
+        "6BAR",
+        "7CI3"
+      ],
+      "unclassified": 574
+    },
+    "ecod": {
+      "classified": 6723,
+      "fold_seen": 6626,
+      "novel": 97
+    },
+    "scop2": {
+      "classified": 3699,
+      "fold_seen": 3451,
+      "novel": 248
+    }
+  },
+  "ligand_context_leakage": {
+    "comp_seen": 222,
+    "comp_total": 494,
+    "fold_class_seen": 530,
+    "fold_class_total": 578
+  },
+  "memorization_pressure_test": {
+    "cath": {
+      "mean": 937.3922018348624,
+      "median": 613.0,
+      "p90": 2134,
+      "zero_pool": 15
+    },
+    "ecod": {
+      "mean": 427.93348115299335,
+      "median": 222,
+      "p90": 897,
+      "zero_pool": 3
+    },
+    "scop2": {
+      "mean": 902.6683417085427,
+      "median": 665.0,
+      "p90": 2157,
+      "zero_pool": 11
+    }
+  },
+  "memorization_pressure_val": {
+    "cath": {
+      "mean": 1024.9156424581006,
+      "median": 259.0,
+      "p90": 3604,
+      "zero_pool": 363
+    },
+    "ecod": {
+      "mean": 518.7319648966235,
+      "median": 258,
+      "p90": 1115,
+      "zero_pool": 97
+    },
+    "scop2": {
+      "mean": 422.3008921330089,
+      "median": 189,
+      "p90": 1257,
+      "zero_pool": 248
+    }
+  },
+  "n_requested": 157485,
+  "n_resolved": 156854,
+  "n_test": 469,
+  "n_train": 148890,
+  "n_val": 7495,
+  "rcsb_30pct_train_overlap": {
+    "test": {
+      "leaky": 220,
+      "n": 469
+    },
+    "val": {
+      "leaky": 1566,
+      "n": 7495
+    }
+  },
+  "test_contamination": {
+    "metal": {
+      "functional": 77,
+      "n": 83,
+      "not_functional": 6,
+      "not_functional_ids": [
+        "1T31",
+        "2CFV",
+        "2NZ6",
+        "3HG9",
+        "3I9Z",
+        "4X68"
+      ],
+      "reasons": {
+        "additive": 3,
+        "counterion": 2,
+        "glycan": 1,
+        "histag_metal": 3,
+        "ligand_affinity": 1,
+        "ligand_investigated": 1,
+        "metal_unbound": 1,
+        "purification_metal_uncorroborated": 2
+      }
+    },
+    "nucleotide": {
+      "functional": 67,
+      "n": 69,
+      "not_functional": 2,
+      "not_functional_ids": [
+        "2ZIO",
+        "3OLT"
+      ],
+      "reasons": {
+        "additive": 2,
+        "glycan": 1,
+        "ligand_affinity": 1,
+        "ligand_investigated": 3
+      }
+    },
+    "small_molecule": {
+      "functional": 311,
+      "n": 317,
+      "not_functional": 6,
+      "not_functional_ids": [
+        "2B4L",
+        "3UEU",
+        "4GNY",
+        "5YFS",
+        "5YFT",
+        "6I67"
+      ],
+      "reasons": {
+        "additive": 9,
+        "counterion": 5,
+        "glycan": 2,
+        "ligand_unbound": 2
+      }
+    }
+  },
+  "test_fold_leakage_by_class": {
+    "metal": {
+      "n": 83,
+      "novel": 0,
+      "seen": 82,
+      "unclassified": 1
+    },
+    "nucleotide": {
+      "n": 69,
+      "novel": 1,
+      "seen": 68,
+      "unclassified": 0
+    },
+    "small_molecule": {
+      "n": 317,
+      "novel": 0,
+      "seen": 317,
+      "unclassified": 0
+    }
+  }
+}

@@ -1,0 +1,236 @@
+{
+  "bridge_leakage": {
+    "off": {
+      "test": {
+        "bridged": 2606,
+        "n": 7444
+      },
+      "val": {
+        "bridged": 2852,
+        "n": 8015
+      }
+    },
+    "scop2": {
+      "test": {
+        "bridged": 5384,
+        "n": 7444
+      },
+      "val": {
+        "bridged": 6391,
+        "n": 8015
+      }
+    }
+  },
+  "fold_leakage_test": {
+    "cath": {
+      "classified": 6048,
+      "fold_seen": 5756,
+      "novel": 292
+    },
+    "combined": {
+      "fold_seen": 7239,
+      "n": 7444,
+      "novel": 38,
+      "novel_ids": [
+        "16VP",
+        "1CHD",
+        "1Q5Z",
+        "1ZJC",
+        "2DLB",
+        "2P64",
+        "2YK4",
+        "3A1B",
+        "3BCY",
+        "3FN2",
+        "3FZX",
+        "3IEZ",
+        "3ISU",
+        "3N6S",
+        "3T4R",
+        "3ZI8",
+        "3ZQN",
+        "3ZQO",
+        "3ZW0",
+        "3ZW1",
+        "3ZW2",
+        "3ZWE",
+        "3ZZV",
+        "4B9I",
+        "4B9J",
+        "4EZA",
+        "4J29",
+        "4JDE",
+        "4L3I",
+        "4L6Y",
+        "4OZK",
+        "4QS4",
+        "4RFX",
+        "5H11",
+        "6CCR",
+        "6G49",
+        "6LP9",
+        "7ALG"
+      ],
+      "unclassified": 167
+    },
+    "ecod": {
+      "classified": 7062,
+      "fold_seen": 6997,
+      "novel": 65
+    },
+    "scop2": {
+      "classified": 4157,
+      "fold_seen": 3991,
+      "novel": 166
+    }
+  },
+  "fold_leakage_val": {
+    "cath": {
+      "classified": 6527,
+      "fold_seen": 6327,
+      "novel": 200
+    },
+    "combined": {
+      "fold_seen": 7850,
+      "n": 8015,
+      "novel": 32,
+      "novel_ids": [
+        "1CGM",
+        "1J3E",
+        "1QLM",
+        "2JEK",
+        "2Q82",
+        "2QT4",
+        "2WP7",
+        "3G27",
+        "3IUU",
+        "3KVP",
+        "3M72",
+        "3ONT",
+        "3PTY",
+        "3SKQ",
+        "4ATS",
+        "4CHE",
+        "4EPZ",
+        "4FYE",
+        "4HTJ",
+        "4JGL",
+        "4JLE",
+        "4LGJ",
+        "4M0M",
+        "4MDW",
+        "4MI7",
+        "4OM2",
+        "4OM3",
+        "4PQZ",
+        "4YTK",
+        "5E9P",
+        "6K4F",
+        "6R7M"
+      ],
+      "unclassified": 133
+    },
+    "ecod": {
+      "classified": 7559,
+      "fold_seen": 7505,
+      "novel": 54
+    },
+    "scop2": {
+      "classified": 5069,
+      "fold_seen": 4963,
+      "novel": 106
+    }
+  },
+  "ligand_context_leakage": {
+    "comp_seen": 5902,
+    "comp_total": 6971,
+    "fold_class_seen": 5940,
+    "fold_class_total": 7939
+  },
+  "memorization_pressure_test": {
+    "cath": {
+      "mean": 1138.787037037037,
+      "median": 527.0,
+      "p90": 3503,
+      "zero_pool": 292
+    },
+    "ecod": {
+      "mean": 570.5198244123478,
+      "median": 246.0,
+      "p90": 1340,
+      "zero_pool": 65
+    },
+    "scop2": {
+      "mean": 761.7260043300457,
+      "median": 311,
+      "p90": 1554,
+      "zero_pool": 166
+    }
+  },
+  "memorization_pressure_val": {
+    "cath": {
+      "mean": 892.7968438792707,
+      "median": 384,
+      "p90": 2224,
+      "zero_pool": 200
+    },
+    "ecod": {
+      "mean": 566.0847995766636,
+      "median": 269,
+      "p90": 1145,
+      "zero_pool": 54
+    },
+    "scop2": {
+      "mean": 511.36713355691455,
+      "median": 288,
+      "p90": 1374,
+      "zero_pool": 106
+    }
+  },
+  "n_requested": 163531,
+  "n_resolved": 162828,
+  "n_test": 7444,
+  "n_train": 147369,
+  "n_val": 8015,
+  "rcsb_30pct_train_overlap": {
+    "test": {
+      "leaky": 2548,
+      "n": 7444
+    },
+    "val": {
+      "leaky": 2777,
+      "n": 8015
+    }
+  },
+  "test_contamination": {
+    "metal": {
+      "functional": 0,
+      "n": 0,
+      "not_functional": 0,
+      "not_functional_ids": [],
+      "reasons": {}
+    },
+    "nucleotide": {
+      "functional": 0,
+      "n": 0,
+      "not_functional": 0,
+      "not_functional_ids": [],
+      "reasons": {}
+    },
+    "small_molecule": {
+      "functional": 0,
+      "n": 0,
+      "not_functional": 0,
+      "not_functional_ids": [],
+      "reasons": {}
+    }
+  },
+  "test_fold_leakage_by_class": {
+    "None": {
+      "n": 7444,
+      "novel": 38,
+      "seen": 7239,
+      "unclassified": 167
+    }
+  }
+}
