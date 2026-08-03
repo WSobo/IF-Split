@@ -10,17 +10,25 @@ five LigandMPNN lists contain versus how many are distinct, and which ids appear
 in more than one list. Two of them (``2zio``, ``3olt``) are in both ``train.json``
 and ``test_nucleotide.json``, i.e. the same entry is trained on and tested on.
 
-Sources (both public, no credentials):
+``--check-nucleotide`` adds one RCSB metadata call that asks whether each entry in
+``test_nucleotide.json`` actually contains a nucleic acid. It does not for ``2zio``
+(pyrrolysyl-tRNA synthetase with a Lys-AMP analogue, no tRNA in the crystal) or
+``3olt`` (COX-2 with arachidonic acid, nothing nucleotide about it), and it does
+for all 72 others. Those are the same two entries that are also in ``train.json``,
+which is why they are worth naming: three unrelated checks single out one pair.
+
+Sources (all public, no credentials):
   LigandMPNN  github.com/dauparas/LigandMPNN/training/*.json
   ProteinMPNN files.ipd.uw.edu/pub/training_sets/pdb_2021aug02_sample.tar.gz
                 (~47 MB; only list.csv + {valid,test}_clusters.txt are read, and
                  they are the full split, not a sample)
+  RCSB        data.rcsb.org/graphql (only with --check-nucleotide; metadata only)
 
 Usage:
   uv run python scripts/count_published_splits.py
   uv run python scripts/count_published_splits.py --lmpnn-dir path/to/jsons \
       --pmpnn-tar path/to/pdb_2021aug02_sample.tar.gz   # offline, from local copies
-  uv run python scripts/count_published_splits.py --skip-pmpnn                # JSONs only
+  uv run python scripts/count_published_splits.py --skip-pmpnn --check-nucleotide
   uv run python scripts/count_published_splits.py --json counts.json          # machine-readable
 """
 
@@ -83,8 +91,7 @@ def _load_lmpnn(local: Path | None) -> dict[str, list[str]]:
     return out
 
 
-def count_lmpnn(local: Path | None) -> dict[str, Any]:
-    lists = _load_lmpnn(local)
+def count_lmpnn(lists: dict[str, list[str]]) -> dict[str, Any]:
     sizes = {f: len(v) for f, v in lists.items()}
     all_ids = [i for v in lists.values() for i in v]
     counts = Counter(all_ids)
@@ -121,6 +128,59 @@ def count_lmpnn(local: Path | None) -> dict[str, Any]:
         # ids are lowercase in the released files; the audit upper-cases before
         # querying RCSB, which is why a case-sensitive check would miss these
         "ids_are_lowercase": all(i == i.lower() for i in all_ids),
+    }
+
+
+NUCLEIC_TYPES = {"DNA", "RNA", "NA-hybrid"}
+RCSB_GRAPHQL = "https://data.rcsb.org/graphql"
+NUCLEOTIDE_LIST = "test_nucleotide.json"
+
+
+def check_nucleotide_set(lists: dict[str, list[str]]) -> dict[str, Any]:
+    """Does every entry in the nucleotide test set actually contain a nucleic acid?
+
+    The conditioning signal LigandMPNN is scored on for this set is the nucleic acid
+    in the structure, so an entry without one contributes no nucleotide context at
+    all, whatever its ligands look like.
+    """
+    ids = sorted({i.upper() for i in lists.get(NUCLEOTIDE_LIST, [])})
+    if not ids:
+        return {}
+    query = (
+        f"{{ entries(entry_ids: {json.dumps(ids)}) {{ rcsb_id struct {{ title }} "
+        "polymer_entities { entity_poly { rcsb_entity_polymer_type } } "
+        "nonpolymer_entities { nonpolymer_comp { chem_comp { id name } } } } }"
+    )
+    with httpx.Client(timeout=180, follow_redirects=True) as client:
+        r = client.post(RCSB_GRAPHQL, json={"query": query})
+        r.raise_for_status()
+        entries = r.json()["data"]["entries"]
+
+    without = []
+    for e in entries:
+        types = {
+            (pe.get("entity_poly") or {}).get("rcsb_entity_polymer_type")
+            for pe in (e.get("polymer_entities") or [])
+        }
+        if types & NUCLEIC_TYPES:
+            continue
+        ligands = [
+            (ne["nonpolymer_comp"]["chem_comp"]["id"], ne["nonpolymer_comp"]["chem_comp"]["name"])
+            for ne in (e.get("nonpolymer_entities") or [])
+        ]
+        without.append(
+            {
+                "entry_id": e["rcsb_id"],
+                "title": (e.get("struct") or {}).get("title", ""),
+                "polymer_types": sorted(t for t in types if t),
+                "ligands": ligands,
+            }
+        )
+    return {
+        "listed": len(ids),
+        "resolved": len(entries),
+        "unresolved": sorted(set(ids) - {e["rcsb_id"] for e in entries}),
+        "without_nucleic_acid": without,
     }
 
 
@@ -195,12 +255,18 @@ def main() -> None:
     ap.add_argument("--lmpnn-dir", type=Path, default=None, help="local dir of split JSONs")
     ap.add_argument("--pmpnn-tar", type=Path, default=None, help="local pdb_2021aug02 tarball")
     ap.add_argument("--skip-pmpnn", action="store_true", help="skip the 47 MB download")
+    ap.add_argument(
+        "--check-nucleotide",
+        action="store_true",
+        help="ask RCSB whether each nucleotide-test entry contains a nucleic acid",
+    )
     ap.add_argument("--json", type=Path, default=None, help="also write the counts here")
     args = ap.parse_args()
 
     report: dict[str, Any] = {}
 
-    lm = count_lmpnn(args.lmpnn_dir)
+    lists = _load_lmpnn(args.lmpnn_dir)
+    lm = count_lmpnn(lists)
     report["ligandmpnn"] = lm
     print(f"LigandMPNN ({LMPNN_RAW.split('//')[1]}) -- {len(lm['sizes'])} lists")
     for fname in sorted(lm["sizes"]):
@@ -225,6 +291,22 @@ def main() -> None:
     )
     if not lm["ids_are_lowercase"]:
         print("  note: ids are not uniformly lowercase in this copy")
+
+    if args.check_nucleotide:
+        nuc = check_nucleotide_set(lists)
+        report["nucleotide_set_check"] = nuc
+        if nuc:
+            missing = nuc["without_nucleic_acid"]
+            print(
+                f"\n  {NUCLEOTIDE_LIST}: {len(missing)} of {nuc['resolved']} entries contain"
+                " no DNA/RNA/hybrid chain"
+            )
+            for m in missing:
+                print(f"    {m['entry_id']}  polymers={m['polymer_types']}  {m['title'][:70]}")
+                for cid, name in m["ligands"]:
+                    print(f"        {cid}: {name[:74]}")
+            if nuc["unresolved"]:
+                print(f"    unresolved by RCSB: {', '.join(nuc['unresolved'])}")
 
     if not args.skip_pmpnn:
         pm = count_pmpnn(args.pmpnn_tar)
