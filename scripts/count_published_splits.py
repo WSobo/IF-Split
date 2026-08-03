@@ -12,7 +12,7 @@ and ``test_nucleotide.json``, i.e. the same entry is trained on and tested on.
 
 ``--check-nucleotide`` adds one RCSB metadata call that asks whether each entry in
 ``test_nucleotide.json`` actually contains a nucleic acid. It does not for ``2zio``
-(pyrrolysyl-tRNA synthetase with a Lys-AMP analogue, no tRNA in the crystal) or
+(pyrrolysyl-tRNA synthetase with a Lys-AMP analog, no tRNA in the crystal) or
 ``3olt`` (COX-2 with arachidonic acid, nothing nucleotide about it), and it does
 for all 72 others. Those are the same two entries that are also in ``train.json``,
 which is why they are worth naming: three unrelated checks single out one pair.
