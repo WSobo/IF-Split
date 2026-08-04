@@ -20,15 +20,20 @@ Signals used (all from the Data API, no coordinates):
                             protein (buffer gate; bond-based, misses non-covalent)
   - ``investigated_comp_ids`` : RCSB curated it a "subject of investigation" — a
                             ligand of interest; catches non-covalent cofactors
-                            (FAD/NAD/FMN/NADP, inhibitors) bound_components misses
+                            (FAD/NAD/FMN/NADP, inhibitors) bound_components misses.
+                            Outranks the additive blacklist (a curator who read the
+                            deposition beats a comp-id rule, and a wrong ``artifact``
+                            is unrecoverable) but NOT the glycan gate, where the flag
+                            is 85.7% prevalent and a wrong ``glycan`` is opt-in
+                            recoverable
   - ``affinity_comp_ids`` : a measured binding affinity exists (strong positive)
   - chem-comp ``formula`` : metal-only vs organic
   - chem-comp ``type``    : RCSB's CCD classification; a "*saccharide*" type marks a
                             carbohydrate (decorative glycosylation or a sugar-detergent)
                             -> reported ``glycan`` rather than a small-molecule target,
-                            unless a measured affinity vouches for it (SOI is noisy for
-                            glycans, so it does not rescue; a real lectin ligand is an
-                            opt-in target via the glycan tier)
+                            unless a measured affinity vouches for it (SOI is 85.7%
+                            prevalent on sugars, so it does not rescue; a real lectin
+                            ligand is an opt-in target via the glycan tier)
   - His-tag + Ni/Co       : the IMAC purification-artifact pattern (existing rule)
   - phasing metals        : monatomic HG/AU/PT/PB/TL/lanthanide heavy-atom derivative
                             soaks (SAD/MAD/MIR) are demoted to *ambiguous* (reported,
@@ -354,20 +359,38 @@ def tier_component(
     # branch. It likewise rescues a genuine carbohydrate ligand (a measured sugar).
     if has_affinity:
         return TIER_FUNCTIONAL, "ligand_affinity", CLASS_SMALL_MOLECULE
-    if cid in blacklist:
-        return TIER_ARTIFACT, "additive", None
     # A carbohydrate (RCSB CCD type "*saccharide*") with no measured affinity is
-    # decorative glycosylation or a sugar-detergent, not a ligand pocket. RCSB's SOI
-    # flag is noisy for glycans -- it flags glycosylation and detergents (verified:
-    # ~85% of glycan instances are SOI-flagged) -- so it does NOT rescue here. Report
-    # as glycan; a genuine lectin/glycosidase ligand is recoverable via the glycan
-    # tier (an opt-in conditioning target).
+    # decorative glycosylation or a sugar-detergent, not a ligand pocket. RCSB's SOI flag
+    # does NOT rescue it, because for sugars the flag is nearly uninformative: measured on
+    # a 3,000-entry sample, 85.7% of saccharide comps (209/244) carry it -- 106 of those
+    # are NAG, i.e. N-glycosylation. Letting SOI override here would not refine the gate,
+    # it would delete it. And there is little to gain: `glycan` is TIER_AMBIGUOUS, so the
+    # component is still emitted to targets.jsonl and one `include_ambiguous=True` away
+    # (build_targets in manifest.py), whereas a wrong `additive` below is TIER_ARTIFACT
+    # and never emitted at all. Errors here are recoverable; errors there are not, which
+    # is why SOI outranks the blacklist but not this. A real lectin/glycosidase ligand
+    # with a measured affinity was already rescued above.
     if is_glycan(comp):
         return TIER_AMBIGUOUS, "glycan", None
-    # RCSB-curated "subject of investigation": catches non-covalently bound
-    # cofactors/inhibitors (FAD/NAD/FMN/NADP, ...) that bond-based bound_components misses.
+    # RCSB-curated "subject of investigation": a human curator read the deposition and
+    # named this comp the ligand it is about. It catches non-covalently bound
+    # cofactors/inhibitors (FAD/NAD/FMN/NADP, ...) that bond-based bound_components
+    # misses, and it outranks the additive blacklist below.
+    #
+    # It used to sit under the blacklist, on the argument that the flag is noisy. On the
+    # blacklist population it is not -- only 4.1% of blacklisted comps (87/2,114) carry
+    # it -- and that ordering was verified wrong where it matters: every comp id is an
+    # additive *somewhere*, so a blanket blacklist convicts the depositions where the
+    # additive is the point (3UEU, 4GNY: lauric acid and dodecyl sulfate in the
+    # beta-lactoglobulin calyx -- a lipocalin's function IS binding fatty acids and
+    # detergents, and TIER_ARTIFACT would discard them outright). Curation is the better
+    # prior than the comp id when the two disagree and the cost of being wrong is
+    # unrecoverable. See scripts/verify_flagged_ligands.py, which checks these calls
+    # against the deposited coordinates.
     if investigated:
         return TIER_FUNCTIONAL, "ligand_investigated", CLASS_SMALL_MOLECULE
+    if cid in blacklist:
+        return TIER_ARTIFACT, "additive", None
     if bound:
         return TIER_FUNCTIONAL, "ligand_bound", CLASS_SMALL_MOLECULE
     return TIER_AMBIGUOUS, "ligand_unbound", None

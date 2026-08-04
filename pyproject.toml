@@ -1,6 +1,6 @@
 [project]
 name = "if-split"
-version = "0.6.1"
+version = "0.6.2"
 description = "Reproducible, date-pinned, ligand-aware train/val/test splitter for the PDB (LigandMPNN-style)."
 readme = "README.md"
 requires-python = ">=3.11"

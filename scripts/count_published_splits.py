@@ -21,7 +21,9 @@ naming: three unrelated checks single out one pair.
 The metal and small-molecule sets pass the same check, so this is a defect in one
 list rather than a fault in how all three were assembled. Note the check is weak by
 design -- it asks only whether the class is present, not whether it is functional,
-which is the ligand tiering's job and a question 12 further entries fail.
+which is the ligand tiering's job and a question 5 further metal entries fail (see
+scripts/verify_flagged_ligands.py, which re-checks every tiering flag against the
+deposited coordinates).
 
 Sources (all public, no credentials):
   LigandMPNN  github.com/dauparas/LigandMPNN/training/*.json
@@ -360,8 +362,9 @@ def main() -> None:
         print(
             "    NB 'clean' here means present, not functional. It is the weaker question:\n"
             "    the metal set passes this entry for entry and is still the most contaminated\n"
-            "    of the three (6 of 83 adventitious). Run scripts/audit_ligandmpnn_split.py\n"
-            "    for the tiering that asks whether a site is real."
+            "    of the three (5 of 83 adventitious). Run scripts/audit_ligandmpnn_split.py\n"
+            "    for the tiering that asks whether a site is real, then\n"
+            "    scripts/verify_flagged_ligands.py to check its flags against the coordinates."
         )
 
     if not args.skip_pmpnn:

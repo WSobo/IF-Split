@@ -183,12 +183,16 @@ def test_uninvestigated_unbound_ligand_stays_ambiguous():
     assert res["tiers"]["STI"]["tier"] == TIER_AMBIGUOUS
 
 
-def test_investigated_buffer_still_artifact():
-    # A blacklisted additive is an artifact even if (oddly) flagged investigated:
-    # the additive gate precedes the SOI signal.
+def test_investigated_additive_is_rescued_soi_beats_blacklist():
+    # SOI outranks the blacklist: a curator who read the deposition beats a comp-id
+    # rule. Every comp is an additive somewhere, so a blanket blacklist convicts the
+    # depositions where the "additive" IS the ligand (3UEU/4GNY: lauric acid and
+    # dodecyl sulfate in the beta-lactoglobulin calyx).
     rec = _record([("GOL", "C3 H8 O3")], investigated=["GOL"])
     res = classify_components(rec, _cfg())
-    assert res["tiers"]["GOL"]["tier"] == TIER_ARTIFACT
+    assert res["tiers"]["GOL"]["tier"] == TIER_FUNCTIONAL
+    assert res["tiers"]["GOL"]["reason"] == "ligand_investigated"
+    assert res["small_molecules"] == ["GOL"]
 
 
 def test_investigated_nickel_corroborates_not_artifact():
@@ -242,8 +246,11 @@ def test_bound_glycan_is_glycan_not_small_molecule():
 
 
 def test_investigated_glycan_is_still_glycan_soi_does_not_rescue():
-    # RCSB's SOI flag is noisy for carbohydrates (it flags glycosylation + detergents),
-    # so an SOI-only glycan is NOT rescued -> stays glycan, not a small-molecule target.
+    # SOI outranks the additive blacklist but NOT the glycan gate. On sugars the flag
+    # is nearly uninformative (85.7% of saccharide comps carry it, 106/209 of them NAG
+    # glycosylation), so letting it override would delete the gate rather than refine
+    # it -- and a wrong `glycan` costs little, since TIER_AMBIGUOUS still reaches
+    # targets.jsonl as an opt-in target. Only a measured affinity rescues a sugar.
     rec = _record(
         [("MAN", "C6 H12 O6")],
         bound=["MAN"],

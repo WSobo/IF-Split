@@ -144,7 +144,8 @@ class Config(BaseModel):
     #   "union" merges on any of CATH/ECOD/SCOP2 — the structural ceiling.
     #   "pfam" / "interpro" merge on HMM domain families instead. These are derived from
     #     SEQUENCE, so they carry no classification lag: on 2026-07-22 InterPro covers
-    #     89.8% of protein entities vs 38.1/71.8/47.7% for CATH/ECOD/SCOP2.
+    #     89.8% of protein entities vs 41.1/77.4/51.4% for CATH/ECOD/SCOP2 (83.9%
+    #     for their union). All per protein entity — see the denominator note in rcsb.py.
     #   "all" merges on all five — the true metadata ceiling, and the only setting under
     #     which a holdout is disjoint by evidence rather than by missing annotation.
     # Note "union"/"all" leave a thin tail (2.83% / 1.35% of entries on 2026-07-22), so

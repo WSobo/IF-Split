@@ -54,10 +54,17 @@ _RETRY_STATUS = {429, 500, 502, 503, 504}
 #     RCSB, so no separate UniProt dependency and it rides in the locked snapshot.
 #     Its `annotation_id` additionally carries the Pfam (PF…) / InterPro (IPR…) family
 #     accessions, which Stage 5 can merge on. These are HMMs over SEQUENCE, so unlike
-#     CATH/ECOD/SCOP2 they carry no curation lag — measured on 2026-07-22, InterPro
-#     covers 89.8% of protein entities against 38.1/71.8/47.7% for CATH/ECOD/SCOP2 —
+#     CATH/ECOD/SCOP2 they carry no RETROSPECTIVE lag — measured on 2026-07-22, InterPro
+#     covers 89.8% of protein entities against 41.1/77.4/51.4% for CATH/ECOD/SCOP2
+#     (83.9% for their union; all five denominated the same way — see the NB below) —
 #     and they see remote homology below the 30% identity a sequence clusterer can.
 #     Fetching the id costs one extra field on a request we already make.
+#     NB DENOMINATOR: all six figures are per PROTEIN polymer entity (437,572 on
+#     2026-07-22). Denominating over ALL polymer entities (471,848) silently folds in
+#     18,787 DNA + 15,215 RNA + 263 NA-hybrid entities that CATH/ECOD/SCOP2 can never
+#     classify, which reads as 38.1/71.8/47.7% (union 77.8) and understates every
+#     structural authority by 3-6 points. Those were the figures published through
+#     v0.6.1; scripts/eval_structural_clustering.py has always denominated correctly.
 #   - rcsb_polymer_instance_annotation (CATH/ECOD/SCOP2, per chain): RCSB's
 #     precomputed structural classification. The homologous-superfamily key it
 #     carries lets Stage 5 union same-fold entities across sequence clusters for

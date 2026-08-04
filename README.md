@@ -77,9 +77,10 @@ with no classification simply contributes no structural edge. `if-split stats`
 reports how many components the structural pass folded together, so the effect is
 always measurable (`scripts/eval_structural_clustering.py` compares the methods).
 
-Coverage is partial by nature: CATH ≈ 38%, ECOD ≈ 72%, SCOP2 ≈ 48% of protein
-chains are classified (77.8% for their union; measured on the full 2026-07-22
-snapshot), and coverage falls sharply for recent depositions — 97% of entries
+Coverage is partial by nature: CATH ≈ 41%, ECOD ≈ 77%, SCOP2 ≈ 51% of protein
+entities are classified (83.9% for their union; measured on the full 2026-07-22
+snapshot — one entity per distinct sequence, *not* per chain instance), and
+coverage falls sharply for recent depositions — 97% of entries
 released through 2018 are classified, but only 60% of 2025 and 42% of 2026 ones.
 The rest fall back to sequence-only. Chains with no classification are held out by sequence
 only, so their fold-level hold-out is not guaranteed — the unclassified fraction
@@ -425,10 +426,26 @@ NAG/BMA/MAN/…, and sugar-detergents like LMT) is overwhelmingly decorative
 glycosylation or a purification detergent, not a site an inverse-folding model
 conditions on. So a carbohydrate is tiered `glycan` (reported, not a small-molecule
 target) unless it has a *measured binding affinity* — RCSB's `is_subject_of_investigation`
-flag is too noisy for sugars (it flags glycosylation and detergents), so it doesn't
-rescue here. A genuine lectin/glycosidase ligand is recoverable as an opt-in target
-(`include_ambiguous=True`). Real cofactors (ATP, NAD, HEM, FAD) and structural lipids
-(cardiolipin, phosphatidyl-*) are `non-polymer`, not saccharides, so they're untouched.
+(SOI) flag is too prevalent on sugars to rescue here (see below). A genuine
+lectin/glycosidase ligand is recoverable as an opt-in target (`include_ambiguous=True`).
+Real cofactors (ATP, NAD, HEM, FAD) and structural lipids (cardiolipin, phosphatidyl-*)
+are `non-polymer`, not saccharides, so they're untouched.
+
+**Curation beats a comp-id rule — where being wrong is expensive.** Since v0.6.2 the SOI
+flag outranks the *additive blacklist* (order: affinity → glycan → SOI → blacklist). Every
+comp id is an additive *somewhere*, so a blanket blacklist convicts exactly the
+depositions where the additive is the point — lauric acid and dodecyl sulfate bound in the
+β-lactoglobulin calyx, since a lipocalin's function **is** binding fatty acids and
+detergents. The flag deliberately does **not** outrank the glycan gate, because the two
+gates differ on both axes that matter (3,000-entry stride sample, 2026-08 snapshot):
+
+| gate | SOI prevalence | a wrong call is |
+|---|---|---|
+| additive blacklist | 4.1% (87/2,114) | `artifact` — **never** reaches `targets.jsonl` |
+| glycan | 85.7% (209/244; 106 are NAG) | `ambiguous` — emitted, one `include_ambiguous=True` away |
+
+So SOI is used where it carries signal and where being wrong is unrecoverable, and kept
+out where it carries almost none and being wrong costs a flag rather than the data.
 
 ### Test-set representation
 
