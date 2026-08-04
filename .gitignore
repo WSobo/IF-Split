@@ -23,6 +23,7 @@ data/domain-annotations-*.jsonl
 # here would otherwise commit a ~471 MB candidates file.
 data/zenodo-*/*
 !data/zenodo-*/README.md
+!data/zenodo-*/DESCRIPTION.txt
 !data/zenodo-*/SHA256SUMS
 
 # Build artifacts. The split itself is tiny (train/val/test.json + per-class test

@@ -2,6 +2,11 @@
 
 DOI: [10.5281/zenodo.21782554](https://doi.org/10.5281/zenodo.21782554)
 
+> **Depositing?** Paste `DESCRIPTION.txt` into Zenodo's description box. It is the
+> same content as this file with no Markdown, no tables and no column alignment, so
+> it reads correctly whether the box renders in a proportional or monospace font.
+> This `README.md` is for repository readers.
+
 The metadata snapshot and split behind *Fold Leakage in Inverse-Folding Benchmarks,
 and the Limit on Fixing It: Auditing the ProteinMPNN and LigandMPNN Splits*.
 

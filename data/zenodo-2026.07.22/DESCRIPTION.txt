@@ -1,0 +1,91 @@
+The pinned PDB metadata snapshot and train/validation/test split behind the preprint
+"Fold Leakage in Inverse-Folding Benchmarks, and the Limit on Fixing It: Auditing the
+ProteinMPNN and LigandMPNN Splits".
+
+Everything here is metadata only: sequences, sequence-cluster memberships, fold and
+domain-family assignments, and ligand signals. No structure coordinates. That is the
+point of the method, since the split is computed without downloading a single mmCIF
+file, which makes it megabytes of JSON rather than a terabyte of structures.
+
+Code: https://github.com/WSobo/IF-Split (MIT license, tag v0.6.1)
+
+
+CONTENTS
+
+candidates-annotated.jsonl (471 MB) - the pinned snapshot. 225,653 PDB entries, one
+JSON record each, including Pfam and InterPro domain families.
+
+dataset.lock (3.2 MB) - pins the candidate set by sha256, the full configuration, and
+the hash of the split output.
+
+manifest.json (5.4 KB) - the reported statistics for this split.
+
+train.json, val.json, test.json (1.7 MB total) - the split itself, as lists of PDB
+entry ids.
+
+test/metal_test.json, test/nucleic_acid_test.json, test/small_molecule_test.json - the
+ligand-class-stratified test sets.
+
+config.yaml (890 B) - the exact configuration that produced this split. Its
+config_hash is f7d4203586df3dc7b10d2948e76d20d8, which dataset.lock also records.
+
+SHA256SUMS - checksums for everything above.
+
+
+REPRODUCING THE SPLIT
+
+  pip install if-split==0.6.1
+  if-split resplit --candidates candidates-annotated.jsonl --config config.yaml --out ./out
+  if-split verify dataset.lock --candidates candidates-annotated.jsonl
+
+The last command re-derives the split offline, with no network access, and checks it
+against the lock. It should print:
+
+  OK: reproduced exactly (225653 entries; candidates + split verified).
+
+It exits non-zero and prints "DRIFT detected" if either the snapshot or the derived
+split differs, so it is safe to use as a continuous-integration gate.
+
+
+THE SPLIT
+
+Merging on all five authorities (CATH, ECOD, SCOP2, Pfam, InterPro) with the
+data-derived "maximal" strategy:
+
+  train: 213,890 entries, in 1 leakage-safe component
+  validation: 1,467 entries, in 813 components
+  test: 1,465 entries, in 864 components
+
+Training is a single component. That is not a configuration choice, it is the finding.
+Merging entities that share a family collapses the PDB into one component holding 98.6%
+of entries, so at most 1.35% can be held out at the fold level, and this split takes
+essentially all of it.
+
+Of the 2,932 held-out entries, 888 are certified novel: they carry a family under at
+least one of the five authorities and share none of them with training. The remaining
+2,044 carry no annotation under any authority. They are fold-disjoint but unverifiable,
+and are reported separately rather than counted as novel.
+
+
+CAVEATS WORTH READING FIRST
+
+Only the annotated snapshot is included, deliberately. An unannotated candidates file
+carries no Pfam or InterPro families, cannot reproduce any of the result above, and
+fails verification against this lock.
+
+The analysis is snapshot-dependent in a known direction. CATH, ECOD and SCOP2 are
+curated retrospectively from solved structures, so their coverage grows over time. As
+they annotate the recent PDB, more chains acquire merge edges and the fold-disjoint
+residual shrinks. The 1.35% here is an upper bound on what a later snapshot will yield.
+
+Domain-family disjointness is not fold disjointness. Sharing an InterPro family is a
+claim about a domain rather than about a fold. The holdout is disjoint under the
+criteria named above; residual leakage below those criteria is bounded and disclosed,
+not zero.
+
+
+CITATION
+
+Cite the preprint for the analysis and this DOI for the snapshot. The lock embeds the
+full configuration, so anyone holding only dataset.lock can recover the exact settings
+without this description.
