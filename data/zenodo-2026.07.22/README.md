@@ -1,5 +1,7 @@
 # IF-Split pinned PDB snapshot, 2026-07-22
 
+DOI: [10.5281/zenodo.21782554](https://doi.org/10.5281/zenodo.21782554)
+
 The metadata snapshot and split behind *Fold Leakage in Inverse-Folding Benchmarks,
 and the Limit on Fixing It: Auditing the ProteinMPNN and LigandMPNN Splits*.
 
