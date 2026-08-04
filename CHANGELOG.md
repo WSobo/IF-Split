@@ -7,7 +7,52 @@ follow [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 The **split is always computed from metadata + sequences only** — `build` never
 downloads structure coordinates. That invariant holds across every release below.
 
-## [0.6.1] — unreleased (prepared 2026-07-24; not yet tagged)
+## [0.6.2] — unreleased (2026-08-03)
+
+Class labels change (a rescued additive/glycan now sets `small_molecule`), so this needs a
+new version for the same reason 0.6.1 did: same `config_hash`, different code, different
+output. Split *assignment* is untouched — tiers only ever set labels, never drop entries —
+so no partition moves and no leakage invariant is affected.
+
+### Changed
+
+- **RCSB's curated `is_subject_of_investigation` (SOI) flag now outranks the additive
+  blacklist** in Stage 4 (`ligands.py`). It does **not** outrank the glycan gate; the new
+  order is affinity → glycan → SOI → blacklist. Previously both comp-id rules fired before
+  SOI, on the argument that the flag is noisy. Checking the tier's own output against
+  deposited coordinates showed that convicts the depositions where the "additive" *is* the
+  ligand: lauric acid and dodecyl sulfate in the β-lactoglobulin calyx (`3UEU`, `4GNY` — a
+  lipocalin's function is binding fatty acids and detergents). Both were among six
+  LigandMPNN small-molecule test entries the tier wrongly flagged as contaminated.
+
+  The two gates are treated differently because their error costs and their noise rates run
+  in opposite directions, measured on a 3,000-entry stride sample:
+
+  | gate | SOI prevalence | a wrong call is |
+  |---|---|---|
+  | additive blacklist | 4.1% (87/2,114) | `artifact` — **never** emitted to `targets.jsonl` |
+  | glycan | 85.7% (209/244, 106 of them NAG) | `ambiguous` — emitted, one `include_ambiguous=True` away |
+
+  So SOI buys the most where it is most informative, and is kept out of the gate where it
+  is nearly uninformative and where being wrong costs little. `5YFS`/`5YFT`
+  (ribose-1,5-bisphosphate, a phosphorylated sugar substrate with a saccharide CCD type)
+  therefore stay tiered `glycan` — reported and recoverable, not discarded.
+
+### Added
+
+- **`scripts/verify_flagged_ligands.py`** — re-checks every ligand-tiering flag against the
+  deposited mmCIF (contacts ≤2.8 Å for metals, ≤4.0 Å for organics; coordinating residues
+  inside a terminal poly-His run are marked `[tag]`). A *validation* script only: `build`
+  still never downloads coordinates. This is what caught the ordering bug above, and what
+  cleared `3I9Z` — its Cu(I) sits 2.25/2.29 Å from the CxxC thiolates of a copper chaperone,
+  and was called `metal_unbound` only because that deposition carries no connectivity
+  records for the bond-based signal to read. Two of the six small-molecule false positives
+  (`2B4L`, `6I67`) share that blind spot and are **not** fixed by this release: they carry
+  no SOI flag at all, so no metadata signal reaches them. Net: of the six, two are fixed in
+  code, two are `glycan`-tiered by design (recoverable), and two are a disclosed limit of
+  the metadata-only approach.
+
+## [0.6.1] — 2026-08-03 (tagged `v0.6.1`, merge b8f6646)
 
 Split output changes (the unclustered-chain keying below), so this **must** carry a new
 version even pre-release: two builds with the same `config_hash` but different code would

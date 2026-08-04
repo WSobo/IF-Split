@@ -409,7 +409,7 @@ authorities combined (92.3%).
 
 Held-out = min(residual, 20%) up to whole-component granularity; for `off`/`scop2` the 20.0% is
 capped by the **target**, not the collapse — only cath/ecod/union are collapse-limited. Coverage
-does not by itself predict merging: CATH classifies *fewer* chains than SCOP2 (38.1% vs 47.7%)
+does not by itself predict merging: CATH classifies *fewer* protein entities than SCOP2 (41.1% vs 51.4%)
 yet has a *larger* giant, because what matters is how coarse each authority's families are.
 `config/fold-aware.yaml` selects `scop2` because it merges least and *can* fill 80/10/10 — not
 because it is strongest (it is the weakest of the three).

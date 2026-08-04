@@ -43,7 +43,8 @@ We audit **both** held-out sets, because they fail differently (see below):
 | Co-clusters with train (**independent 30 %** clustering) | 20.9 % | 46.9 % | 34.6 % | 34.2 % |
 
 LigandMPNN test **(fold × ligand-class)** contexts also in training: **91.7 %**.
-Metal-test contamination (IF-Split tiering): **6 / 83 (7.2 %)** flagged non-functional.
+Metal-test contamination (IF-Split tiering, then checked against the deposited
+coordinates): 6 flagged, **5 / 83 (6.0 %) confirmed** non-functional.
 
 **The one-sentence version:** *the sets on which these models are selected and
 reported hold out essentially zero folds — the "novel-fold" fraction is 0.2–0.8 %
@@ -188,7 +189,7 @@ composition, and the ligand tiering (§F).
 list rather than a claim about all three. Read "pass" narrowly: this asks only
 whether the class is *present*. The metal set passes it entry for entry and is
 still the most contaminated of the three once you ask whether the metal is a real
-site (6/83 adventitious, §F).
+site (5/83 adventitious, §F).
 
 | set | must contain | checked | result |
 |---|---|--:|---|
@@ -219,12 +220,52 @@ the tool in general.
 ### F. Test-set contamination (metal)
 
 IF-Split's metadata ligand-tiering flags **6 of the 83** LigandMPNN metal-test
-structures as *not* a functional metal site: **2CFV, 2NZ6, 3HG9** are Ni chelated by
-a poly-His purification tag (the classic IMAC artifact — the very blemish the
-LigandMPNN metal set is known for, here sitting inside the **test** set the 77.5 %
-metal recovery is computed on); **1T31** (lone Co) and **4X68** (lone Ni) are
-uncorroborated purification metals; **3I9Z** is an unbound Cu. Small-molecule and
-nucleotide test sets are cleaner (1.9 % and 2.9 %).
+structures as *not* a functional metal site. The tiering is metadata-only, so every
+flag is a proxy; `scripts/verify_flagged_ligands.py` re-checks each one against the
+deposited coordinates (the only place in this audit that reads a structure). **Five
+of the six hold.**
+
+| entry | tiering said | coordinates say | verdict |
+|---|---|---|---|
+| `2CFV` | His-tag Ni | Ni ligated by **tag** His, 1.97 / 2.19 Å | confirmed |
+| `2NZ6` | His-tag Ni | Ni ligated by **six tag** His, 1.91–2.39 Å | confirmed |
+| `3HG9` | His-tag Ni | only contact ≤2.8 Å is *native* His31 (2.74 Å); tag 3.7 Å away | adventitious (PilM is an actin-fold pilus protein), but **not** tag-ligated |
+| `1T31` | uncorroborated Co | His/Glu at 2.07 / 2.08 Å — on a serine protease | confirmed |
+| `4X68` | uncorroborated Ni | Asp/His at 2.32–2.76 Å — on a serine β-lactamase | confirmed |
+| `3I9Z` | unbound Cu | Cu(I) **2.25 / 2.29 Å from the CxxC thiolates** | **withdrawn** |
+
+`3I9Z` is *Bacillus subtilis* CopZ, a copper chaperone holding its cargo. RCSB
+records no bound component for it only because the deposition carries no
+connectivity records at all, so the bond-based signal has nothing to read.
+
+The measured distances behind both tables are archived in
+[`flagged_ligand_verification.json`](flagged_ligand_verification.json) — every
+component of all 14 entries, not just the flagged ones, since a Stage 4 gate-order
+change moves components in and out of the flagged set while the distances never move.
+Its `_provenance` block stamps the `ifsplit` version that produced the `tier`/`reason`
+fields (the only part of the file that is not a property of the PDB). Regenerate with
+`uv run python scripts/verify_flagged_ligands.py --all-comps --json <path>`.
+
+**The six small-molecule flags are all false positives, and we withdraw them.**
+Every one is a deposition whose title names the flagged component as its ligand:
+glycine betaine in OpuAC (`2B4L`, 58 contacts ≤4 Å), lauric acid and dodecyl
+sulfate in the β-lactoglobulin calyx (`3UEU`, `4GNY`), ribose-1,5-bisphosphate in
+its isomerase's active site (`5YFS`/`5YFT`, >320 contacts), tetrahydronaphthalenol
+in the ERRγ pocket (`6I67`). Two were called unbound because RCSB records no *bond*
+for a non-covalent binder; two because a fatty acid and a detergent are on the
+additive blacklist that a lipocalin exists to bind; two because a phosphorylated
+sugar carries a carbohydrate CCD type. Stage 4 ranked those comp-id rules above RCSB's
+curated ligand-of-interest flag, and on this set that trade is wrong 6/6 — every comp
+id is an additive or a sugar *somewhere*, so a comp-id rule convicts precisely the
+depositions where the comp is the point. **v0.6.2 puts that flag above the additive
+blacklist** (fixing `3UEU`/`4GNY`) but deliberately not above the glycan gate, where
+the flag covers 85.7% of sugars and a wrong call is only `ambiguous` — so `5YFS`/`5YFT`
+stay tiered `glycan`, reported and one `include_ambiguous=True` away rather than
+discarded. `2B4L` and `6I67` carry no curated flag at all, so no metadata signal
+reaches them (they are the bond-based blind spot that also produced the `3I9Z` error).
+The small-molecule test set is clean: **317 / 317**. This was a precision limit of our
+tier's flagged tail, not a defect in LigandMPNN's list — the tier still called 311
+of 317 functional, and it never removes a structure from a split.
 
 > This is *complementary* to — not the same as — the crystallization-additive
 > contamination reported for the metal set in the UMA-Inverse work (e.g. **1F35 /
