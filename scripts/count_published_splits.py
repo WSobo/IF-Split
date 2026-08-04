@@ -250,31 +250,36 @@ def _load_pmpnn(tar_path: Path | None) -> dict[str, bytes]:
     return out
 
 
+def _entry_of(chain_id: str) -> str:
+    """Entry id from a ProteinMPNN ``CHAINID`` (``4HHB_A`` -> ``4HHB``).
+
+    Split on the LAST underscore, not the first. Every id in the 2021 snapshot is
+    legacy 4-character, where the two agree, but the wwPDB extended form puts an
+    underscore inside the id itself: ``pdb_00004hhb_A`` splits to ``pdb`` on the
+    first and to ``pdb_00004hhb`` on the last.
+    """
+    return chain_id.rsplit("_", 1)[0] if "_" in chain_id else chain_id
+
+
 def count_pmpnn(tar_path: Path | None) -> dict[str, Any]:
     blobs = _load_pmpnn(tar_path)
     rows = list(csv.DictReader(io.StringIO(blobs["list.csv"].decode())))
     valid = {ln.strip() for ln in blobs["valid_clusters.txt"].decode().splitlines() if ln.strip()}
     test = {ln.strip() for ln in blobs["test_clusters.txt"].decode().splitlines() if ln.strip()}
 
-    # Roll the chain-level split up to entries the way the audit does: an entry is
-    # held out if ANY of its chains is, test winning over validation.
-    entry_split: dict[str, str] = {}
-    for r in rows:
-        entry_id = r["CHAINID"].split("_")[0]
-        cluster = r["CLUSTER"]
-        split = "test" if cluster in test else "valid" if cluster in valid else "train"
-        prior = entry_split.get(entry_id)
-        if prior is None or split == "test" or (split == "valid" and prior == "train"):
-            entry_split[entry_id] = split
-
-    # An entry with chains on both sides of the split is the same deposition in train
-    # and in a held-out set at once — possible here only because the split is per chain.
+    # Which splits each entry's chains land in. An entry appearing in more than one is
+    # the same deposition on both sides, which only a chain-level split can produce.
     per_entry_splits: dict[str, set[str]] = {}
     for r in rows:
-        entry_id = r["CHAINID"].split("_")[0]
         cluster = r["CLUSTER"]
         split = "test" if cluster in test else "valid" if cluster in valid else "train"
-        per_entry_splits.setdefault(entry_id, set()).add(split)
+        per_entry_splits.setdefault(_entry_of(r["CHAINID"]), set()).add(split)
+
+    # Roll up the way the audit does: held out if ANY chain is, test over validation.
+    entry_split = {
+        e: ("test" if "test" in s else "valid" if "valid" in s else "train")
+        for e, s in per_entry_splits.items()
+    }
     straddling = sorted(e for e, s in per_entry_splits.items() if {"train", "test"} <= s)
     straddling_valid = sorted(e for e, s in per_entry_splits.items() if {"train", "valid"} <= s)
 
