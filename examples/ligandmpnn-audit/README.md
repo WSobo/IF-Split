@@ -184,8 +184,11 @@ is 72.
 Three unrelated checks pick out the same pair: the duplicate-id scan, the polymer
 composition, and the ligand tiering (§F).
 
-**The other two sets are clean on the same check**, which is what keeps this a
-defect in one list rather than a claim about all three:
+**The other two sets pass the same check**, which is what keeps this a defect in one
+list rather than a claim about all three. Read "pass" narrowly: this asks only
+whether the class is *present*. The metal set passes it entry for entry and is
+still the most contaminated of the three once you ask whether the metal is a real
+site (6/83 adventitious, §F).
 
 | set | must contain | checked | result |
 |---|---|--:|---|

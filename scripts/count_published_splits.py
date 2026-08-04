@@ -352,6 +352,12 @@ def main() -> None:
                     print(f"          {cid}: {name[:66]}")
             if res["unresolved"]:
                 print(f"      unresolved by RCSB: {', '.join(res['unresolved'])}")
+        print(
+            "    NB 'clean' here means present, not functional. It is the weaker question:\n"
+            "    the metal set passes this entry for entry and is still the most contaminated\n"
+            "    of the three (6 of 83 adventitious). Run scripts/audit_ligandmpnn_split.py\n"
+            "    for the tiering that asks whether a site is real."
+        )
 
     if not args.skip_pmpnn:
         pm = count_pmpnn(args.pmpnn_tar)
