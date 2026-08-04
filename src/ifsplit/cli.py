@@ -210,12 +210,22 @@ def _run_pipeline(
 
     print("Stage 6 - assign splits (deterministic hash):")
     registry = _resolve_registry(cfg, out, registry_path, fresh)
-    growth_stable = cfg.split_strategy not in ("balanced", "maximal") or bool(registry)
     entry_classes = {eid: info["classes"] for eid, info in class_map.items()}
     splits = assign_splits(clusters, cfg, registry=registry, entry_classes=entry_classes)
     check_no_leakage(splits, clusters)  # structural guarantee; raises on violation
+    # Growth stability is a property of the OUTCOME, not of having passed a registry: a
+    # pin the holdout ceiling overrode still moved those entries. Keying this off
+    # bool(registry) reported growth_stable=true on a rebuild that inverted the split.
+    growth_stable = cfg.split_strategy not in ("balanced", "maximal") or (
+        bool(registry) and splits.pinned_entries_reassigned == 0
+    )
     c = splits.counts
     print(f"  train={c['train']} val={c['val']} test={c['test']}  (no cross-split leakage)")
+    if splits.pinned_entries_reassigned:
+        print(
+            f"  WARNING: {splits.pinned_reassignments} prior pin(s) overridden, moving "
+            f"{splits.pinned_entries_reassigned} entries — this rebuild is NOT growth-stable."
+        )
     _report_rebuild_migration(cfg, out, splits.entry_split)  # entry-level growth signal
     if splits.strategy != "hash":
         note = f"  strategy={splits.strategy}: {splits.capped_folds} dominant folds -> train"

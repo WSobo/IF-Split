@@ -231,6 +231,47 @@ def test_maximal_reports_no_gap_when_the_tail_is_thin():
     assert assign_splits(clusters, _cfg(split_strategy="maximal")).balance_gaps == {}
 
 
+def test_maximal_never_holds_out_the_giant_when_a_pin_says_it_should():
+    # The bug this guards: under `maximal` the dominant component absorbs held-out
+    # components as the snapshot grows, and honoring its INHERITED pin unconditionally
+    # put the giant in the holdout. Measured on the real 2026-07-22 snapshot with a
+    # 2023-cutoff registry: train=1,164 / val=862 / test=214,796, reported as
+    # growth_stable=true with pinned_reassignments=1. The cap must beat the pin.
+    cfg = _cfg(split_strategy="maximal")
+    v1_recs = _many_records(n_giant=200, n_tail=20)
+    v1_clusters = build_clusters(v1_recs, cfg)
+    v1 = assign_splits(v1_clusters, cfg)
+    giant = v1.entry_split["G000"]
+    assert giant == "train"  # precondition: the giant starts in train
+    held = [k for k, s in v1.cluster_split.items() if s in ("val", "test")]
+    assert held, "precondition: the v1 tail is held out"
+
+    # Growth: a bridging entry welds a held-out tail component onto the giant, so the
+    # merged component inherits that component's val/test pin. Pin the merged component
+    # directly rather than replaying v1's registry: a raw cluster key is named after its
+    # smallest member entity, so the bridge RENAMES the giant's key and the replayed pin
+    # would not match at all (a separate, documented weakness). What is under test here is
+    # what happens once the giant does carry a held-out pin, which is what the real
+    # 2023-registry rebuild produced.
+    bridge = _protein_record("BRDG", [1, 100])
+    v2_clusters = build_clusters([*v1_recs, bridge], cfg)
+    assert v2_clusters.entry_to_cluster["G000"] == v2_clusters.entry_to_cluster["T000"]
+    giant_key = v2_clusters.entry_to_cluster["G000"]
+
+    v2 = assign_splits(v2_clusters, cfg, registry={giant_key: "test"})
+    check_no_leakage(v2, v2_clusters)
+    counts = collections.Counter(v2.entry_split.values())
+    # The invariant, at the ENTRY level: the giant is in train and the holdout stays a
+    # tail. Asserting on cluster_split would pass even on the inverted split.
+    assert v2.entry_split["G000"] == "train"
+    assert v2.entry_split["T000"] == "train"  # absorbed into the giant, follows it
+    assert counts["train"] > counts["val"] + counts["test"]
+    assert counts["val"] + counts["test"] <= 0.2 * sum(counts.values())  # ceiling holds
+    # And the override is reported in ENTRIES, not just as a component count of 1.
+    assert v2.pinned_reassignments == 1
+    assert v2.pinned_entries_reassigned >= 200  # the component-level "1" hides this
+
+
 def test_distinct_unclustered_sequences_stay_separate():
     clusters = build_clusters(
         [_unclustered_record("1PEP", "GSHMWYPQRT"), _unclustered_record("2PEP", "AAAKKKDDEE")],
@@ -590,12 +631,22 @@ def test_no_cluster_leakage_invariant(sample_entries, artifact_entry):
 
 def test_registry_pins_assignment(sample_entries, artifact_entry):
     recs = _records(sample_entries, artifact_entry)
-    kept, _ = filter_candidates(recs, _cfg())
-    cr = build_clusters(kept, _cfg())
-    # Force every cluster to "test" via a registry; hash is overridden.
+    cfg_hash = _cfg(split_strategy="hash")
+    kept, _ = filter_candidates(recs, cfg_hash)
+    cr = build_clusters(kept, cfg_hash)
+    # Force every cluster to "test" via a registry; the hash is overridden.
     reg = {k: "test" for k in cr.cluster_members}
-    res = assign_splits(cr, _cfg(), registry=reg)
-    assert set(res.cluster_split.values()) == {"test"}
+    assert set(assign_splits(cr, cfg_hash, registry=reg).cluster_split.values()) == {"test"}
+
+    # Under "maximal" the same registry must NOT be honored: the holdout ceiling is not
+    # negotiable, and a pin that would hold out more than it allows loses to the cap.
+    # Honoring it unconditionally is what inverted a real growth rebuild into a
+    # 214,796-entry test set.
+    mx = assign_splits(cr, _cfg(split_strategy="maximal"), registry=reg)
+    n = sum(mx.counts.values())
+    assert mx.counts["train"] > 0
+    assert mx.counts["val"] + mx.counts["test"] <= 0.2 * n
+    assert mx.pinned_entries_reassigned > 0  # overrides reported, never silent
 
 
 def test_test_minimums_recruit_components_no_leakage(sample_entries, artifact_entry):

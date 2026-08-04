@@ -7,7 +7,46 @@ follow [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 The **split is always computed from metadata + sequences only** — `build` never
 downloads structure coordinates. That invariant holds across every release below.
 
-## [0.6.2] — unreleased (2026-08-03)
+## [0.6.3] — 2026-08-04
+
+Fixes a growth-path bug in the `maximal` strategy and makes `config/certified.yaml`
+reproduce the split the preprint reports. The archived 2026-07-22 split is unchanged and
+still verifies byte-identically against its lock, so no figure in the preprint moves.
+
+### Fixed
+
+- **A registry pin can no longer hold out the dominant component under `maximal`.** The
+  holdout ceiling now beats a registry pin: a component that does not fit the budget is
+  capped to train whatever it was pinned to. Previously `_maximal_assign` honored pins
+  unconditionally before capping, so as the snapshot grew and the giant absorbed
+  previously-held-out components it inherited their `test` pin by `test > val > train`
+  precedence and was placed in the holdout. Replaying a 2023-cutoff registry on the
+  2026-07-22 snapshot produced **train=1,164 / val=862 / test=214,796**, and reported it as
+  `growth_stable: true` with `pinned_reassignments: 1`. `check_no_leakage` passed
+  throughout, correctly: the split was component-consistent, just inverted. The same
+  rebuild now yields the expected 213,890 / 1,467 / 1,465.
+
+  Only the `maximal` path with a registry is affected; `hash` and `balanced` are unchanged,
+  and the archived 2026-07-22 split still verifies byte-identically against its lock.
+
+- **`growth_stable` is derived from the outcome, not from the presence of a registry.** It
+  was `strategy not in (balanced, maximal) or bool(registry)`, which asserted the property
+  a registry is *meant* to provide rather than the one it delivered. A new
+  `splits.pinned_entries_reassigned` counts overridden pins in **entries** (one override on
+  the dominant component moves most of the corpus while `pinned_reassignments` reads 1),
+  `growth_stable` keys off it, and Stage 6 prints a warning naming the entry count.
+
+### Changed
+
+- **`config/certified.yaml` now reproduces the published split.** It pinned
+  `snapshot_date: 2026-05-30`, `min_modeled_residues: 20`, cryo-EM 3.0 Å and
+  `min_em_backbone_inclusion: 0.7`, none of which match the preprint's numbers or the Zenodo
+  deposit, while asserting those numbers in its own header comment. It now builds
+  `config_hash f7d4203586df3dc7b10d2948e76d20d8` (train 213,890 / val 1,467 / test 1,465).
+  The three quality knobs move to a commented block that states they break hash
+  reproduction, and the header records the holdout's measured composition.
+
+## [0.6.2] — 2026-08-03
 
 Class labels change (a rescued additive/glycan now sets `small_molecule`), so this needs a
 new version for the same reason 0.6.1 did: same `config_hash`, different code, different

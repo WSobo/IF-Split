@@ -303,6 +303,10 @@ def build_manifest(
             # fold two differently-pinned components into one split). 0 for a first or
             # non-merging build; >0 means that many prior pins were overridden.
             "pinned_reassignments": splits.pinned_reassignments,
+            # The same overrides in ENTRIES. One overridden pin on the dominant component
+            # moves most of the corpus while pinned_reassignments still reads 1, so this
+            # is the field to read (and what growth_stable is derived from).
+            "pinned_entries_reassigned": splits.pinned_entries_reassigned,
             "capped_folds": splits.capped_folds,
             "balance_gaps": dict(sorted(splits.balance_gaps.items())),
             "entry_counts": dict(sorted(splits.counts.items())),

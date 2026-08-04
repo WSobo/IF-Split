@@ -185,7 +185,9 @@ def test_per_class_test_files_written(tmp_path, sample_entries, artifact_entry):
     from ifsplit.cluster import build_clusters as _bc
     from ifsplit.manifest import TEST_SUBDIR, write_split_files
 
-    cfg = load_config(DEFAULT_CONFIG)
+    # On the "hash" path, since under the default "maximal" the holdout ceiling
+    # deliberately overrides a pin that would hold out the whole corpus.
+    cfg = load_config(DEFAULT_CONFIG).model_copy(update={"split_strategy": "hash"})
     recs = [CandidateRecord.from_data_api(e) for e in sample_entries.values()]
     recs.append(CandidateRecord.from_data_api(artifact_entry))
     kept, _ = filter_candidates(recs, cfg)

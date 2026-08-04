@@ -1,20 +1,25 @@
-# IF-Split "certified" config — the most trustworthy holdout the metadata supports.
+# IF-Split "certified" config: the most trustworthy holdout the metadata supports.
+#
+# This is the EXACT recipe behind the split reported in the preprint and archived at the
+# snapshot DOI (config_hash f7d4203586df3dc7b10d2948e76d20d8). Change a filter below and
+# you get a different, possibly better split, but not that one; the quality knobs worth
+# reaching for first are called out at the bottom.
 #
 # The problem this solves. CATH/ECOD/SCOP2 are curated retrospectively, so their
-# coverage LAGS deposition: on the 2026-07-22 snapshot 0.8% of pre-2020 entries are
-# unclassified but 36.5% of 2025 and 55.3% of 2026 releases are. A holdout that looks
+# coverage LAGS deposition: on the 2026-07-22 snapshot 1.1% of pre-2020 entries are
+# unclassified but 39.7% of 2025 and 58.2% of 2026 releases are. A holdout that looks
 # "fold-disjoint" under those three is therefore disjoint largely because the databases
-# have not reached the newest entries — measured, 75.9% of such held-out entries share a
+# have not reached the newest entries. Measured, 75.9% of such held-out entries share a
 # Pfam/InterPro family with training. That leakage is invisible to the structural
 # authorities, and no cutoff on chain length or release year avoids it (leakage runs
 # 60-87% in EVERY stratum, and rises with length).
 #
-#   structural_clustering: "all"  — merge on CATH/ECOD/SCOP2 *and* the Pfam/InterPro HMM
+#   structural_clustering: "all"  = merge on CATH/ECOD/SCOP2 *and* the Pfam/InterPro HMM
 #     domain families. The HMMs are computed from SEQUENCE, so they carry no curation lag
 #     (InterPro alone covers 94.9% of entries vs 92.3% for all three structural
 #     authorities combined) and they see homology far below 30% identity. This is what
 #     makes the holdout disjoint by evidence rather than by missing annotation.
-#   split_strategy: "maximal"     — do NOT demand a fixed ratio. Strong merging collapses
+#   split_strategy: "maximal"     = do NOT demand a fixed ratio. Strong merging collapses
 #     the PDB into one giant component (98.6% of entries), so the largest leakage-safe
 #     holdout is whatever remains; "maximal" takes exactly that and splits it evenly.
 #     split_fractions below act as a CEILING, never a target.
@@ -22,18 +27,30 @@
 # Measured on 2026-07-22 (216,822 entries): train 213,890 (98.6%) / val 1,467 / test 1,465,
 # 888 of the held-out entries CERTIFIED novel under all five authorities, and 0% domain
 # leakage into train (down from 75.9%). The holdout is small because that is how much
-# genuinely novel structure the PDB contains — not a tuning choice.
+# genuinely novel structure the PDB contains, not a tuning choice.
+#
+# Know what you are getting before you train on it. Maximal merging selects the tail, and
+# the tail is not a miniature of the PDB: 27.1% of held-out entries have a longest protein
+# chain of 50 residues or fewer (0.6% of training), the median longest chain is 158 against
+# 295 in training, and only 34.1% of test entries carry a functional ligand class. Raising
+# min_modeled_residues (below) is the one-line fix if that skew matters for your task.
 #
 # Build it:  uv run if-split build --config config/certified.yaml --out data/certified
 # Existing snapshot? scripts/fetch_domain_annotations.py adds the domain families without
 # re-enumerating (see its --apply mode).
 
-snapshot_date: "2026-05-30"        # release_date <= this. The reproducibility anchor.
+snapshot_date: "2026-07-22"        # release_date <= this. The reproducibility anchor.
+                                   # LATER IS BETTER, and it is measured: cutting back to
+                                   # 2023-12-31 / 2022-12-16 / 2019-12-31 shrinks the holdout
+                                   # to 0.93% / 0.82% / 0.59% of the corpus (from 1.35%) and
+                                   # the certified-novel test set to 299 / 250 / 181 (from
+                                   # 457). An older cutoff raises the *rate* of certification
+                                   # and lowers its count; a benchmark needs the count.
 experimental_methods: ["X-RAY DIFFRACTION", "ELECTRON MICROSCOPY"]
 resolution_max_A: 3.5
-resolution_max_A_by_method: {"ELECTRON MICROSCOPY": 3.0}  # cryo-EM 3.5A != X-ray 3.5A for sidechains
+resolution_max_A_by_method: {}     # see the quality knobs at the bottom of this file
 max_total_residues: 5999           # max residues KEPT (drop if > this); LigandMPNN kept < 6000
-min_modeled_residues: 20           # drop tiny/poly-UNK chains: the sequence is the training label
+min_modeled_residues: 0            # see the quality knobs at the bottom of this file
 excluded_het: ["HOH", "NA", "CL", "K", "BR"]
 use_biological_assembly: true
 
@@ -47,7 +64,7 @@ clustering_backend: "precomputed"
 structural_clustering: "all"
 # fold_benchmark_method: ecod      # opt-in novel-fold sidecars (folds.json, fold_groups.json,
 #                                  # novel_fold_test.json). Use a DIFFERENT authority than
-#                                  # structural_clustering (scop2) above: matching them makes the
+#                                  # structural_clustering above: matching them makes the
 #                                  # novel-fold count a tautological ~100% (the same-method merge
 #                                  # already forbids a fold from straddling splits). off (default)
 #                                  # emits nothing, omitted from the config hash. Labels never
@@ -64,8 +81,22 @@ max_rfree: null
 max_ramachandran_outlier_pct: null
 max_rotamer_outlier_pct: null
 max_rsrz_outlier_pct: null
-min_em_backbone_inclusion: 0.7     # drop cryo-EM entries whose backbone is poorly in-density
+min_em_backbone_inclusion: null    # see the quality knobs below
 require_validation_report: false
 
 ligand_context_radius_A: 8.0
 max_ligand_atoms: 25
+
+# --- quality knobs, deliberately OFF here -----------------------------------------
+# Each of these is defensible and each changes the config hash, so a build that sets them
+# no longer reproduces the archived split. Turn them on for a training corpus you care
+# about more than about matching the paper:
+#
+#   min_modeled_residues: 20                             # drop tiny/poly-UNK chains: the
+#                                                        # sequence is the training label.
+#                                                        # This is the knob that trims the
+#                                                        # peptide skew noted above.
+#   resolution_max_A_by_method: {"ELECTRON MICROSCOPY": 3.0}  # cryo-EM 3.5A != X-ray 3.5A
+#                                                             # for sidechains
+#   min_em_backbone_inclusion: 0.7                       # drop cryo-EM entries whose
+#                                                        # backbone is poorly in-density

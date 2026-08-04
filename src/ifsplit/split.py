@@ -17,6 +17,14 @@ merge unites two DIFFERENTLY-pinned components the union is forced to a single s
 (``_registry_pin`` keeps the most held-out: test > val > train) and each overridden pin
 is counted in ``SplitResult.pinned_reassignments`` rather than dropped silently.
 
+One thing outranks a pin: under ``maximal`` the holdout ceiling. The dominant component
+absorbs held-out components as the snapshot grows, so it can inherit a ``test`` pin by
+that same precedence; honoring it would put ~98% of the PDB in the holdout (a real
+2023-registry replay gave train=1,164 / test=214,796). A component that does not fit the
+budget is capped to train whatever it was pinned to, and the override is reported in
+``pinned_entries_reassigned`` — entries, not components, because one override on the
+giant moves most of the corpus while the component count reads 1.
+
 The ``balanced`` strategy (``split_strategy="balanced"``) exists because
 per-component hashing balances *components*, not *entries*: with heavy-tailed
 component sizes (a dominant fold under structural clustering, or the antibody
@@ -119,6 +127,11 @@ class SplitResult:
     # two differently-pinned components into one split). >0 means the split is not
     # fully growth-stable — surfaced, not hidden. 0 for a registry-free/non-merging build.
     pinned_reassignments: int = 0
+    # The same overrides counted in ENTRIES, which is the quantity that decides whether a
+    # rebuild is safe to use. A component-level count cannot: one overridden pin on the
+    # dominant component moves ~98% of the corpus and still reports "1". growth_stable
+    # keys off this, not off the presence of a registry.
+    pinned_entries_reassigned: int = 0
 
 
 def _component_raw_keys(clusters: ClusterResult) -> dict[str, set[str]]:
@@ -317,12 +330,32 @@ def _maximal_assign(
 
     cluster_split: dict[str, str] = {}
     totals = {"val": 0, "test": 0}
-    for key in clusters.cluster_members:
-        pinned = _registry_pin(comp_raw.get(key, {key}), registry) if registry else None
-        if pinned is not None:
-            cluster_split[key] = pinned
-            if pinned in totals:
-                totals[pinned] += sizes[key]
+    n_capped = 0
+    # Pins get FIRST claim on the holdout budget (that is what growth stability means),
+    # but the budget itself is not negotiable. Under maximal one component is most of the
+    # PDB, and it absorbs held-out components as the snapshot grows; honoring its
+    # inherited pin unconditionally would place the giant in val/test and invert the
+    # split (measured: a 2023 registry replayed on 2026-07-22 gave train=1,164 /
+    # test=214,796). A component that cannot fit the holdout is capped to train whatever
+    # it was pinned to, and the override is counted at ENTRY level below -- a pin that
+    # loses to the cap is exactly the case a component-level counter under-reports.
+    pinned_keys = (
+        sorted(
+            (k for k in clusters.cluster_members if _registry_pin(comp_raw.get(k, {k}), registry)),
+            key=lambda k: (bucket(k, cfg.split_salt), k),
+        )
+        if registry
+        else []
+    )
+    for key in pinned_keys:
+        pinned = _registry_pin(comp_raw.get(key, {key}), registry)
+        if pinned in totals:
+            if totals["val"] + totals["test"] + sizes[key] > holdout_ceiling:
+                cluster_split[key] = "train"  # cap beats pin; never hold out the giant
+                n_capped += 1
+                continue
+            totals[pinned] += sizes[key]
+        cluster_split[key] = pinned
 
     # Dominance needs no separate threshold here: a component is capped to train exactly
     # when it cannot fit the holdout budget. That is self-scaling (the giant is ~98% of
@@ -332,7 +365,6 @@ def _maximal_assign(
         (k for k in clusters.cluster_members if k not in cluster_split),
         key=lambda k: (bucket(k, cfg.split_salt), k),
     )
-    n_capped = 0
     for key in eligible:
         if totals["val"] + totals["test"] + sizes[key] > holdout_ceiling:
             cluster_split[key] = "train"  # too large for the holdout -> train, by design
@@ -392,12 +424,15 @@ def assign_splits(
     # pin is counted here rather than dropped silently. 0 unless a registry was used AND
     # a merge conflicted.
     pinned_reassignments = 0
+    reassigned_comps: set[str] = set()
     if registry:
         rawkey_to_comp = {rk: comp for comp, rks in comp_raw.items() for rk in rks}
         for rk, prior in registry.items():
             comp = rawkey_to_comp.get(rk)
             if comp is not None and cluster_split[comp] != prior:
                 pinned_reassignments += 1
+                reassigned_comps.add(comp)
+    pinned_entries_reassigned = sum(len(clusters.cluster_members[c]) for c in reassigned_comps)
 
     counts = {s: 0 for s in SPLITS}
     entry_split: dict[str, str] = {}
@@ -420,6 +455,7 @@ def assign_splits(
         capped_folds=n_capped,
         balance_gaps=dict(sorted(balance_gaps.items())),
         pinned_reassignments=pinned_reassignments,
+        pinned_entries_reassigned=pinned_entries_reassigned,
     )
 
 
