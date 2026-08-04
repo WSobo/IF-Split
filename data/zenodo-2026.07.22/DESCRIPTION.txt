@@ -23,19 +23,26 @@ manifest.json (5.4 KB) - the reported statistics for this split.
 train.json, val.json, test.json (1.7 MB total) - the split itself, as lists of PDB
 entry ids.
 
-test/metal_test.json, test/nucleic_acid_test.json, test/small_molecule_test.json - the
+metal_test.json, nucleic_acid_test.json, small_molecule_test.json - the
 ligand-class-stratified test sets.
 
-config.yaml (890 B) - the exact configuration that produced this split. Its
+cfg-recommended.yaml (890 B) - the exact configuration that produced this split. Its
 config_hash is f7d4203586df3dc7b10d2948e76d20d8, which dataset.lock also records.
 
-SHA256SUMS - checksums for everything above.
+SHA256SUMS - checksums for everything above. It was written against the layout these
+files have in the build tree, where the test lists sit under "test/" and the config is
+called config.yaml. The upload flattened the first and kept the config's original name,
+so rewrite those two before checking:
+
+  sed -e 's| test/| |' -e 's| config.yaml| cfg-recommended.yaml|' SHA256SUMS | sha256sum -c
+
+All ten lines should report OK.
 
 
 REPRODUCING THE SPLIT
 
   pip install if-split==0.6.1
-  if-split resplit --candidates candidates-annotated.jsonl --config config.yaml --out ./out
+  if-split resplit --candidates candidates-annotated.jsonl --config cfg-recommended.yaml --out ./out
   if-split verify dataset.lock --candidates candidates-annotated.jsonl
 
 The last command re-derives the split offline, with no network access, and checks it

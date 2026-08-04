@@ -24,15 +24,15 @@ Code: https://github.com/WSobo/IF-Split (MIT), tag `v0.6.1`.
 | `dataset.lock` | 3.2 MB | pins the candidate set (sha256), the full config, and the split output hash |
 | `manifest.json` | 5.4 KB | the reported statistics for this split |
 | `train.json` / `val.json` / `test.json` | 1.7 MB | the split, as entry-id lists |
-| `test/{metal,nucleic_acid,small_molecule}_test.json` | | the ligand-class-stratified test sets |
-| `config.yaml` | 890 B | the exact config that produced this split (`config_hash f7d4203586df3dc7b10d2948e76d20d8`) |
+| `{metal,nucleic_acid,small_molecule}_test.json` | | the ligand-class-stratified test sets |
+| `cfg-recommended.yaml` | 890 B | the exact config that produced this split (`config_hash f7d4203586df3dc7b10d2948e76d20d8`) |
 | `SHA256SUMS` | | checksums for all of the above |
 
 ## Reproduce the split from the snapshot
 
 ```bash
 pip install if-split==0.6.1     # or: git clone && uv sync, at tag v0.6.1
-if-split resplit --candidates candidates-annotated.jsonl --config config.yaml --out ./out
+if-split resplit --candidates candidates-annotated.jsonl --config cfg-recommended.yaml --out ./out
 if-split verify dataset.lock --candidates candidates-annotated.jsonl
 ```
 
