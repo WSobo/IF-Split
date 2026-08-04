@@ -182,8 +182,21 @@ the nucleic acid, neither can contribute a nucleotide context, and the effective
 is 72.
 
 Three unrelated checks pick out the same pair: the duplicate-id scan, the polymer
-composition, and the ligand tiering (§F). Reproduce the middle one with
-`uv run python scripts/count_published_splits.py --check-nucleotide`.
+composition, and the ligand tiering (§F).
+
+**The other two sets are clean on the same check**, which is what keeps this a
+defect in one list rather than a claim about all three:
+
+| set | must contain | checked | result |
+|---|---|--:|---|
+| `test_nucleotide` | a DNA/RNA/hybrid chain | 74 | **2 fail** (`2zio`, `3olt`) |
+| `test_metal` | a metal-bearing component | 83 | clean |
+| `test_small_molecule` | any non-polymer component | 317 | clean |
+
+Metals count whether they are bare ions or carried by a cofactor, using IF-Split's
+own `METAL_ELEMENTS`. Note `3olt` *would* pass the metal test (its Co-protoporphyrin
+carries cobalt) — it is simply filed under the wrong class. Reproduce with
+`uv run python scripts/count_published_splits.py --check-composition`.
 
 Note the ids are **lowercase** in the released files; a case-sensitive comparison
 against upper-cased RCSB ids will not surface this.

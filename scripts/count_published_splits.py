@@ -10,25 +10,31 @@ five LigandMPNN lists contain versus how many are distinct, and which ids appear
 in more than one list. Two of them (``2zio``, ``3olt``) are in both ``train.json``
 and ``test_nucleotide.json``, i.e. the same entry is trained on and tested on.
 
-``--check-nucleotide`` adds one RCSB metadata call that asks whether each entry in
-``test_nucleotide.json`` actually contains a nucleic acid. It does not for ``2zio``
-(pyrrolysyl-tRNA synthetase with a Lys-AMP analog, no tRNA in the crystal) or
-``3olt`` (COX-2 with arachidonic acid, nothing nucleotide about it), and it does
-for all 72 others. Those are the same two entries that are also in ``train.json``,
-which is why they are worth naming: three unrelated checks single out one pair.
+``--check-composition`` asks RCSB whether each ligand-class test entry contains
+anything of the class it is filed under. Two do not: ``2zio`` (pyrrolysyl-tRNA
+synthetase with a Lys-AMP analog, no tRNA in the crystal) and ``3olt`` (COX-2 with
+arachidonic acid, nothing nucleotide about it) are in ``test_nucleotide.json``
+with no nucleic acid between them, while the other 72 all have one. They are the
+same two entries that also appear in ``train.json``, which is why they are worth
+naming: three unrelated checks single out one pair.
+
+The metal and small-molecule sets pass the same check, so this is a defect in one
+list rather than a fault in how all three were assembled. Note the check is weak by
+design -- it asks only whether the class is present, not whether it is functional,
+which is the ligand tiering's job and a question 12 further entries fail.
 
 Sources (all public, no credentials):
   LigandMPNN  github.com/dauparas/LigandMPNN/training/*.json
   ProteinMPNN files.ipd.uw.edu/pub/training_sets/pdb_2021aug02_sample.tar.gz
                 (~47 MB; only list.csv + {valid,test}_clusters.txt are read, and
                  they are the full split, not a sample)
-  RCSB        data.rcsb.org/graphql (only with --check-nucleotide; metadata only)
+  RCSB        data.rcsb.org/graphql (only with --check-composition; metadata only)
 
 Usage:
   uv run python scripts/count_published_splits.py
   uv run python scripts/count_published_splits.py --lmpnn-dir path/to/jsons \
       --pmpnn-tar path/to/pdb_2021aug02_sample.tar.gz   # offline, from local copies
-  uv run python scripts/count_published_splits.py --skip-pmpnn --check-nucleotide
+  uv run python scripts/count_published_splits.py --skip-pmpnn --check-composition
   uv run python scripts/count_published_splits.py --json counts.json          # machine-readable
 """
 
@@ -39,12 +45,15 @@ import csv
 import io
 import itertools
 import json
+import re
 import tarfile
 from collections import Counter
 from pathlib import Path
 from typing import Any
 
 import httpx
+
+from ifsplit.ligands import METAL_ELEMENTS
 
 LMPNN_RAW = "https://raw.githubusercontent.com/dauparas/LigandMPNN/main/training"
 LMPNN_API = "https://api.github.com/repos/dauparas/LigandMPNN/contents/training"
@@ -133,55 +142,89 @@ def count_lmpnn(lists: dict[str, list[str]]) -> dict[str, Any]:
 
 NUCLEIC_TYPES = {"DNA", "RNA", "NA-hybrid"}
 RCSB_GRAPHQL = "https://data.rcsb.org/graphql"
-NUCLEOTIDE_LIST = "test_nucleotide.json"
+# What each ligand-class test set has to contain for its own conditioning signal to
+# exist at all. The requirement is deliberately weak: not "is this a good example of
+# the class" (that is the tiering's job) but "is anything of the class present".
+CLASS_REQUIREMENT = {
+    "test_nucleotide.json": "a DNA, RNA or hybrid chain",
+    "test_metal.json": "a metal-bearing component",
+    "test_small_molecule.json": "any non-polymer component",
+}
 
 
-def check_nucleotide_set(lists: dict[str, list[str]]) -> dict[str, Any]:
-    """Does every entry in the nucleotide test set actually contain a nucleic acid?
+def _elements(formula: str) -> set[str]:
+    return {m.upper() for m in re.findall(r"[A-Z][a-z]?", formula or "")}
 
-    The conditioning signal LigandMPNN is scored on for this set is the nucleic acid
-    in the structure, so an entry without one contributes no nucleotide context at
-    all, whatever its ligands look like.
+
+def _satisfies(list_name: str, entry: dict[str, Any]) -> bool:
+    polymers = {
+        (pe.get("entity_poly") or {}).get("rcsb_entity_polymer_type")
+        for pe in (entry.get("polymer_entities") or [])
+    }
+    comps = [ne["nonpolymer_comp"]["chem_comp"] for ne in (entry.get("nonpolymer_entities") or [])]
+    if list_name == "test_nucleotide.json":
+        return bool(polymers & NUCLEIC_TYPES)
+    if list_name == "test_metal.json":
+        # A metal counts whether it is a bare ion or carried by a cofactor such as
+        # heme, so match on the formula rather than on a list of ion comp ids.
+        return any(_elements(c.get("formula") or "") & METAL_ELEMENTS for c in comps)
+    return bool(comps)
+
+
+def check_class_composition(lists: dict[str, list[str]]) -> dict[str, Any]:
+    """Does each ligand-class test entry contain anything of the class it is filed under?
+
+    LigandMPNN is scored on each set for residues near that class of context, so an
+    entry with none of it contributes nothing to its own metric no matter what else it
+    holds. This is a composition check, not a quality one: an entry can pass here and
+    still be a purification artifact, which is what the ligand tiering catches.
     """
-    ids = sorted({i.upper() for i in lists.get(NUCLEOTIDE_LIST, [])})
-    if not ids:
-        return {}
-    query = (
-        f"{{ entries(entry_ids: {json.dumps(ids)}) {{ rcsb_id struct {{ title }} "
-        "polymer_entities { entity_poly { rcsb_entity_polymer_type } } "
-        "nonpolymer_entities { nonpolymer_comp { chem_comp { id name } } } } }"
-    )
-    with httpx.Client(timeout=180, follow_redirects=True) as client:
-        r = client.post(RCSB_GRAPHQL, json={"query": query})
-        r.raise_for_status()
-        entries = r.json()["data"]["entries"]
-
-    without = []
-    for e in entries:
-        types = {
-            (pe.get("entity_poly") or {}).get("rcsb_entity_polymer_type")
-            for pe in (e.get("polymer_entities") or [])
-        }
-        if types & NUCLEIC_TYPES:
+    out: dict[str, Any] = {}
+    for list_name, requirement in CLASS_REQUIREMENT.items():
+        ids = sorted({i.upper() for i in lists.get(list_name, [])})
+        if not ids:
             continue
-        ligands = [
-            (ne["nonpolymer_comp"]["chem_comp"]["id"], ne["nonpolymer_comp"]["chem_comp"]["name"])
-            for ne in (e.get("nonpolymer_entities") or [])
-        ]
-        without.append(
+        query = (
+            f"{{ entries(entry_ids: {json.dumps(ids)}) {{ rcsb_id struct {{ title }} "
+            "polymer_entities { entity_poly { rcsb_entity_polymer_type } } "
+            "nonpolymer_entities { nonpolymer_comp { chem_comp { id name formula } } } } }"
+        )
+        with httpx.Client(timeout=180, follow_redirects=True) as client:
+            r = client.post(RCSB_GRAPHQL, json={"query": query})
+            r.raise_for_status()
+            entries = r.json()["data"]["entries"]
+
+        failing = [
             {
                 "entry_id": e["rcsb_id"],
                 "title": (e.get("struct") or {}).get("title", ""),
-                "polymer_types": sorted(t for t in types if t),
-                "ligands": ligands,
+                "polymer_types": sorted(
+                    t
+                    for t in {
+                        (pe.get("entity_poly") or {}).get("rcsb_entity_polymer_type")
+                        for pe in (e.get("polymer_entities") or [])
+                    }
+                    if t
+                ),
+                "ligands": [
+                    (c["id"], c["name"])
+                    for c in (
+                        n["nonpolymer_comp"]["chem_comp"]
+                        for n in (e.get("nonpolymer_entities") or [])
+                    )
+                ],
             }
-        )
-    return {
-        "listed": len(ids),
-        "resolved": len(entries),
-        "unresolved": sorted(set(ids) - {e["rcsb_id"] for e in entries}),
-        "without_nucleic_acid": without,
-    }
+            for e in entries
+            if not _satisfies(list_name, e)
+        ]
+        out[list_name] = {
+            "requirement": requirement,
+            "listed": len(ids),
+            "resolved": len(entries),
+            "unresolved": sorted(set(ids) - {e["rcsb_id"] for e in entries}),
+            "failing": failing,
+        }
+    return out
 
 
 def _load_pmpnn(tar_path: Path | None) -> dict[str, bytes]:
@@ -256,9 +299,9 @@ def main() -> None:
     ap.add_argument("--pmpnn-tar", type=Path, default=None, help="local pdb_2021aug02 tarball")
     ap.add_argument("--skip-pmpnn", action="store_true", help="skip the 47 MB download")
     ap.add_argument(
-        "--check-nucleotide",
+        "--check-composition",
         action="store_true",
-        help="ask RCSB whether each nucleotide-test entry contains a nucleic acid",
+        help="ask RCSB whether each ligand-class test entry contains anything of its class",
     )
     ap.add_argument("--json", type=Path, default=None, help="also write the counts here")
     args = ap.parse_args()
@@ -292,21 +335,23 @@ def main() -> None:
     if not lm["ids_are_lowercase"]:
         print("  note: ids are not uniformly lowercase in this copy")
 
-    if args.check_nucleotide:
-        nuc = check_nucleotide_set(lists)
-        report["nucleotide_set_check"] = nuc
-        if nuc:
-            missing = nuc["without_nucleic_acid"]
+    if args.check_composition:
+        comp = check_class_composition(lists)
+        report["class_composition"] = comp
+        print("\n  does each ligand-class test entry contain anything of its class?")
+        for list_name, res in comp.items():
+            failing = res["failing"]
+            verdict = "clean" if not failing else f"{len(failing)} FAIL"
             print(
-                f"\n  {NUCLEOTIDE_LIST}: {len(missing)} of {nuc['resolved']} entries contain"
-                " no DNA/RNA/hybrid chain"
+                f"    {list_name:<26} needs {res['requirement']:<27}"
+                f" {res['resolved']:>3} checked  {verdict}"
             )
-            for m in missing:
-                print(f"    {m['entry_id']}  polymers={m['polymer_types']}  {m['title'][:70]}")
+            for m in failing:
+                print(f"      {m['entry_id']}  polymers={m['polymer_types']}  {m['title'][:62]}")
                 for cid, name in m["ligands"]:
-                    print(f"        {cid}: {name[:74]}")
-            if nuc["unresolved"]:
-                print(f"    unresolved by RCSB: {', '.join(nuc['unresolved'])}")
+                    print(f"          {cid}: {name[:66]}")
+            if res["unresolved"]:
+                print(f"      unresolved by RCSB: {', '.join(res['unresolved'])}")
 
     if not args.skip_pmpnn:
         pm = count_pmpnn(args.pmpnn_tar)
