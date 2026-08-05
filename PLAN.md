@@ -380,7 +380,7 @@ See README "Fold-level leakage control".
 **MEASURED FINDING (2026-07-22 full snapshot): the PDB collapses into one giant component.**
 Two edge types build it: *co-occurrence* (shared 30% cluster, or two chains in one deposited
 assembly) and *fold-identity* (same (super)family). They act **in series**, and co-occurrence
-alone already percolates: with **no** fold edges the giant holds 43.2% of entries. Verified
+alone already percolates: with **no** fold edges the giant holds 44.1% of entries. Verified
 mechanism — with fold edges off, `102L` (T4 lysozyme) *heads* that giant and the anti-lysozyme
 Fabs (`1MLC`, `1DQJ`, `1FBI`, … 19 entries) plus the globin–antibody complex `9MKO` are already
 inside it; `101M` (myoglobin) sits in its **own 546-entry component** and is absorbed only when
@@ -423,8 +423,9 @@ capped giant. So the guarantee covers ~12% of test and is **silent on ~88%**. Sc
 project critiques. Fold-aware splitting buys **measurement, not elimination**.
 
 **The tail is the annotation frontier, not verified novelty.** The union holdout is only **3.5%
-fold-classified** (vs 94.9% of train) and **63.1% was released 2023+**; classification rate falls
-97% (≤2018) → 84.9% (2024) → 60.1% (2025) → **41.8% (2026)**. So a strict fold-disjoint holdout is
+fold-classified** (vs 94.9% of train) and **63.3% was released 2023+**; classification rate falls
+98.9% (cumulative ≤2019) → 85.7% (2024) → 60.3% (2025) → **41.8% (2026)**, measured over the
+216,822 entries that pass the default filters. So a strict fold-disjoint holdout is
 disjoint *by ignorance* and is **unstable** — as the databases catch up, held-out entries acquire
 training folds and the residual shrinks. 2.8% is an **upper bound** on future snapshots. The honest
 claim: **even under the field's own classifications, a fold-disjoint 80/10/10 split of the PDB

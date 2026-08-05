@@ -46,6 +46,32 @@ still verifies byte-identically against its lock, so no figure in the preprint m
   The three quality knobs move to a commented block that states they break hash
   reproduction, and the header records the holdout's measured composition.
 
+### Documentation
+
+- **The README described a default the tool no longer ships.** It called `hash` the default
+  strategy and `off` the default `structural_clustering`; `config/default.yaml` has shipped
+  `maximal` and `all` since v0.6.0. Fixed in the reproducibility section, the recipe table,
+  the stage table and the config reference, and `maximal` is now documented alongside the
+  other two strategies rather than omitted.
+- **New "Known limits" section**, stating up front what users otherwise hit by surprise:
+  identity thresholds are restricted to RCSB's precomputed levels (no 25% or 40%), RCSB's
+  cluster file is not identity-complete, reproducible-from-a-lock is not the same as stable
+  under growth (a `maximal` rebuild retains 43.7% of test), the reproducibility anchor is
+  `candidates.jsonl` rather than `snapshot_date`, a `maximal` holdout is length-skewed, a
+  fold guarantee is only as wide as its authority's coverage, PDB only, and the tool stops
+  at split lists.
+- Stale figures corrected: `PLAN.md`'s co-occurrence giant 43.2% → **44.1%**, its
+  frontier series → **98.9% (≤2019) / 85.7% (2024) / 60.3% (2025) / 41.8% (2026)** with the
+  population named, and 63.1% → **63.3%**; the audit README's "95 more distinct folds" →
+  **97 (573 → 670)**, which is what the paper and a re-derivation both give.
+- `CITATION.cff` was left at 0.6.2 by the version bump; now 0.6.3 with its release date.
+- `schema.py` now carries an NB documenting the open ECOD empty-F-group bug (entries whose
+  ECOD annotation has an empty `name`, e.g. `3OLT`, are counted unclassified). Measured
+  upper bound on the 2026-07-22 snapshot: 28,239 of 437,572 protein entities (6.5%) lack
+  ECOD but carry CATH/SCOP2, so a full recovery would lift ECOD coverage 77.4% → at most
+  83.9%. Left unfixed on purpose: the true figure needs a live RCSB sample, and the fix
+  moves the published ceiling table.
+
 ## [0.6.2] — 2026-08-03
 
 Class labels change (a rescued additive/glycan now sets `small_molecule`), so this needs a

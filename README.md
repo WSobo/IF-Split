@@ -38,7 +38,7 @@ records and sequences. Coordinates are an optional, downstream concern.
    from `snapshot_date` alone: RCSB recomputes its sequence clusters and CATH/ECOD/SCOP2
    annotations over time (no public history), so a *fresh* re-enumeration months later
    can differ — share the lock + candidates to reproduce a split byte-for-byte.
-2. **Deterministic cluster → split assignment.** For the default `hash` strategy a
+2. **Deterministic cluster → split assignment.** Under the `hash` strategy a
    cluster's split is decided by hashing a stable cluster key into the cumulative
    split fractions — independent of how many other clusters exist, so a cluster whose
    key is unchanged never moves as the PDB grows (and `verify` can certify a `hash`
@@ -48,7 +48,13 @@ records and sequences. Coordinates are an optional, downstream concern.
    both **prevented and reported**: the registry pins prior assignments matched on *any*
    key a component covers (so a held-out cluster stays held out across a merge; conflicts
    resolve `test > val > train`), and any pin it must override is **counted** in
-   `splits.pinned_reassignments`. Without a registry — the default `hash` path — the
+   `splits.pinned_reassignments` (and, in entries, `splits.pinned_entries_reassigned`).
+   One thing outranks a pin: under `maximal` the holdout ceiling. The dominant component
+   absorbs held-out components as the snapshot grows and so can inherit their held-out pin;
+   honoring that would put ~98% of the PDB in the holdout, so a component that does not fit
+   the budget is capped to train whatever it was pinned to. Read
+   `pinned_entries_reassigned`, not `pinned_reassignments`: one override on the giant moves
+   most of the corpus while the component count reads `1`. Without a registry — the `hash`
    reassignment still happens and is **not** counted (`pinned_reassignments` needs a
    registry). An in-place rebuild instead reports it at the **entry level**: how many prior
    entries changed split, and how many were absorbed **into train** — the direction
@@ -138,10 +144,16 @@ uv run if-split build --config config/fold-aware.yaml --out data/mc
 
 `config/fold-aware.yaml` = default **+ `structural_clustering: scop2` + `split_strategy: balanced`**: a fold-aware ~80/10/10 split holding 992 distinct SCOP2 families entirely out of train (473 test + 519 val). It is the strongest fold control the tool can produce from metadata — *not* a fold-clean split: scored with ECOD it is still 98.6% fold-seen in test.
 
-| split | strategy | structural | entry balance | val/test |
+| recipe | strategy | structural | entry balance | val/test |
 |---|---|---|--:|---|
-| default | hash | off | 88 / 6 / 6 | sequence-clustered |
-| fold-aware | balanced | scop2 | 80 / 10 / 10 | 992 held-out SCOP2 families; still 98.6% ECOD-fold-seen |
+| `default.yaml` | maximal | all | 98.6 / 0.7 / 0.7 | the whole leakage-safe tail; 888 certified-novel |
+| `certified.yaml` | maximal | all | 98.6 / 0.7 / 0.7 | the published split (`config_hash f7d4203586df3dc7b10d2948e76d20d8`) |
+| `fold-aware.yaml` | balanced | scop2 | 80 / 10 / 10 | 992 held-out SCOP2 families; still 98.6% ECOD-fold-seen |
+
+A fixed 80/10/10 is available (`split_strategy: balanced`) but is not the default, because
+under strong merging the leakage-safe tail is smaller than a 10% target and a proportional
+assignment then fills test first and empties val. `maximal` reads `split_fractions` as a
+**ceiling** and holds out whatever the tail allows.
 
 ### Novel-fold benchmark (fold-seen vs novel-fold)
 
@@ -175,6 +187,42 @@ ds.fold_groups()               # {superfamily -> {novel, test_entries}} for rewe
 
 `if-split stats` prints the novel-fold count. The export is opt-in metadata only:
 enabling it never downloads coordinates and never changes the split.
+
+## Known limits
+
+Things worth knowing before you build a split on this, stated here rather than left to be
+discovered:
+
+- **Identity thresholds are RCSB's, not arbitrary.** `identity_threshold` accepts only the
+  precomputed levels 30/50/70/90/95/100%. There is no 25% or 40%. This follows from the
+  no-mmseqs2 decision (no local binary, no version drift); the validator fails loudly rather
+  than silently producing singletons. If you need to sweep identity thresholds, this is the
+  wrong tool.
+- **RCSB's 30% cluster file is not identity-complete.** Identical sequences can carry
+  different cluster ids, so every chain with enough modeled residues also keys by a sequence
+  hash. Below that gate, identical short peptides are deliberately *not* guaranteed to share
+  a split.
+- **Reproducible is not the same as stable under growth.** A pinned snapshot rebuilds
+  byte-identically forever (`dataset.lock` + `candidates.jsonl` + `verify`). Regenerating on
+  a *later* snapshot does not: under `maximal`, replaying a 2023-cutoff build on the
+  2026-07-22 snapshot left only 43.7% of test entries in test (52.4% moved to val, 3.9% into
+  train). Pin and cite a snapshot; treat a rebuild as a new benchmark.
+- **The reproducibility anchor is the candidates file, not the date.** RCSB recomputes
+  clusters and CATH/ECOD/SCOP2/Pfam/InterPro assignments over time with no public history,
+  so `snapshot_date` alone does not pin a split. Share the lock plus `candidates.jsonl`.
+- **A `maximal` holdout is the tail, not a miniature of the PDB.** On 2026-07-22 the
+  held-out set skews short (median longest chain 158 residues against 295 in train; 27.1%
+  have no chain over 50 residues) because the authorities classify short chains least often,
+  so those are the components the merge does not absorb. Raise `min_modeled_residues` if that
+  matters for your task, at the cost of the archived config hash.
+- **A fold guarantee is only as wide as the configured authority's coverage.** A `scop2`
+  build carries a SCOP2 label on ~12% of its test entries and leaves the rest constrained by
+  sequence alone. Quote the denominator with the guarantee, always.
+- **PDB only.** No AlphaFold DB or other predicted structures; the union-find has no fold
+  assignment for them. If your training corpus includes predicted models, this covers part
+  of your leakage problem, not all of it.
+- **It stops at split lists and labels.** No coordinate parsing, no tensorization. `fetch`
+  is an optional downstream convenience; the featurizer is yours.
 
 ---
 
@@ -324,7 +372,7 @@ A `build` runs eight stages; none touch coordinates.
 | 3 — filter | `parse.py` | Drop no-protein / no-usable-sequence (empty **or** all-`X` poly-UNK) / too-short (opt-in `min_modeled_residues`) / oversized entries (assembly-1 residue count `> max_total_residues`) / over-resolution (re-derived here so it is auditable; per-method caps via `resolution_max_A_by_method`), plus optional wwPDB validation-report quality caps (clashscore, R-free, Ramachandran/rotamer/RSRZ, cryo-EM map-fit floor) — all from metadata. Every drop is logged with its reason. |
 | 4 — ligands | `ligands.py` | Tier each non-protein component `functional`/`ambiguous`/`artifact`; derive class labels (metal / small-molecule / nucleic-acid). `nucleic_acid` = a protein↔DNA/RNA *complex* (verified assembly interface), **not** a bound mononucleotide. **Annotate, never drop.** |
 | 5 — cluster | `cluster.py` | Group protein entities by RCSB precomputed cluster id at `identity_threshold`; canonical key = smallest member id. Optionally union same-fold entities (CATH/ECOD/SCOP2) for structural-leakage control. |
-| 6 — split | `split.py` | Assign components → train/val/test (`hash`, or `balanced` for entry-balanced fold-tail val/test); assert no cluster spans two splits; audit residual secondary-chain overlap. |
+| 6 — split | `split.py` | Assign components → train/val/test (`maximal` (default) for the data-sized holdout, `hash` for per-component hashing, `balanced` for entry-balanced fold-tail val/test); assert no cluster spans two splits; audit residual secondary-chain overlap. |
 | 7 — manifest | `manifest.py` | Emit lock + manifest + registry (all deterministic, no wall-clock fields). |
 | 8 — loader | `dataset.py` | Read a manifest into train/val/test views with cluster-balanced sampling. |
 | 2 — fetch *(opt-in)* | `download.py`, `hydrate.py` | Download mmCIF for a built manifest into a sharded, indexed, ML-ready tree. |
@@ -612,9 +660,9 @@ doubles as a shareable **split spec** — see [Sharing a split spec](#sharing-a-
 | `exclude_purification_artifacts` | `true` | Demote His-tag metals to `artifact`; lone uncorroborated Ni/Co → `ambiguous`. |
 | `identity_threshold` | `0.30` | Clustering cutoff (RCSB levels: 30/50/70/90/95/100). |
 | `clustering_backend` | `precomputed` | Reuse RCSB's published 30% clusters (the only backend; locked via the snapshot). |
-| `structural_clustering` | `off` | Fold-level leakage control: `off` \| `cath` \| `ecod` \| `scop2` \| `union`. Union-merges same-(super)family protein chains so a family *that authority classifies* can't straddle train/test (it reduces and measures fold leakage; it does not eliminate it) — see [Fold-level leakage control](#fold-level-leakage-control). Additive: only merges, never splits. |
+| `structural_clustering` | `all` | Fold-level leakage control: `off` \| `cath` \| `ecod` \| `scop2` \| `pfam` \| `interpro` \| `union` (the curated three) \| `all` (all five). Union-merges same-(super)family protein chains so a family *that authority classifies* can't straddle train/test (it reduces and measures fold leakage; it does not eliminate it) — see [Fold-level leakage control](#fold-level-leakage-control). Additive: only merges, never splits. |
 | `split_fractions` | 0.80 / 0.10 / 0.10 | train / val / test. |
-| `split_strategy` | `hash` | `hash` (balance components; input-independent and registry-free) or `balanced` (balance *entries*: cap dominant folds to train, fill val/test from the fold tail). |
+| `split_strategy` | `maximal` | `maximal` (size the holdout from the data: cap any component too large for the budget to train, hold out the whole remaining tail, `split_fractions` acting as a **ceiling** not a target), `hash` (balance components; input-independent and registry-free, so `verify` can certify it), or `balanced` (balance *entries*: cap dominant folds to train, fill val/test from the fold tail). |
 | `fold_benchmark_method` | `off` | Novel-fold benchmark export: `off` \| `cath` \| `ecod` \| `scop2`. When set, emits `folds.json` / `fold_groups.json` / `novel_fold_test.json`; fold *labels* are decoupled from fold *merging*, so it never changes the split or `check_no_leakage`. Omitted from the config hash when `off`. |
 | `test_min_per_class` | `{}` | Optional per-class floor of test entries carrying each functional ligand class; recruits WHOLE sequence components into test in deterministic order (never individual entries → no leakage), skipping registry-pinned components. Empty = off. |
 | `split_salt` | `snapsplit-v1` | Bump to intentionally reshuffle the split. |

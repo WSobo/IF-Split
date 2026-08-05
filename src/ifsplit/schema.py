@@ -123,6 +123,17 @@ def structural_families_from_instances(instances) -> dict[str, list[str]]:
             atype = ann.get("type")
             if atype == "CATH" and ann.get("annotation_id"):
                 fams["cath"].add(ann["annotation_id"])
+            # NB KNOWN BUG (open as of v0.6.3, deliberately not fixed): some entries carry an
+            # ECOD annotation whose F-group `name` is empty (3OLT returns name=None with
+            # lineage "F:"). Those chains are silently counted ECOD-*unclassified* although
+            # ECOD did classify them, so ECOD coverage is understated and a few "novel" calls
+            # may be spurious. Upper bound measured on the 2026-07-22 snapshot: 28,239 of
+            # 437,572 protein entities (6.5%) have no ECOD but do have CATH/SCOP2, so
+            # recovering ALL of them would lift ECOD coverage 77.4% -> at most 83.9%. The true
+            # figure is a subset of that and needs a live RCSB sample to pin down. Fixing it
+            # moves published numbers (the ceiling table's ECOD row), so it is a release
+            # decision, not a drive-by. Fix would be: fall back to annotation_id or the
+            # deepest non-empty lineage name. See also the `name`-keying caveat below.
             elif atype == "ECOD" and ann.get("name"):
                 fams["ecod"].add(ann["name"])
             elif atype == "SCOP2" and ann.get("name"):

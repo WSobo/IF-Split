@@ -326,7 +326,7 @@ staying leakage-safe (whole components), growth-stable, and metadata-only.
 snapshot with fold-merging as the only variable, scored by ECOD (an authority neither
 split was built from): a sequence-only split is 99.18% ECOD-fold-seen in test, the
 fold-aware split 98.62% — 0.56pp, though it does isolate 50% more novel-fold test
-entries (153 -> 229) across 95 more distinct folds. Only 12.2% of its test entries carry
+entries (153 -> 229) across 97 more distinct folds (573 -> 670). Only 12.2% of its test entries carry
 a SCOP2 label at all. The same fold classification used to *audit* the leak is used to
 *constrain and measure* it — elimination is not available from metadata (see PLAN.md,
 "the PDB collapses into one giant component").
