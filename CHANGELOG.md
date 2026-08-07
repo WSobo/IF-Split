@@ -39,6 +39,17 @@ figure in the preprint stands.
 - `sample_by_cluster` is now documented as an evaluation tool as well as a training sampler.
   It always could de-duplicate a test set; nothing said so.
 
+### Known
+
+- **ECOD coverage is understated by our own parser.** `structural_families_from_instances`
+  keys ECOD on the F-group `name`, and some annotations carry a real `annotation_id` with an
+  empty name. Measured with the new `scripts/measure_ecod_fgroup_gap.py` (live, 500-entry
+  sample): 41.7% of the affected population (377 of 905) is dropped, so ECOD entity coverage
+  is nearer 80.1% than the 77.4% reported. Not fixed here — the fix re-derives the whole
+  snapshot, because `candidates.jsonl` stores the parsed families. The direction is safe:
+  recovered labels only add merge edges, so the fold-disjoint residual we report is an
+  over-estimate and the leakage control is conservative rather than optimistic.
+
 ### Notes
 
 - Redundancy is a property of the PDB, not of the assignment: the training set is 44.4%

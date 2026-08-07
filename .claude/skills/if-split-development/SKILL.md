@@ -97,7 +97,10 @@ several were narrower than a first read suggests.
    with** — the single-knob test never catches this.
 5. **Coverage ceilings quoted as guarantees.** On the 2026-07-22 snapshot SCOP2 classifies
    51.4% of protein *entities* (CATH 41.1, ECOD 77.4, union 83.9); by *entries*
-   61.7/65.3/87.1/92.3. Never denominate coverage over ALL polymer entities — that folds
+   61.7/65.3/87.1/92.3. NB **ECOD is understated by our own parser** (empty
+   F-group names dropped; ~41.7% of the affected population, true entity coverage ~80.1%
+   per `scripts/measure_ecod_fgroup_gap.py`) — conservative, but do not quote 77.4 as ECOD's
+   true reach. Never denominate coverage over ALL polymer entities — that folds
    in 34,276 DNA/RNA/hybrid entities and understates every authority by 3-6 points.
    And the corpus rate is the WRONG denominator for a hold-out claim: in the fold-aware run
    only **12.2% of TEST entries** carry a SCOP2 label (train is 73.7%), because classified

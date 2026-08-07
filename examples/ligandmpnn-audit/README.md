@@ -217,6 +217,19 @@ back `small_molecule`, and a real protein/DNA complex (`1qum`) comes back
 `['metal', 'nucleic_acid']`. That is a claim about one class definition, not about
 the tool in general.
 
+### E3. The test set is internally redundant
+
+Separately from leakage across the split, the 469 distinct test entries are not 469
+independent measurements: they reduce to **297 distinct protein sequence sets**, so
+**36.7%** share a sequence set with another test entry and the largest identical group holds
+21 entries. Averaging native recovery per entry therefore over-weights whichever scaffolds
+were deposited most often.
+
+This is a property of the PDB rather than a defect peculiar to this split — IF-Split's own
+maximal holdout is 23.3% redundant on the same measure, and the training set 44.4% — but it
+means the effective size of the benchmark is smaller than its entry count suggests. Reproduce
+with `scripts/measure_split_redundancy.py` (see Reproduce, step 4).
+
 ### F. Test-set contamination (metal)
 
 IF-Split's metadata ligand-tiering flags **6 of the 83** LigandMPNN metal-test
@@ -348,6 +361,14 @@ uv run python scripts/audit_ligandmpnn_split.py \
 
 # 3. Recount both published splits from their release files (no RCSB needed).
 uv run python scripts/count_published_splits.py
+
+# 4. Internal redundancy (E3): entries vs distinct proteins vs components, for the
+#    published test set and for IF-Split's own holdout, on the same measure.
+uv run python scripts/measure_split_redundancy.py \
+    --candidates data/run-2026.07.22/candidates-annotated.jsonl \
+    --split-dir data/rs-recommended \
+    --ids "lmpnn_test=/tmp/lmpnn_audit/test_small_molecule.json,\
+/tmp/lmpnn_audit/test_nucleotide.json,/tmp/lmpnn_audit/test_metal.json"
 ```
 
 Step 3 is the check on everything this audit says about the split *files* rather

@@ -88,6 +88,11 @@ entities are classified (83.9% for their union; measured on the full 2026-07-22
 snapshot — one entity per distinct sequence, *not* per chain instance), and
 coverage falls sharply for recent depositions — 97% of entries
 released through 2018 are classified, but only 60% of 2025 and 42% of 2026 ones.
+ECOD's figure is an undercount of our own making: our parser keys ECOD on the
+F-group name and some annotations carry an id with an empty name, so ~41.7% of the
+affected population is dropped and true ECOD entity coverage is nearer 80%
+(`scripts/measure_ecod_fgroup_gap.py`). Recovering them can only merge more, so the
+leakage control is conservative, never optimistic. Open for a future release.
 The rest fall back to sequence-only. Chains with no classification are held out by sequence
 only, so their fold-level hold-out is not guaranteed — the unclassified fraction
 is a residual-leakage *ceiling* (an upper bound), which `if-split stats` reports
