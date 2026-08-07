@@ -525,6 +525,49 @@ for epoch in range(3):
     batch_ids = ds.train.sample_by_cluster(seed=epoch)
 ```
 
+### Evaluating on this split: entries are not independent measurements
+
+The PDB deposits the same protein many times, so a *test* set is redundant too. On the
+archived 2026-07-22 split, 1,465 test entries carry only **1,124 distinct protein sequence
+sets** and sit in **864 components** — the largest single group is one 327-residue enzyme
+deposited eleven times in one day with eleven different bound ligands. Averaging recovery
+per entry therefore over-weights whichever scaffolds were crystallised most often. (This is
+a property of the PDB, not of the split: the training set is 44.4% redundant and
+LigandMPNN's published test set 36.7%, against this holdout's 23.3%.)
+
+All three counts are in the manifest, so you can report the honest denominator:
+
+```python
+m = json.load(open("out/manifest.json"))["splits"]
+m["entry_counts"]["test"]              # 1465  structures
+m["distinct_sequence_counts"]["test"]  # 1124  distinct proteins
+m["cluster_counts"]["test"]            #  864  leakage-safe components
+```
+
+Pick the unit of averaging to match the task — IF-Split does not choose for you, because
+the right answer differs:
+
+```python
+test = ds.test
+
+# BACKBONE-only model (ProteinMPNN-style): score one entry per distinct protein.
+for entry_id in test.sample_by_sequence(seed=0):   # 1124 ids
+    ...
+
+# Stricter: one per component, which also collapses fold/complex relatives.
+for entry_id in test.sample_by_cluster(seed=0):    # 864 ids
+    ...
+
+# LIGAND-CONDITIONED model (LigandMPNN-style): keep every entry — those eleven
+# soaked ligands are eleven real conditioning contexts — but down-weight the
+# repeated scaffold so it counts once in the mean.
+w = test.redundancy_weights()                      # entry_id -> 1/group_size
+score = sum(w[e] * recovery[e] for e in test.entry_ids) / sum(w.values())
+```
+
+De-duplicating the split itself would delete those soaking series, so IF-Split never does
+it at build time; the choice is yours at read time.
+
 ### Training strategies for inverse folding
 
 An inverse-folding model consumes two different things, with opposite scale/quality

@@ -123,17 +123,27 @@ def structural_families_from_instances(instances) -> dict[str, list[str]]:
             atype = ann.get("type")
             if atype == "CATH" and ann.get("annotation_id"):
                 fams["cath"].add(ann["annotation_id"])
-            # NB KNOWN BUG (open as of v0.6.3, deliberately not fixed): some entries carry an
+            # NB KNOWN BUG (open as of v0.7.0, deliberately not fixed): some entries carry an
             # ECOD annotation whose F-group `name` is empty (3OLT returns name=None with
-            # lineage "F:"). Those chains are silently counted ECOD-*unclassified* although
-            # ECOD did classify them, so ECOD coverage is understated and a few "novel" calls
-            # may be spurious. Upper bound measured on the 2026-07-22 snapshot: 28,239 of
-            # 437,572 protein entities (6.5%) have no ECOD but do have CATH/SCOP2, so
-            # recovering ALL of them would lift ECOD coverage 77.4% -> at most 83.9%. The true
-            # figure is a subset of that and needs a live RCSB sample to pin down. Fixing it
-            # moves published numbers (the ceiling table's ECOD row), so it is a release
-            # decision, not a drive-by. Fix would be: fall back to annotation_id or the
-            # deepest non-empty lineage name. See also the `name`-keying caveat below.
+            # lineage "F:") while still carrying a real `annotation_id`. Those chains are
+            # silently counted ECOD-*unclassified* although ECOD did classify them.
+            #
+            # MEASURED (scripts/measure_ecod_fgroup_gap.py, 2026-08-06, 500-entry live
+            # sample against the 2026-07-22 snapshot): of the 28,239 protein entities that
+            # CATH/SCOP2 classify but ECOD apparently does not, **41.7%** (377 of 905
+            # re-checked) do carry an ECOD id with an empty name. Projected over that
+            # population, ECOD entity coverage is understated 77.4% -> ~80.1%.
+            #
+            # DIRECTION IS SAFE: every downstream effect is conservative. More ECOD labels
+            # mean more merge edges, so the true fold-disjoint residual is SMALLER than the
+            # ceiling table's ECOD row reports, and more held-out entries would score
+            # fold-seen, not fewer. The published claims therefore hold a fortiori.
+            #
+            # Fixing it re-derives the whole snapshot (candidates.jsonl stores the parsed
+            # families, so the fix needs a full re-fetch) and moves the ceiling table's ECOD
+            # row, so it is a release decision, not a drive-by. Fix: fall back to
+            # annotation_id or the deepest non-empty lineage name. See the `name`-keying
+            # caveat below.
             elif atype == "ECOD" and ann.get("name"):
                 fams["ecod"].add(ann["name"])
             elif atype == "SCOP2" and ann.get("name"):

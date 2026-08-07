@@ -113,6 +113,11 @@ class SplitResult:
     entry_split: dict[str, str]  # entry_id -> split
     counts: dict[str, int]  # split -> entry count
     cluster_counts: dict[str, int]  # split -> component count
+    # split -> distinct protein sequence-set count. Sits BETWEEN entries and components
+    # (entries >= sequence sets >= components) and is the honest denominator for a
+    # backbone metric: an n-entry ligand-soaking series is n entries but one backbone.
+    # Reporting only; never consulted by assignment.
+    distinct_sequence_counts: dict[str, int] = field(default_factory=dict)
     # Per-class test floors that could not be fully met (class -> shortfall). Empty
     # when no minimums were requested or all were satisfied. Reported, never forced.
     minimum_shortfalls: dict[str, int] = field(default_factory=dict)
@@ -445,11 +450,21 @@ def assign_splits(
     for s in cluster_split.values():
         cluster_counts[s] += 1
 
+    # Distinct sequence sets per split. A group cannot straddle splits (identical
+    # sequences co-cluster), so counting per split is exact rather than approximate.
+    seq_groups: dict[str, set[str]] = {s: set() for s in SPLITS}
+    for entry, s in entry_split.items():
+        key = clusters.entry_sequence_groups.get(entry)
+        if key is not None:
+            seq_groups[s].add(key)
+    distinct_sequence_counts = {s: len(v) for s, v in seq_groups.items()}
+
     return SplitResult(
         cluster_split=dict(sorted(cluster_split.items())),
         entry_split=dict(sorted(entry_split.items())),
         counts=counts,
         cluster_counts=cluster_counts,
+        distinct_sequence_counts=distinct_sequence_counts,
         minimum_shortfalls=dict(sorted(shortfalls.items())),
         strategy=cfg.split_strategy,
         capped_folds=n_capped,

@@ -7,6 +7,46 @@ follow [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 The **split is always computed from metadata + sequences only** — `build` never
 downloads structure coordinates. That invariant holds across every release below.
 
+## [0.7.0] — 2026-08-06
+
+Makes a split's *internal* redundancy visible and de-duplicable. A test set is a set of
+entries but not a set of independent measurements: on the archived 2026-07-22 split, 1,465
+test entries carry only 1,124 distinct protein sequence sets and sit in 864 components,
+because one protein deposited n times counts n times. Nothing about split assignment
+changes — the archived split still reproduces byte-identically against its lock, and every
+figure in the preprint stands.
+
+### Added
+
+- **`splits.distinct_sequence_counts` in the manifest**, beside `entry_counts` and
+  `cluster_counts`. Entries >= distinct sequence sets >= components; quote the triple when
+  reporting a split's size. On the archived split: test 1,465 / 1,124 / 864, val
+  1,467 / 1,108 / 813, train 213,890 / 118,839 / 1.
+- **`entry_sequence_groups` in `clusters.json`** (schema `if-split/clusters@2`), mapping each
+  entry to a hash of its modeled protein sequences. Lets a consumer de-duplicate at exact-
+  sequence granularity without the multi-hundred-MB `candidates.jsonl`. Additive: an `@1`
+  file still loads.
+- **`SplitView.sequence_groups()`, `sample_by_sequence(seed)` and `redundancy_weights()`.**
+  `sample_by_sequence` collapses only byte-identical proteins (the right unit for scoring a
+  backbone-only model); `sample_by_cluster` remains the coarser component-level view.
+  `redundancy_weights` keeps every entry but down-weights a scaffold deposited n times by
+  1/n, which is what a *ligand-conditioned* evaluation needs: entries sharing a sequence
+  routinely differ in what is bound, and collapsing them would discard the variation being
+  tested. All degrade gracefully on a pre-0.7 build.
+
+### Changed
+
+- `sample_by_cluster` is now documented as an evaluation tool as well as a training sampler.
+  It always could de-duplicate a test set; nothing said so.
+
+### Notes
+
+- Redundancy is a property of the PDB, not of the assignment: the training set is 44.4%
+  redundant and LigandMPNN's published test set 36.7%, against this holdout's 23.3%.
+- The de-duplication is deliberately a *read-time* choice, not a build-time filter. Dropping
+  duplicate entries would delete ligand-soaking series (one scaffold, many bound ligands),
+  which are exactly what a conditioning benchmark measures.
+
 ## [0.6.3] — 2026-08-04
 
 Fixes a growth-path bug in the `maximal` strategy and makes `config/certified.yaml`

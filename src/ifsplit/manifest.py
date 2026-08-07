@@ -311,6 +311,10 @@ def build_manifest(
             "balance_gaps": dict(sorted(splits.balance_gaps.items())),
             "entry_counts": dict(sorted(splits.counts.items())),
             "cluster_counts": dict(sorted(splits.cluster_counts.items())),
+            # Entries >= distinct sequence sets >= components. Quote the pair when
+            # reporting a split's size: entries alone over-states how many independent
+            # structures it holds wherever one protein was deposited many times.
+            "distinct_sequence_counts": dict(sorted(splits.distinct_sequence_counts.items())),
             "per_split_class_counts": per_split_class_counts,
             "per_split_ambiguous_counts": per_split_ambiguous_counts,
             "per_split_fold_coverage": per_split_fold_coverage,
@@ -597,11 +601,23 @@ def read_targets(path: str | Path) -> list[dict]:
     return out
 
 
-def write_clusters(entry_to_cluster: dict[str, str], out_dir: str | Path) -> Path:
-    """entry_id -> component key, for cluster-balanced sampling."""
+def write_clusters(
+    entry_to_cluster: dict[str, str],
+    out_dir: str | Path,
+    entry_sequence_groups: dict[str, str] | None = None,
+) -> Path:
+    """entry_id -> component key, plus entry_id -> sequence-set key.
+
+    Two groupings, deliberately: the component is the split unit (it also merges across
+    complexes and folds), the sequence-set key identifies entries that are the *same
+    protein*. Shipping both lets a consumer de-duplicate at either granularity without
+    the multi-hundred-MB candidates file. ``@2`` adds the second map; it is additive,
+    and ``read_clusters`` still reads an ``@1`` file.
+    """
     doc = {
-        "clusters_schema": "if-split/clusters@1",
+        "clusters_schema": "if-split/clusters@2",
         "entry_clusters": dict(sorted(entry_to_cluster.items())),
+        "entry_sequence_groups": dict(sorted((entry_sequence_groups or {}).items())),
     }
     return _write_json(doc, Path(out_dir) / CLUSTERS_FILENAME, compact=True)
 
@@ -611,6 +627,15 @@ def read_clusters(path: str | Path) -> dict[str, str]:
     if not path.exists():
         return {}
     return dict(json.loads(path.read_text(encoding="utf-8")).get("entry_clusters", {}))
+
+
+def read_sequence_groups(path: str | Path) -> dict[str, str]:
+    """entry_id -> sequence-set key. Empty for an ``@1`` clusters file."""
+    path = Path(path)
+    if not path.exists():
+        return {}
+    doc = json.loads(path.read_text(encoding="utf-8"))
+    return dict(doc.get("entry_sequence_groups", {}))
 
 
 def write_classes(class_map: dict[str, dict], out_dir: str | Path) -> Path:

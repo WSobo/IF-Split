@@ -61,6 +61,9 @@ from .config import Config
 from .schema import MERGE_METHODS, STRUCTURAL_METHODS, CandidateRecord
 
 SINGLETON_PREFIX = "singleton:"
+# Prefix for the per-entry sequence-set key (reporting + loader de-duplication only;
+# never a union-find node, so it can never affect split assignment).
+SEQSET_PREFIX = "seqset:"
 
 # An UNCLUSTERED chain *inside an otherwise-clustered entry* adds a merge edge (unions its
 # entry's component with every other entry carrying that exact sequence) only if it has at
@@ -99,6 +102,22 @@ def _seq_singleton_key(seq: str) -> str:
     return SINGLETON_PREFIX + hashlib.blake2b(seq.encode("utf-8"), digest_size=16).hexdigest()
 
 
+def _sequence_set_key(seqs: list[str]) -> str:
+    """Key an entry by the MULTISET of its modeled protein sequences.
+
+    Two entries share this key exactly when they present the same protein sequences.
+    That is strictly finer than sharing a component: components additionally merge
+    across shared complexes and shared folds, so a component can hold entries that
+    are not the same protein at all.
+
+    This never touches split assignment — it exists so the manifest can report how
+    many *independent* structures a split holds (an 11-entry ligand-soaking series is
+    11 entries but one backbone) and so the loader can de-duplicate at read time.
+    """
+    joined = "\x00".join(sorted(seqs))
+    return SEQSET_PREFIX + hashlib.blake2b(joined.encode("utf-8"), digest_size=16).hexdigest()
+
+
 @dataclass
 class ClusterResult:
     """Stage 5 output: raw sequence clusters merged into leakage-safe components."""
@@ -127,6 +146,10 @@ class ClusterResult:
     # membership DECOUPLED from union-find — never merges components, so it can label
     # folds even on a fold-leaky split. Empty when fold_benchmark_method == "off".
     entry_fold_labels: dict[str, list[str]] = field(default_factory=dict)
+    # Per-entry sequence-set key (see _sequence_set_key). Strictly finer than the
+    # component: entries sharing one are the same protein(s), whereas a component also
+    # merges across complexes and folds. Reporting and read-time de-duplication only.
+    entry_sequence_groups: dict[str, str] = field(default_factory=dict)
 
     @property
     def n_clusters(self) -> int:
@@ -160,10 +183,17 @@ def build_clusters(records: list[CandidateRecord], cfg: Config) -> ClusterResult
     family_raw: dict[str, set[str]] = {}  # structural family -> raw keys sharing it
     entry_families: dict[str, list[str]] = {}  # entry -> fold family keys (method on)
     entry_fold_labels: dict[str, list[str]] = {}  # entry -> fold labels (benchmark; no merge)
+    entry_seq_groups: dict[str, str] = {}  # entry -> sequence-set key (reporting only)
     for r in records:
         proteins = [e for e in r.polymer_entities if e.is_protein]
         if not proteins:
             continue  # defensive; Stage 3 already drops no-protein entries
+        # Sequence-set key: modeled chains only, so two entries are not called identical
+        # merely because both carry an unmodeled poly-'X' trace. With nothing modeled we
+        # fall back to the entry id, which makes the entry its own group (identity
+        # unprovable, so never claim it).
+        seqs = [e.seq for e in proteins if e.seq and _modeled_len(e.seq) > 0]
+        entry_seq_groups[r.entry_id] = _sequence_set_key(seqs) if seqs else r.entry_id
         clustered = {raw_key[e.cluster_ids[level]] for e in proteins if level in e.cluster_ids}
         uncl = [e for e in proteins if level not in e.cluster_ids]
         if clustered:
@@ -300,4 +330,5 @@ def build_clusters(records: list[CandidateRecord], cfg: Config) -> ClusterResult
         n_structural_families=n_bridging_families,
         entry_families=dict(sorted(entry_families.items())),
         entry_fold_labels=dict(sorted(entry_fold_labels.items())),
+        entry_sequence_groups=dict(sorted(entry_seq_groups.items())),
     )

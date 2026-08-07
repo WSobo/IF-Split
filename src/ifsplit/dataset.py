@@ -42,6 +42,7 @@ from .manifest import (
     read_fold_labels,
     read_id_list,
     read_manifest,
+    read_sequence_groups,
     read_targets,
 )
 
@@ -76,6 +77,8 @@ class SplitView:
     targets: list[ConditioningTarget] = field(default_factory=list)
     # entry -> {split, families, novel_fold} (fold-benchmark export; empty when off).
     fold_labels: dict[str, dict] = field(default_factory=dict)
+    # entry -> sequence-set key (same protein(s)). Empty for a pre-0.7 clusters@1 build.
+    entry_sequence_groups: dict[str, str] = field(default_factory=dict)
 
     def __len__(self) -> int:
         return len(self.entry_ids)
@@ -152,15 +155,70 @@ class SplitView:
         return {k: sorted(v) for k, v in sorted(groups.items())}
 
     def sample_by_cluster(self, seed: int = 0) -> list[str]:
-        """One entry per cluster, chosen deterministically by ``seed``.
+        """One entry per component, chosen deterministically by ``seed``.
 
-        De-redundifies the split: each sequence cluster contributes exactly one
-        representative, so over-represented folds don't dominate. Vary ``seed``
-        across epochs to rotate which member of each cluster is drawn. Returns a
-        deterministically ordered list (sorted by the same stable rank).
+        Two uses, and it is worth being explicit about the second because it is the
+        one people miss. In TRAINING, vary ``seed`` across epochs so over-represented
+        folds don't dominate the gradient. In EVALUATION, call it once on ``ds.test``
+        to score one representative per component, so a protein deposited many times
+        contributes one measurement rather than many.
+
+        This is the coarser of the two groupings: a component also merges entries
+        joined by a shared complex or a shared fold, so it collapses structures that
+        are related but not identical. For "identical protein only", use
+        :meth:`sample_by_sequence`. Returns a deterministically ordered list.
         """
+        return self._sample(self.cluster_groups(), seed)
+
+    # ------------------------- redundancy / de-duplication ------------------ #
+    def sequence_groups(self) -> dict[str, list[str]]:
+        """Map sequence-set key -> sorted entry ids presenting the same protein(s).
+
+        Finer than :meth:`cluster_groups`: entries here carry byte-identical protein
+        sequences, whereas a component may also hold fold- or complex-related entries.
+        Empty for a build made before ``clusters@2``.
+        """
+        groups: dict[str, list[str]] = {}
+        for e in self.entry_ids:
+            key = self.entry_sequence_groups.get(e)
+            if key is None:
+                continue
+            groups.setdefault(key, []).append(e)
+        return {k: sorted(v) for k, v in sorted(groups.items())}
+
+    def sample_by_sequence(self, seed: int = 0) -> list[str]:
+        """One entry per distinct protein sequence set, deterministic under ``seed``.
+
+        The de-duplication to reach for when scoring a BACKBONE-only model: a protein
+        deposited n times counts once. Prefer this over :meth:`sample_by_cluster` when
+        you want only exact duplicates collapsed and fold relatives kept.
+
+        Do NOT use it to score a ligand-conditioned model: entries sharing a sequence
+        set routinely differ in what is bound (a soaking series is one scaffold with
+        many ligands), and collapsing them discards exactly the variation being tested.
+        Weight with :meth:`redundancy_weights` instead.
+        """
+        groups = self.sequence_groups()
+        if not groups:  # clusters@1 build: no sequence keys shipped
+            return sorted(self.entry_ids)
+        return self._sample(groups, seed)
+
+    def redundancy_weights(self) -> dict[str, float]:
+        """entry_id -> 1/(size of its sequence group), summing to the group count.
+
+        Keeps every entry — so ligand contexts survive — while stopping a scaffold that
+        was deposited n times from carrying n times the weight in an averaged metric.
+        Falls back to 1.0 per entry for a build without sequence keys.
+        """
+        groups = self.sequence_groups()
+        if not groups:
+            return {e: 1.0 for e in self.entry_ids}
+        return {e: 1.0 / len(members) for members in groups.values() for e in members}
+
+    @staticmethod
+    def _sample(groups: dict[str, list[str]], seed: int) -> list[str]:
         chosen: list[tuple[int, str]] = []
-        for key, members in self.cluster_groups().items():
+        for key, members in groups.items():
             rep = min(members, key=lambda e: (_stable_rank(e, seed), e))
             chosen.append((_stable_rank(key, seed), rep))
         return [e for _, e in sorted(chosen)]
@@ -180,7 +238,10 @@ class IFSplitDataset:
         self._classes = read_classes(
             self._dir / files.get("ligand_classes", "ligands.classes.json")
         )
-        self._entry_clusters = read_clusters(self._dir / files.get("clusters", "clusters.json"))
+        _clusters_path = self._dir / files.get("clusters", "clusters.json")
+        self._entry_clusters = read_clusters(_clusters_path)
+        # Empty for a clusters@1 build; every sequence-group view degrades gracefully.
+        self._entry_seq_groups = read_sequence_groups(_clusters_path)
         # Conditioning-target corpus, grouped by split (absent -> empty, older builds).
         self._targets_by_split: dict[str, list[ConditioningTarget]] = {s: [] for s in SPLITS}
         for row in read_targets(self._dir / files.get("targets", TARGETS_FILENAME)):
@@ -225,6 +286,9 @@ class IFSplitDataset:
             entry_ids=ids,
             ligand_classes={e: self._classes.get(e, []) for e in ids},
             entry_clusters={e: self._entry_clusters.get(e, e) for e in ids},
+            entry_sequence_groups={
+                e: self._entry_seq_groups[e] for e in ids if e in self._entry_seq_groups
+            },
             targets=self._targets_by_split.get(name, []),
             fold_labels={e: self._fold_labels[e] for e in ids if e in self._fold_labels},
         )

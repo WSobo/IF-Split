@@ -522,6 +522,18 @@ changes no split membership — it lets you re-benchmark existing checkpoints
   so an epoch is reproducible and varying the seed rotates which member is drawn.
   Bigger *training-quality* lever than perfecting ligand tiers, and free because
   the clusters already exist.
+- **Read-time de-duplication (v0.7.0).** The same redundancy afflicts the *test*
+  set, where it is a reporting error rather than a training one: 1,465 archived
+  test entries are only 1,124 distinct proteins in 864 components, so a per-entry
+  mean over-weights whatever was crystallised most. Stage 5 now emits a per-entry
+  sequence-set key (`entry_sequence_groups`, `clusters@2`) beside the component
+  key, Stage 7 reports `splits.distinct_sequence_counts`, and the loader exposes
+  `sequence_groups() / sample_by_sequence(seed) / redundancy_weights()`.
+  Deliberately **not** a build-time filter: the largest duplicate group is a
+  ligand-soaking series (one scaffold, eleven bound ligands), which is redundant
+  for a backbone model and the entire point for a conditioned one. The unit of
+  averaging is the caller's choice, so IF-Split ships the grouping and never
+  destroys the entries — the same "annotate, never destroy" rule as ligand tiering.
 - **Novel-fold views (v0.5.0).** When a build exported the fold benchmark,
   `SplitView.novel_fold_entries() / is_novel_fold(entry) / folds_of(entry)` and
   `IFSplitDataset.fold_groups()` expose the per-entry fold labels and

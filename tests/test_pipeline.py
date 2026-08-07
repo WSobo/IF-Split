@@ -1431,3 +1431,76 @@ def test_summarize_manifest_reports_residual_ceiling(tmp_path, capsys):
     path = write_manifest(m, tmp_path)
     assert summarize_manifest(path) == 0
     assert "unclassified" in capsys.readouterr().out
+
+
+# --------------------------------------------------------------------------- #
+# Sequence-set grouping (v0.7.0): reporting + read-time de-duplication only.
+# --------------------------------------------------------------------------- #
+def test_sequence_groups_are_finer_than_components():
+    """A component can hold entries that are NOT the same protein; sequence groups can't.
+
+    BRDG bridges raw clusters 1 and 2, so A(1), B(2) and BRDG land in ONE component.
+    Their sequences differ, so they must land in THREE sequence groups. If the key were
+    derived from the component (or from anything but the sequence) this goes green
+    wrongly, which is the failure this test exists to catch.
+    """
+    cfg = _cfg()
+    recs = [
+        _protein_record("AAAA", [1]),
+        _protein_record("BBBB", [2]),
+        _protein_record("BRDG", [1, 2]),
+    ]
+    cr = build_clusters(recs, cfg)
+
+    assert len({cr.entry_to_cluster[e] for e in ("AAAA", "BBBB", "BRDG")} - {None}) == 1
+    keys = {e: cr.entry_sequence_groups[e] for e in ("AAAA", "BBBB", "BRDG")}
+    assert len(set(keys.values())) == 3, keys
+    assert all(k.startswith("seqset:") for k in keys.values())
+
+
+def test_identical_sequences_share_a_sequence_group():
+    """Two entries presenting the same protein get one key, and it is content-derived."""
+    cfg = _cfg()
+    recs = [
+        _protein_record("DUP1", [7]),
+        _protein_record("DUP2", [7]),
+        _protein_record("OTHR", [8]),
+    ]
+    cr = build_clusters(recs, cfg)
+    assert cr.entry_sequence_groups["DUP1"] == cr.entry_sequence_groups["DUP2"]
+    assert cr.entry_sequence_groups["OTHR"] != cr.entry_sequence_groups["DUP1"]
+
+
+def test_sequence_groups_never_affect_assignment():
+    """The new field is reporting-only: dropping it must not move a single entry."""
+    cfg = _cfg()
+    recs = [_protein_record(f"E{i:03d}", [i % 9]) for i in range(40)]
+    cr = build_clusters(recs, cfg)
+    before = dict(assign_splits(cr, cfg).entry_split)
+    cr.entry_sequence_groups = {}
+    after = dict(assign_splits(cr, cfg).entry_split)
+    assert before == after
+
+
+def test_distinct_sequence_counts_sit_between_entries_and_components():
+    """entries >= distinct sequence sets >= components, with both gaps non-zero here."""
+    cfg = _cfg()
+    recs = [
+        _protein_record("AAAA", [1]),
+        _protein_record("BBBB", [2]),
+        _protein_record("BRDG", [1, 2]),  # welds 1+2 -> components < sequence sets
+        _protein_record("DUP1", [7]),
+        _protein_record("DUP2", [7]),  # identical to DUP1 -> entries > sequence sets
+    ]
+    cr = build_clusters(recs, cfg)
+    sp = assign_splits(cr, cfg)
+
+    entries = sum(sp.counts.values())
+    seqsets = sum(sp.distinct_sequence_counts.values())
+    comps = sum(sp.cluster_counts.values())
+    # 5 entries -> 4 sequence sets (DUP1/DUP2 collapse) -> 2 components (BRDG welds 1+2).
+    assert (entries, seqsets, comps) == (5, 4, 2)
+    # Per split the three agree with the actual membership, not just in aggregate.
+    for s in ("train", "val", "test"):
+        ids = [e for e, v in sp.entry_split.items() if v == s]
+        assert sp.distinct_sequence_counts[s] == len({cr.entry_sequence_groups[e] for e in ids})

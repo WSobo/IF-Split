@@ -47,7 +47,7 @@ def _build(tmp_path, sample_entries, artifact_entry):
     )
     # Write the full file set the loader reads (split lists + supporting maps).
     write_split_files(sp, class_map, tmp_path)
-    write_clusters(cr.entry_to_cluster, tmp_path)
+    write_clusters(cr.entry_to_cluster, tmp_path, cr.entry_sequence_groups)
     write_classes(class_map, tmp_path)
     write_tiers(build_tiers_doc(class_map), tmp_path)
     write_targets(build_targets(class_map, sp, cr), tmp_path)
@@ -231,3 +231,53 @@ def test_rebuild_cleans_stale_per_class_test_files(tmp_path):
     sp2 = types.SimpleNamespace(entry_split={"AAAA": "train", "BBBB": "test"})
     write_split_files(sp2, {"BBBB": {"classes": []}}, tmp_path)
     assert not (tmp_path / "test" / "metal_test.json").exists()  # stale file removed
+
+
+# --------------------------------------------------------------------------- #
+# Read-time de-duplication (v0.7.0).
+# --------------------------------------------------------------------------- #
+def test_sequence_groups_reach_the_loader(tmp_path, sample_entries, artifact_entry):
+    ds = load_dataset(_build(tmp_path, sample_entries, artifact_entry))
+    seen = 0
+    for name in ("train", "val", "test"):
+        view = ds.split(name)
+        for e in view.entry_ids:
+            assert view.entry_sequence_groups[e].startswith("seqset:")
+            seen += 1
+        # One representative per group, and the groups partition the split.
+        groups = view.sequence_groups()
+        assert sorted(e for m in groups.values() for e in m) == sorted(view.entry_ids)
+        assert len(view.sample_by_sequence(seed=0)) == len(groups)
+    assert seen == 3
+
+
+def test_sample_by_sequence_is_deterministic(tmp_path, sample_entries, artifact_entry):
+    ds = load_dataset(_build(tmp_path, sample_entries, artifact_entry))
+    assert ds.train.sample_by_sequence(seed=3) == ds.train.sample_by_sequence(seed=3)
+
+
+def test_redundancy_weights_sum_to_the_group_count(tmp_path, sample_entries, artifact_entry):
+    ds = load_dataset(_build(tmp_path, sample_entries, artifact_entry))
+    for name in ("train", "val", "test"):
+        view = ds.split(name)
+        w = view.redundancy_weights()
+        assert set(w) == set(view.entry_ids)  # every entry kept, none dropped
+        assert abs(sum(w.values()) - len(view.sequence_groups())) < 1e-9
+
+
+def test_dedup_views_degrade_on_a_clusters_v1_build(tmp_path, sample_entries, artifact_entry):
+    """A pre-0.7 build ships no sequence keys; the views must not raise or lie."""
+    import json
+
+    mpath = _build(tmp_path, sample_entries, artifact_entry)
+    cpath = tmp_path / "clusters.json"
+    doc = json.loads(cpath.read_text())
+    del doc["entry_sequence_groups"]
+    doc["clusters_schema"] = "if-split/clusters@1"
+    cpath.write_text(json.dumps(doc))
+
+    view = load_dataset(mpath).train
+    assert view.sequence_groups() == {}
+    # Falls back to "every entry is its own measurement" rather than collapsing them.
+    assert view.sample_by_sequence(seed=0) == sorted(view.entry_ids)
+    assert set(view.redundancy_weights().values()) == {1.0}

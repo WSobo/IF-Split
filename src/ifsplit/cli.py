@@ -278,7 +278,7 @@ def _run_pipeline(
     )
     print(f"  wrote {lock_path}")
     split_paths = write_split_files(splits, class_map, out)
-    write_clusters(clusters.entry_to_cluster, out)
+    write_clusters(clusters.entry_to_cluster, out, clusters.entry_sequence_groups)
     write_classes(class_map, out)
     write_registry(splits.cluster_split, out)
     write_tiers(build_tiers_doc(class_map), out)
